@@ -79,6 +79,12 @@ flowchart TD
 - **Anti-Cheat Guardrails**: Hard minimum animation lock floor (25.0ms) and moving-median spike rejection ($2.5\times$) prevent anomalous packet bursts or over-mitigation.
 - **Real-Time RTT & Server Monitor**: Auto-detects active FFXIV game server IP via TCP connection inspection and displays smoothed round-trip ping.
 
+### 🎮 Unified In-Game Payload & Overlays
+- **Single Hook In-Game Pipeline**: Exactly one DirectX 11 hook (`Present` & `ResizeBuffers`), one non-destructive `WndProc` detour, and one unified `ReceiveActionEffect` hook executing Latency Mitigator first and Combat Meter second.
+- **Independent Floating Overlays**: Separate, draggable Dear ImGui floating windows for the Combat Meter table and Latency Micro Ping HUD rendered directly onto the game's backbuffer with 100% VRR compatibility.
+- **MRT Pipeline Protection**: Safely preserves and restores all 8 OM render target slots and depth-stencil view to protect FFXIV's deferred rendering pipeline.
+- **Process Teardown Safety**: Graceful shutdown detection via `RtlDllShutdownInProgress` and non-destructive passthroughs to coexist seamlessly with ReShade and OBS.
+
 ### 🖥️ Desktop Manager & System Tray
 - **Sidebar Navigation**: Instant switching between Dashboard, Combat Meter, Latency Mitigator, and System Settings.
 - **ImPlot Real-Time Graphs**: High-performance telemetry plots of ping, jitter, and animation locks.

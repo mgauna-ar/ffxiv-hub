@@ -80,6 +80,11 @@ This document defines the architectural patterns, engineering principles, memory
 | **DX11 Hook** | `src/payload/dx11_hook.hpp`<br>`src/payload/dx11_hook.cpp` | MinHook detours for `IDXGISwapChain::Present`, `ResizeBuffers`, and transparent shutdown passthrough |
 | **WndProc Hook** | `src/payload/wndproc_hook.hpp`<br>`src/payload/wndproc_hook.cpp` | Non-destructive `SetWindowLongPtrW` window procedure detour with ImGui input capture routing |
 | **Overlay Host** | `src/payload/overlay_host.hpp`<br>`src/payload/overlay_host.cpp` | In-game Dear ImGui render loop coordinating independent floating overlay windows for active plugins |
+| **Object Reader** | `src/payload/object_reader.hpp`<br>`src/payload/object_reader.cpp` | SEH-protected reader for `CharacterObject` metadata, HP, jobs, and party synchronization |
+| **Latency Overlay** | `plugins/latency_mitigator/include/mitigator/latency_overlay.hpp`<br>`plugins/latency_mitigator/src/latency_overlay.cpp` | `IOverlay` implementation for in-game micro ping HUD badge |
+| **Combat Overlay** | `plugins/combat_meter/include/meter/combat_overlay.hpp`<br>`plugins/combat_meter/src/combat_overlay.cpp` | `IOverlay` implementation for in-game combat analytical table |
+| **MinHook Library** | `src/third_party/minhook/` | Embedded lightweight x86/x64 in-memory detour hooking library |
+| **Dear ImGui Library** | `src/third_party/imgui/` | Embedded immediate-mode graphical UI library with Win32 and DirectX 11 backends |
 | **Payload DLL Entry** | `src/payload/dllmain.cpp` | Injected DLL lifecycle, background orchestration, and persistent resident state |
 | **Desktop App State** | `src/app/app_state.hpp`<br>`src/app/app_state.cpp` | Desktop application state machine, connection status, plugin configuration store, and telemetry router |
 | **Desktop Theme & UI** | `src/app/ui/theme.hpp`<br>`src/app/ui/sidebar.hpp` | Modern slate dark theme, TrueType font loading, responsive navigation sidebar |

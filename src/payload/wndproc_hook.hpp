@@ -1,0 +1,37 @@
+#pragma once
+
+#include <atomic>
+
+namespace hub::payload {
+
+/**
+ * @brief Subclasses FFXIV's game window procedure (WndProc) for non-interfering
+ * mouse and keyboard input routing to in-game Dear ImGui overlays.
+ */
+class WndProcHook {
+public:
+    static WndProcHook& instance() noexcept;
+
+    bool install(void* hwnd);
+    void uninstall();
+
+    [[nodiscard]] bool is_installed() const noexcept { return m_installed.load(); }
+    [[nodiscard]] void* game_hwnd() const noexcept { return m_game_hwnd; }
+
+    [[nodiscard]] bool click_through() const noexcept { return m_click_through.load(); }
+    void set_click_through(bool ct) noexcept { m_click_through.store(ct); }
+    void toggle_click_through() noexcept { m_click_through.store(!m_click_through.load()); }
+
+private:
+    WndProcHook() = default;
+    ~WndProcHook() { uninstall(); }
+    WndProcHook(const WndProcHook&) = delete;
+    WndProcHook& operator=(const WndProcHook&) = delete;
+
+    std::atomic<bool> m_installed{false};
+    std::atomic<bool> m_click_through{false};
+    void* m_game_hwnd{nullptr};
+    [[maybe_unused]] void* m_original_wndproc{nullptr};
+};
+
+} // namespace hub::payload

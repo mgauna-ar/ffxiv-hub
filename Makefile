@@ -9,6 +9,8 @@ COMMON_SRCS = $(wildcard src/common/*.cpp) \
 PLUGIN_SRCS = $(wildcard plugins/latency_mitigator/src/*.cpp) \
               $(wildcard plugins/combat_meter/src/*.cpp)
 
+PAYLOAD_SRCS = $(wildcard src/payload/*.cpp)
+
 TEST_SRCS = $(wildcard tests/*.cpp)
 
 all: test
@@ -16,7 +18,7 @@ all: test
 test: hub_test_runner
 	./hub_test_runner
 
-hub_test_runner: $(COMMON_SRCS) $(PLUGIN_SRCS) $(TEST_SRCS)
+hub_test_runner: $(COMMON_SRCS) $(PLUGIN_SRCS) $(PAYLOAD_SRCS) $(TEST_SRCS)
 	$(CXX) $(CXXFLAGS) $^ -o $@
 
 clean:
