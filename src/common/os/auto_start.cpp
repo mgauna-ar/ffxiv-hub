@@ -61,15 +61,20 @@ bool AutoStart::is_enabled() {
 bool AutoStart::set_enabled(bool enable, const std::string& custom_exe_path) {
 #ifdef _WIN32
     HKEY hKey = nullptr;
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, REG_KEY_PATH, 0, KEY_WRITE, &hKey) != ERROR_SUCCESS) {
-        return false;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, REG_KEY_PATH, 0, KEY_SET_VALUE, &hKey) != ERROR_SUCCESS) {
+        if (RegCreateKeyExW(HKEY_CURRENT_USER, REG_KEY_PATH, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &hKey, nullptr) != ERROR_SUCCESS) {
+            return false;
+        }
     }
 
     bool success = false;
     if (enable) {
         const std::string exe_path = custom_exe_path.empty() ? current_executable_path() : custom_exe_path;
         if (!exe_path.empty()) {
-            const std::string quoted = "\"" + exe_path + "\"";
+            std::string quoted = exe_path;
+            if (quoted.front() != '"') {
+                quoted = "\"" + quoted + "\"";
+            }
             const int wlen = MultiByteToWideChar(CP_UTF8, 0, quoted.c_str(), -1, nullptr, 0);
             if (wlen > 0) {
                 std::vector<wchar_t> wstr(wlen);
@@ -93,9 +98,11 @@ bool AutoStart::set_enabled(bool enable, const std::string& custom_exe_path) {
     RegCloseKey(hKey);
     return success;
 #else
-    (void)custom_exe_path;
     std::lock_guard<std::mutex> lock(g_mock_reg_mutex);
     g_mock_auto_start_enabled = enable;
+    if (!custom_exe_path.empty()) {
+        g_mock_exe_path = custom_exe_path;
+    }
     return true;
 #endif
 }

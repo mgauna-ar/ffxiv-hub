@@ -26,13 +26,19 @@ TEST_CASE(OS, SingleInstanceGuard) {
 }
 
 TEST_CASE(OS, AutoStartConfiguration) {
+    const std::string dummy_exe = "C:\\Tools\\ffxiv-hub.exe";
+    const bool initially_enabled = AutoStart::is_enabled();
+
     // Set auto start
-    TEST_ASSERT_TRUE(AutoStart::set_enabled(true));
+    TEST_ASSERT_TRUE(AutoStart::set_enabled(true, dummy_exe));
     TEST_ASSERT_TRUE(AutoStart::is_enabled());
 
     // Disable auto start
     TEST_ASSERT_TRUE(AutoStart::set_enabled(false));
     TEST_ASSERT_FALSE(AutoStart::is_enabled());
+
+    // Restore
+    AutoStart::set_enabled(initially_enabled);
 }
 
 TEST_CASE(OS, LoggerRotationAndWriting) {
