@@ -54,7 +54,7 @@ bool TrayManager::initialize(uint32_t activation_msg_id) {
     }
 
     m_hwnd = hwnd;
-    m_icon = LoadIconW(nullptr, IDI_APPLICATION);
+    m_icon = LoadIconW(nullptr, MAKEINTRESOURCEW(32512));
 
     NOTIFYICONDATAW nid{};
     nid.cbSize = sizeof(NOTIFYICONDATAW);

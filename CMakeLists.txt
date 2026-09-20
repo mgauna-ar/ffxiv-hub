@@ -30,6 +30,7 @@ if(MSVC)
         /MP
         /utf-8
     )
+    add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
     # Statically link C/C++ runtime for zero-dependency portability
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 else()
@@ -78,6 +79,9 @@ target_include_directories(hub_common PUBLIC
     plugins
     plugins/latency_mitigator/include
     plugins/combat_meter/include
+    src/third_party/imgui
+    src/third_party/imgui/backends
+    src/third_party/minhook/include
 )
 
 # Unit Tests Target (cross-platform runnable on macOS, Linux, Windows)
@@ -187,6 +191,10 @@ if(WIN32 OR CYGWIN OR MSYS OR MINGW)
         OUTPUT_NAME "ffxiv-hub"
         WIN32_EXECUTABLE TRUE
     )
+
+    if(BUILD_TESTS)
+        target_link_libraries(hub_test_runner PRIVATE minhook imgui d3d11 dxgi comctl32 dwmapi uxtheme)
+    endif()
 
     # 5. Installation Rules for Windows Distribution
     install(TARGETS ffxiv-hub hub_payload

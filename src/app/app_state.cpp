@@ -9,6 +9,9 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #endif
 
@@ -244,7 +247,7 @@ AppState::MitigatorMetrics AppState::get_mitigator_metrics() {
 std::vector<ipc::MitigatorTelemetryPayload> AppState::get_recent_telemetry(size_t max_count) {
     std::lock_guard<std::mutex> lock(m_telemetry_mutex);
     std::vector<ipc::MitigatorTelemetryPayload> result;
-    const size_t count = std::min(max_count, m_telemetry_history.size());
+    const size_t count = (std::min)(max_count, m_telemetry_history.size());
     result.reserve(count);
 
     auto start_it = m_telemetry_history.end() - count;

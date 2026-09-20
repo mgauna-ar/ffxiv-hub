@@ -121,7 +121,7 @@ bool ObjectReader::initialize() {
     // Scan for GameObjectManager
     uintptr_t mgr_ins = common::pe::scan_module_section(h_game, ".text", game::signatures::GAME_OBJECT_MANAGER_INSTANCE);
     if (mgr_ins) {
-        m_game_object_mgr_addr = common::sigscan::resolve_rip_relative(mgr_ins, 3, 7);
+        m_game_object_mgr_addr = hub::memory::resolve_rip_relative(mgr_ins, 3, 7);
     }
 
     // Scan for GetObjectByEntityId
@@ -136,7 +136,7 @@ bool ObjectReader::initialize() {
     // Scan for GroupManager
     uintptr_t group_ins = common::pe::scan_module_section(h_game, ".text", game::signatures::GROUP_MANAGER_INSTANCE);
     if (group_ins) {
-        m_group_manager_addr = common::sigscan::resolve_rip_relative(group_ins, 5, 9);
+        m_group_manager_addr = hub::memory::resolve_rip_relative(group_ins, 5, 9);
     }
 
     m_initialized = (m_game_object_mgr_addr != 0 || m_group_manager_addr != 0);
@@ -156,16 +156,18 @@ void ObjectReader::inspect_and_sync_actor(uint32_t entity_id, meter::CombatantRe
                 packet.entity_id,
                 packet.name,
                 static_cast<meter::Job>(packet.job_id),
+                packet.owner_id,
                 static_cast<meter::ActorType>(packet.actor_type),
-                packet.owner_id
+                packet.max_hp,
+                packet.current_hp
             );
         }
 
         if (m_ring_buffer) {
-            std::vector<uint8_t> bytes = ipc::serialize_packet(
+            std::vector<uint8_t> bytes = ipc::serialize_typed_packet(
                 PluginId::CombatMeter, MessageType::CombatActorInfo, 0, packet
             );
-            m_ring_buffer->try_push(bytes);
+            m_ring_buffer->push(bytes);
         }
     }
 }
@@ -179,16 +181,18 @@ void ObjectReader::inspect_and_sync_actor_direct(void* character_ptr, meter::Com
                 packet.entity_id,
                 packet.name,
                 static_cast<meter::Job>(packet.job_id),
+                packet.owner_id,
                 static_cast<meter::ActorType>(packet.actor_type),
-                packet.owner_id
+                packet.max_hp,
+                packet.current_hp
             );
         }
 
         if (m_ring_buffer) {
-            std::vector<uint8_t> bytes = ipc::serialize_packet(
+            std::vector<uint8_t> bytes = ipc::serialize_typed_packet(
                 PluginId::CombatMeter, MessageType::CombatActorInfo, 0, packet
             );
-            m_ring_buffer->try_push(bytes);
+            m_ring_buffer->push(bytes);
         }
     }
 }
@@ -200,19 +204,14 @@ void ObjectReader::sync_party(meter::CombatantRegistry* registry) {
     ipc::PartySyncPacket sync{};
     if (SafeReadParty(m_group_manager_addr, sync)) {
         if (registry) {
-            std::vector<uint32_t> members;
-            members.reserve(sync.party_count);
-            for (uint32_t i = 0; i < sync.party_count; ++i) {
-                members.push_back(sync.entity_ids[i]);
-            }
-            registry->sync_party(members);
+            registry->sync_party(sync);
         }
 
         if (m_ring_buffer) {
-            std::vector<uint8_t> bytes = ipc::serialize_packet(
+            std::vector<uint8_t> bytes = ipc::serialize_typed_packet(
                 PluginId::CombatMeter, MessageType::CombatPartySync, 0, sync
             );
-            m_ring_buffer->try_push(bytes);
+            m_ring_buffer->push(bytes);
         }
     }
 }
