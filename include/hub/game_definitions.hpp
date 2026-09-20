@@ -142,15 +142,53 @@ static_assert(sizeof(ActionEffectHeader) == 0x28, "ActionEffectHeader must be 0x
 
 /// Individual effect entry inside an action packet (8 bytes)
 struct ActionEffectEntry {
-    uint8_t effect_type{0};          // 0x00: Effect category (Damage, Heal, Buff, etc.)
-    uint8_t param0{0};               // 0x01: Param 0 (Hit flags: Crit, Direct Hit, etc.)
-    uint8_t param1{0};               // 0x02: Param 1
-    uint8_t param2{0};               // 0x03: Param 2
-    uint8_t mult{0};                 // 0x04: Multiplier
-    uint8_t param3{0};               // 0x05: Param 3
-    uint16_t value{0};               // 0x06: Raw effect value / damage / heal
+    uint8_t effect_type{0};                  // 0x00: 0x01=Miss, 0x03=Damage, 0x04=Heal, 0x05=Blocked, 0x06=Parried, 0x0A=Buff
+    uint8_t hit_severity{0};                 // 0x01: Bit 5 (0x20)=Crit, Bit 6 (0x40)=Direct Hit, 0x60=Crit DH
+    uint8_t param{0};                        // 0x02: Damage modifier / element flags
+    uint8_t bonus_percent{0};                // 0x03: Multiplier / combo flags
+    uint8_t high_byte{0};                    // 0x04: High byte of 24-bit value when flags & 0x40
+    uint8_t flags{0};                        // 0x05: Bit 6 (0x40) indicates 24-bit extended value
+    uint16_t value{0};                       // 0x06: Base 16-bit damage or heal amount
 };
 static_assert(sizeof(ActionEffectEntry) == 8, "ActionEffectEntry must be 8 bytes");
+
+/// In-game Character structure representing an actor in the object table
+struct CharacterObject {
+    void* vtable{nullptr};                   // 0x00 - 0x08
+    uint8_t pad_08[0x28]{0};                 // 0x08 - 0x30
+    char name[64]{0};                        // 0x30 - 0x70: Player / NPC / Pet name (GameObject._name is 64 bytes)
+    uint8_t pad_70[0x08]{0};                 // 0x70 - 0x78
+    uint32_t entity_id{0};                   // 0x78 - 0x7C: 32-bit entity ID
+    uint8_t pad_7c[0x0C]{0};                 // 0x7C - 0x88: LayoutId, GimmickId, BaseId
+    uint32_t owner_id{0};                    // 0x88 - 0x8C: Pet master entity ID (0 / 0xE0000000 if none)
+    uint16_t object_index{0};                // 0x8C - 0x8E: Object index in table
+    uint8_t pad_8e[0x02]{0};                 // 0x8E - 0x90
+    uint8_t object_kind{0};                  // 0x90 - 0x91: 1=Player, 2=Monster, 3=NPC, 5=Pet
+    uint8_t pad_91[0x11B]{0};                // 0x91 - 0x1AC
+    uint32_t current_hp{0};                  // 0x1AC - 0x1B0: Current health points
+    uint32_t max_hp{0};                      // 0x1B0 - 0x1B4: Maximum health points
+    uint32_t current_mp{0};                  // 0x1B4 - 0x1B8: Current mana points
+    uint32_t max_mp{0};                      // 0x1B8 - 0x1BC: Maximum mana points
+    uint8_t pad_1bc[0x0E]{0};                // 0x1BC - 0x1CA
+    uint8_t class_job{0};                    // 0x1CA: Job ID (e.g. 21=WAR, 41=VPR, 42=PCT)
+};
+
+/// In-game PartyMember structure (0x490 bytes) within GroupManager
+struct PartyMemberObject {
+    uint8_t pad_00[0x400]{0};                // 0x000 - 0x400: StatusManager, Position, IDs
+    uint32_t entity_id{0};                   // 0x400: 32-bit entity ID
+    uint32_t pet_entity_id{0};               // 0x404: Pet entity ID
+    uint32_t companion_entity_id{0};         // 0x408: Companion entity ID
+    uint32_t current_hp{0};                  // 0x40C: Current health points
+    uint32_t max_hp{0};                      // 0x410: Maximum health points
+    uint16_t current_mp{0};                  // 0x414: Current mana points
+    uint16_t max_mp{0};                      // 0x416: Maximum mana points
+    char name[64]{0};                        // 0x418 - 0x458: Member name
+    uint8_t pad_458[0x11]{0};                // 0x458 - 0x469
+    uint8_t class_job{0};                    // 0x469: Job ID
+    uint8_t pad_46a[0x26]{0};                // 0x46A - 0x490
+};
+static_assert(sizeof(PartyMemberObject) == 0x490, "PartyMemberObject must be 0x490 bytes");
 
 #pragma pack(pop)
 

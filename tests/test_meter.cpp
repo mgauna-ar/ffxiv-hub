@@ -1,0 +1,647 @@
+#include "test_framework.hpp"
+#include "meter/types.hpp"
+#include "meter/action_decoder.hpp"
+#include "meter/combatant_registry.hpp"
+#include "meter/metrics_accumulator.hpp"
+#include "meter/encounter_engine.hpp"
+#include "meter/combat_plugin.hpp"
+#include "common/config/json.hpp"
+#include <array>
+#include <vector>
+
+using namespace hub::meter;
+
+TEST_CASE(MeterDecoder, SingleTargetDamageAndHitSeverity) {
+    hub::game::ActionEffectHeader header{};
+    header.animation_target_id = 0x40001234;
+    header.action_id = 31; // Heavy Swing
+    header.num_targets = 1;
+
+    std::array<hub::game::ActionEffectEntry, 8> entries{};
+    // Normal hit
+    entries[0].effect_type = 0x03; // Damage
+    entries[0].hit_severity = 0x00; // Normal
+    entries[0].value = 12500;
+
+    auto packets = decoder::decode_action_effects(1001, header, entries.data(), nullptr, 999999);
+    TEST_ASSERT_EQ(packets.size(), 1u);
+    TEST_ASSERT_EQ(packets[0].source_id, 1001u);
+    TEST_ASSERT_EQ(packets[0].target_id, 0x40001234u);
+    TEST_ASSERT_EQ(packets[0].action_id, 31u);
+    TEST_ASSERT_EQ(packets[0].damage, 12500u);
+    TEST_ASSERT_EQ(packets[0].effective_heal, 0u);
+    TEST_ASSERT_EQ(packets[0].effect_type, static_cast<uint16_t>(EffectType::Damage));
+    TEST_ASSERT_EQ(packets[0].severity, static_cast<uint8_t>(HitSeverity::Normal));
+    TEST_ASSERT_EQ(packets[0].timestamp_us, 999999u);
+
+    // Critical Hit (tested with both FFXIV client bit 0x20 and mock 0x01)
+    entries[0].hit_severity = 0x20; // Real FFXIV client critical flag
+    packets = decoder::decode_action_effects(1001, header, entries.data(), nullptr);
+    TEST_ASSERT_EQ(packets[0].severity, static_cast<uint8_t>(HitSeverity::Critical));
+    TEST_ASSERT((packets[0].hit_flags & HitFlags::Crit) != 0);
+
+    entries[0].hit_severity = 0x01; // Mock flag fallback
+    packets = decoder::decode_action_effects(1001, header, entries.data(), nullptr);
+    TEST_ASSERT_EQ(packets[0].severity, static_cast<uint8_t>(HitSeverity::Critical));
+
+    // Direct Hit (tested with both FFXIV client bit 0x40 and mock 0x02)
+    entries[0].hit_severity = 0x40; // Real FFXIV client direct hit flag
+    packets = decoder::decode_action_effects(1001, header, entries.data(), nullptr);
+    TEST_ASSERT_EQ(packets[0].severity, static_cast<uint8_t>(HitSeverity::DirectHit));
+    TEST_ASSERT((packets[0].hit_flags & HitFlags::DirectHit) != 0);
+
+    entries[0].hit_severity = 0x02; // Mock flag fallback
+    packets = decoder::decode_action_effects(1001, header, entries.data(), nullptr);
+    TEST_ASSERT_EQ(packets[0].severity, static_cast<uint8_t>(HitSeverity::DirectHit));
+
+    // Crit Direct Hit (0x20 | 0x40 = 0x60)
+    entries[0].hit_severity = 0x60; // Real FFXIV client CDH flag
+    packets = decoder::decode_action_effects(1001, header, entries.data(), nullptr);
+    TEST_ASSERT_EQ(packets[0].severity, static_cast<uint8_t>(HitSeverity::CritDirectHit));
+    TEST_ASSERT((packets[0].hit_flags & HitFlags::Crit) != 0);
+    TEST_ASSERT((packets[0].hit_flags & HitFlags::DirectHit) != 0);
+
+    entries[0].hit_severity = 0x03; // Mock flag fallback
+    packets = decoder::decode_action_effects(1001, header, entries.data(), nullptr);
+    TEST_ASSERT_EQ(packets[0].severity, static_cast<uint8_t>(HitSeverity::CritDirectHit));
+
+    // Extended 24-bit Dawntrail damage (e.g. 150,000 damage: value=18928, high_byte=2, flags=0x40)
+    entries[0].value = static_cast<uint16_t>(150000 & 0xFFFF);
+    entries[0].high_byte = static_cast<uint8_t>((150000 >> 16) & 0xFF);
+    entries[0].flags = 0x40;
+    entries[0].hit_severity = 0x60;
+    packets = decoder::decode_action_effects(1001, header, entries.data(), nullptr);
+    TEST_ASSERT_EQ(packets[0].damage, 150000u);
+    TEST_ASSERT_EQ(packets[0].severity, static_cast<uint8_t>(HitSeverity::CritDirectHit));
+}
+
+TEST_CASE(MeterDecoder, HealingAndMissAndBlocked) {
+    hub::game::ActionEffectHeader header{};
+    header.animation_target_id = 0x1000;
+    header.action_id = 120; // Cure
+    header.num_targets = 1;
+
+    std::array<hub::game::ActionEffectEntry, 8> entries{};
+    // Heal
+    entries[0].effect_type = 0x04;
+    entries[0].value = 18000;
+    entries[0].hit_severity = 0x20; // Crit heal (0x20)
+
+    auto packets = decoder::decode_action_effects(2001, header, entries.data(), nullptr);
+    TEST_ASSERT_EQ(packets.size(), 1u);
+    TEST_ASSERT_EQ(packets[0].effective_heal, 18000u);
+    TEST_ASSERT_EQ(packets[0].damage, 0u);
+    TEST_ASSERT_EQ(packets[0].effect_type, static_cast<uint16_t>(EffectType::Heal));
+    TEST_ASSERT_EQ(packets[0].severity, static_cast<uint8_t>(HitSeverity::Critical));
+
+    // Extended 24-bit heal (85,000 heal: value = 19464, high_byte = 1, flags = 0x40)
+    entries[0].value = static_cast<uint16_t>(85000 & 0xFFFF);
+    entries[0].high_byte = static_cast<uint8_t>((85000 >> 16) & 0xFF);
+    entries[0].flags = 0x40;
+    packets = decoder::decode_action_effects(2001, header, entries.data(), nullptr);
+    TEST_ASSERT_EQ(packets[0].effective_heal, 85000u);
+
+    // Miss
+    entries[0] = {};
+    entries[0].effect_type = 0x01;
+    entries[0].value = 0;
+    entries[0].hit_severity = 0;
+    packets = decoder::decode_action_effects(2001, header, entries.data(), nullptr);
+    TEST_ASSERT_EQ(packets.size(), 1u);
+    TEST_ASSERT_EQ(packets[0].effect_type, static_cast<uint16_t>(EffectType::Miss));
+    TEST_ASSERT((packets[0].hit_flags & HitFlags::Miss) != 0);
+
+    // Blocked
+    entries[0] = {};
+    entries[0].effect_type = 0x05;
+    entries[0].value = 5000;
+    packets = decoder::decode_action_effects(2001, header, entries.data(), nullptr);
+    TEST_ASSERT_EQ(packets.size(), 1u);
+    TEST_ASSERT_EQ(packets[0].effect_type, static_cast<uint16_t>(EffectType::Blocked));
+    TEST_ASSERT_EQ(packets[0].damage, 5000u);
+    TEST_ASSERT((packets[0].hit_flags & HitFlags::Blocked) != 0);
+
+    // Parried
+    entries[0] = {};
+    entries[0].effect_type = 0x06;
+    entries[0].value = 6200;
+    packets = decoder::decode_action_effects(2001, header, entries.data(), nullptr);
+    TEST_ASSERT_EQ(packets.size(), 1u);
+    TEST_ASSERT_EQ(packets[0].effect_type, static_cast<uint16_t>(EffectType::Parried));
+    TEST_ASSERT_EQ(packets[0].damage, 6200u);
+    TEST_ASSERT((packets[0].hit_flags & HitFlags::Parried) != 0);
+}
+
+TEST_CASE(MeterDecoder, MultiTargetAoEDistribution) {
+    hub::game::ActionEffectHeader header{};
+    header.animation_target_id = 0x40000001;
+    header.action_id = 3571; // Assize
+    header.num_targets = 3;
+
+    uint64_t targets[3] = { 0x40000001, 0x40000002, 0x40000003 };
+
+    std::array<hub::game::ActionEffectEntry, 24> entries{};
+    // Target 0: Damage 20000 + Heal 15000
+    entries[0].effect_type = 0x03;
+    entries[0].value = 20000;
+    entries[1].effect_type = 0x04;
+    entries[1].value = 15000;
+
+    // Target 1: Damage 21000
+    entries[8].effect_type = 0x03;
+    entries[8].value = 21000;
+
+    // Target 2: Damage 19500
+    entries[16].effect_type = 0x03;
+    entries[16].value = 19500;
+
+    auto packets = decoder::decode_action_effects(1001, header, entries.data(), targets);
+    TEST_ASSERT_EQ(packets.size(), 4u);
+
+    TEST_ASSERT_EQ(packets[0].target_id, 0x40000001u);
+    TEST_ASSERT_EQ(packets[0].damage, 20000u);
+
+    TEST_ASSERT_EQ(packets[1].target_id, 0x40000001u);
+    TEST_ASSERT_EQ(packets[1].effective_heal, 15000u);
+
+    TEST_ASSERT_EQ(packets[2].target_id, 0x40000002u);
+    TEST_ASSERT_EQ(packets[2].damage, 21000u);
+
+    TEST_ASSERT_EQ(packets[3].target_id, 0x40000003u);
+    TEST_ASSERT_EQ(packets[3].damage, 19500u);
+}
+
+TEST_CASE(MeterRegistry, ActorRegistrationAndPetInference) {
+    CombatantRegistry reg;
+
+    reg.register_actor(100, "Warrior Tank", Job::WAR, 0, ActorType::Player, 120000, 120000);
+    const auto* war = reg.find_actor(100);
+    TEST_ASSERT(war != nullptr);
+    TEST_ASSERT_EQ(war->name, "Warrior Tank");
+    TEST_ASSERT_EQ(war->job, Job::WAR);
+    TEST_ASSERT_EQ(war->role, Role::Tank);
+    TEST_ASSERT_FALSE(war->is_pet);
+
+    // Pet name job inference
+    reg.register_actor(201, "Demi-Bahamut");
+    const auto* baha = reg.find_actor(201);
+    TEST_ASSERT(baha != nullptr);
+    TEST_ASSERT(baha->is_pet);
+    TEST_ASSERT_EQ(baha->job, Job::SMN);
+
+    reg.register_actor(202, "Eos");
+    const auto* eos = reg.find_actor(202);
+    TEST_ASSERT(eos != nullptr);
+    TEST_ASSERT(eos->is_pet);
+    TEST_ASSERT_EQ(eos->job, Job::SCH);
+
+    reg.register_actor(203, "Automaton Queen");
+    const auto* queen = reg.find_actor(203);
+    TEST_ASSERT(queen != nullptr);
+    TEST_ASSERT(queen->is_pet);
+    TEST_ASSERT_EQ(queen->job, Job::MCH);
+
+    reg.register_actor(204, "Living Shadow");
+    const auto* shadow = reg.find_actor(204);
+    TEST_ASSERT(shadow != nullptr);
+    TEST_ASSERT(shadow->is_pet);
+    TEST_ASSERT_EQ(shadow->job, Job::DRK);
+
+    reg.register_actor(205, "Bunshin");
+    const auto* bunshin = reg.find_actor(205);
+    TEST_ASSERT(bunshin != nullptr);
+    TEST_ASSERT(bunshin->is_pet);
+    TEST_ASSERT_EQ(bunshin->job, Job::NIN);
+}
+
+TEST_CASE(MeterRegistry, PetOwnerResolutionAndLoopGuard) {
+    CombatantRegistry reg;
+
+    reg.register_actor(10, "Summoner Player", Job::SMN);
+    reg.register_actor(20, "Demi-Bahamut", Job::SMN, 10);
+
+    TEST_ASSERT_EQ(reg.resolve_owner(10), 10u);
+    TEST_ASSERT_EQ(reg.resolve_owner(20), 10u);
+
+    // Chained ownership: 30 -> 20 -> 10
+    reg.set_pet_owner(30, 20);
+    TEST_ASSERT_EQ(reg.resolve_owner(30), 10u);
+
+    // Cyclic loop guard (A -> B -> A)
+    reg.set_pet_owner(100, 101);
+    reg.set_pet_owner(101, 100);
+    // Should terminate gracefully without stack overflow or infinite loop
+    const EntityId resolved = reg.resolve_owner(100);
+    TEST_ASSERT(resolved == 100u || resolved == 101u);
+}
+
+TEST_CASE(MeterRegistry, PartySyncAndWipeDetection) {
+    CombatantRegistry reg;
+
+    hub::ipc::PartySyncPacket pkt{};
+    pkt.party_count = 3;
+    pkt.entity_ids[0] = 1001; pkt.job_ids[0] = static_cast<uint32_t>(Job::WAR);
+    pkt.entity_ids[1] = 1002; pkt.job_ids[1] = static_cast<uint32_t>(Job::WHM);
+    pkt.entity_ids[2] = 1003; pkt.job_ids[2] = static_cast<uint32_t>(Job::VPR);
+
+    reg.sync_party(pkt);
+    TEST_ASSERT_EQ(reg.party_size(), 3u);
+    TEST_ASSERT_TRUE(reg.is_party_member(1001));
+    TEST_ASSERT_TRUE(reg.is_party_member(1002));
+    TEST_ASSERT_TRUE(reg.is_party_member(1003));
+    TEST_ASSERT_FALSE(reg.is_party_member(9999));
+
+    // Initially HP is default, not wiped
+    reg.update_hp(1001, 80000, 80000);
+    reg.update_hp(1002, 60000, 60000);
+    reg.update_hp(1003, 70000, 70000);
+    TEST_ASSERT_FALSE(reg.is_party_wiped());
+
+    // 2 members die, 1 survivor: NOT wiped
+    reg.update_hp(1001, 0);
+    reg.update_hp(1002, 0);
+    TEST_ASSERT_FALSE(reg.is_party_wiped());
+
+    // Last member dies: Wiped
+    reg.update_hp(1003, 0);
+    TEST_ASSERT_TRUE(reg.is_party_wiped());
+
+    // Healer gets revived: Wipe condition clears immediately
+    reg.update_hp(1002, 30000);
+    TEST_ASSERT_FALSE(reg.is_party_wiped());
+}
+
+TEST_CASE(MeterRegistry, FriendlyFiltering) {
+    CombatantRegistry reg;
+
+    reg.set_local_player(500);
+    TEST_ASSERT_TRUE(reg.is_friendly(500));
+
+    reg.register_actor(600, "Boss Monster", Job::None, 0, ActorType::Monster);
+    TEST_ASSERT_FALSE(reg.is_friendly(600));
+
+    // Entity with monster bit 0x40000000
+    TEST_ASSERT_FALSE(reg.is_friendly(0x40000123));
+}
+
+TEST_CASE(MeterAccumulator, DamageAccumulationAndDps) {
+    MetricsAccumulator acc;
+    CombatantRegistry reg;
+    reg.register_actor(100, "Viper", Job::VPR);
+
+    hub::ipc::CombatActionPacket p1{};
+    p1.source_id = 100;
+    p1.target_id = 0x40001;
+    p1.action_id = 34606; // Steel Fangs
+    p1.damage = 10000;
+    p1.effect_type = static_cast<uint16_t>(EffectType::Damage);
+    p1.severity = static_cast<uint8_t>(HitSeverity::Normal);
+    acc.record_action(p1, reg);
+
+    hub::ipc::CombatActionPacket p2{};
+    p2.source_id = 100;
+    p2.target_id = 0x40001;
+    p2.action_id = 34607; // Reaving Fangs
+    p2.damage = 20000;
+    p2.effect_type = static_cast<uint16_t>(EffectType::Damage);
+    p2.severity = static_cast<uint8_t>(HitSeverity::CritDirectHit);
+    p2.hit_flags = HitFlags::Crit | HitFlags::DirectHit;
+    acc.record_action(p2, reg);
+
+    TEST_ASSERT_EQ(acc.total_damage(), 30000u);
+
+    // Duration floor test: duration = 0.0s clamped to 1.0s
+    acc.recalculate(0.0, &reg);
+    TEST_ASSERT_NEAR(acc.total_dps(), 30000.0, 0.01);
+
+    // Duration = 10.0s -> DPS = 3000.0
+    acc.recalculate(10.0, &reg);
+    TEST_ASSERT_NEAR(acc.total_dps(), 3000.0, 0.01);
+
+    const auto* stats = acc.find_stats(100);
+    TEST_ASSERT(stats != nullptr);
+    TEST_ASSERT_EQ(stats->total_damage, 30000u);
+    TEST_ASSERT_NEAR(stats->dps, 3000.0, 0.01);
+    TEST_ASSERT_NEAR(stats->hits.crit_rate(), 50.0, 0.01);
+    TEST_ASSERT_NEAR(stats->hits.dh_rate(), 50.0, 0.01);
+    TEST_ASSERT_NEAR(stats->hits.cdh_rate(), 50.0, 0.01);
+}
+
+TEST_CASE(MeterAccumulator, HealingAndOverhealAccounting) {
+    MetricsAccumulator acc;
+    CombatantRegistry reg;
+    reg.register_actor(200, "White Mage", Job::WHM);
+
+    hub::ipc::CombatActionPacket p1{};
+    p1.source_id = 200;
+    p1.target_id = 100;
+    p1.action_id = 135; // Cure II
+    p1.damage = 10000; // total raw heal
+    p1.effective_heal = 7000;
+    p1.overheal = 3000;
+    p1.effect_type = static_cast<uint16_t>(EffectType::Heal);
+    acc.record_action(p1, reg);
+
+    TEST_ASSERT_EQ(acc.total_healing(), 10000u);
+    TEST_ASSERT_EQ(acc.total_effective_healing(), 7000u);
+    TEST_ASSERT_EQ(acc.total_overhealing(), 3000u);
+    TEST_ASSERT_NEAR(acc.overheal_pct(), 30.0, 0.01);
+
+    // HPS calculation is strictly effective healing / duration
+    acc.recalculate(10.0, &reg);
+    TEST_ASSERT_NEAR(acc.total_hps(), 700.0, 0.01);
+
+    const auto* whm = acc.find_stats(200);
+    TEST_ASSERT(whm != nullptr);
+    TEST_ASSERT_NEAR(whm->hps, 700.0, 0.01);
+    TEST_ASSERT_NEAR(whm->overheal_pct(), 30.0, 0.01);
+}
+
+TEST_CASE(MeterAccumulator, PetDamageAttributionAndLateMerge) {
+    MetricsAccumulator acc;
+    CombatantRegistry reg;
+
+    reg.register_actor(10, "Summoner", Job::SMN);
+    reg.register_actor(20, "Demi-Bahamut", Job::SMN, 10);
+
+    // Summoner action
+    hub::ipc::CombatActionPacket p1{};
+    p1.source_id = 10;
+    p1.damage = 15000;
+    p1.effect_type = static_cast<uint16_t>(EffectType::Damage);
+    p1.action_id = 25820; // Astral Impulse
+    acc.record_action(p1, reg);
+
+    // Pet action
+    hub::ipc::CombatActionPacket p2{};
+    p2.source_id = 20; // Bahamut
+    p2.damage = 25000;
+    p2.effect_type = static_cast<uint16_t>(EffectType::Damage);
+    p2.action_id = 7449; // Akh Morn
+    acc.record_action(p2, reg);
+
+    // Both should be attributed to Summoner (id 10)
+    const auto* smn = acc.find_stats(10);
+    TEST_ASSERT(smn != nullptr);
+    TEST_ASSERT_EQ(smn->total_damage, 40000u);
+    TEST_ASSERT_EQ(smn->pet_damage, 25000u);
+    // Pet should NOT have an orphan row
+    TEST_ASSERT(acc.find_stats(20) == nullptr);
+
+    // Test late pet merge: an unlinked pet recorded first, then merged
+    hub::ipc::CombatActionPacket p3{};
+    p3.source_id = 99; // Unlinked pet
+    p3.damage = 5000;
+    p3.effect_type = static_cast<uint16_t>(EffectType::Damage);
+    p3.action_id = 100;
+    acc.record_action(p3, reg);
+    TEST_ASSERT(acc.find_stats(99) != nullptr);
+
+    // Late attribution: link pet 99 to owner 10
+    reg.set_pet_owner(99, 10);
+    acc.recalculate(5.0, &reg);
+
+    // Row 99 merged into 10
+    TEST_ASSERT(acc.find_stats(99) == nullptr);
+    smn = acc.find_stats(10);
+    TEST_ASSERT_EQ(smn->total_damage, 45000u);
+    TEST_ASSERT_EQ(smn->pet_damage, 30000u);
+}
+
+TEST_CASE(MeterAccumulator, FriendlyDamageIsolation) {
+    MetricsAccumulator acc;
+    CombatantRegistry reg;
+
+    reg.register_actor(10, "Warrior", Job::WAR);
+    reg.register_actor(0x400001, "Raid Boss", Job::None, 0, ActorType::Monster);
+
+    // Boss deals 50,000 damage to Warrior
+    hub::ipc::CombatActionPacket p{};
+    p.source_id = 0x400001;
+    p.target_id = 10;
+    p.damage = 50000;
+    p.effect_type = static_cast<uint16_t>(EffectType::Damage);
+    acc.record_action(p, reg);
+
+    // Invariant: Boss damage must NEVER pollute raid damage or raid DPS
+    TEST_ASSERT_EQ(acc.total_damage(), 0u);
+    acc.recalculate(10.0, &reg);
+    TEST_ASSERT_NEAR(acc.total_dps(), 0.0, 0.01);
+
+    // But Warrior's damage_taken is tracked
+    const auto* war = acc.find_stats(10);
+    TEST_ASSERT(war != nullptr);
+    TEST_ASSERT_EQ(war->damage_taken, 50000u);
+}
+
+TEST_CASE(MeterAccumulator, SortingByDpsAndHps) {
+    MetricsAccumulator acc;
+    CombatantRegistry reg;
+
+    reg.register_actor(1, "Dps 1", Job::VPR);
+    reg.register_actor(2, "Dps 2", Job::PCT);
+    reg.register_actor(3, "Healer", Job::WHM);
+
+    hub::ipc::CombatActionPacket p1{}; p1.source_id = 1; p1.damage = 10000; p1.effect_type = 1; acc.record_action(p1, reg);
+    hub::ipc::CombatActionPacket p2{}; p2.source_id = 2; p2.damage = 30000; p2.effect_type = 1; acc.record_action(p2, reg);
+    hub::ipc::CombatActionPacket p3{}; p3.source_id = 3; p3.damage = 5000;  p3.effect_type = 1; acc.record_action(p3, reg);
+
+    hub::ipc::CombatActionPacket h1{}; h1.source_id = 3; h1.effective_heal = 20000; h1.effect_type = 2; acc.record_action(h1, reg);
+
+    acc.recalculate(10.0, &reg);
+
+    auto dps_list = acc.sorted_by_dps();
+    TEST_ASSERT_EQ(dps_list.size(), 3u);
+    TEST_ASSERT_EQ(dps_list[0].entity_id, 2u); // 30,000
+    TEST_ASSERT_EQ(dps_list[1].entity_id, 1u); // 10,000
+    TEST_ASSERT_EQ(dps_list[2].entity_id, 3u); // 5,000
+
+    auto hps_list = acc.sorted_by_hps();
+    TEST_ASSERT_FALSE(hps_list.empty());
+    TEST_ASSERT_EQ(hps_list[0].entity_id, 3u); // 20,000 heal
+}
+
+TEST_CASE(MeterEngine, EncounterLifecycleStartOnAction) {
+    EncounterEngine engine;
+    TEST_ASSERT_EQ(engine.state(), EncounterState::Idle);
+
+    const auto t0 = std::chrono::steady_clock::now();
+
+    // Passive DoT tick must NOT start combat encounter
+    hub::ipc::StatusTickPacket tick{};
+    tick.source_id = 100;
+    tick.damage_or_heal = 1500;
+    tick.effect_type = static_cast<uint8_t>(EffectType::Damage);
+    engine.process_status_tick(tick, t0);
+    TEST_ASSERT_EQ(engine.state(), EncounterState::Idle);
+
+    // Direct damage action initiates combat encounter
+    hub::ipc::CombatActionPacket act{};
+    act.source_id = 100;
+    act.target_id = 0x40001;
+    act.damage = 12000;
+    act.action_id = 31;
+    act.effect_type = static_cast<uint16_t>(EffectType::Damage);
+    engine.process_action(act, t0);
+
+    TEST_ASSERT_EQ(engine.state(), EncounterState::InCombat);
+    TEST_ASSERT_TRUE(engine.in_combat());
+}
+
+TEST_CASE(MeterEngine, InactivityTimeoutSplit) {
+    EncounterEngine engine(7.0); // 7.0s timeout
+    const auto t0 = std::chrono::steady_clock::now();
+
+    hub::ipc::CombatActionPacket act{};
+    act.source_id = 100;
+    act.damage = 10000;
+    act.effect_type = static_cast<uint16_t>(EffectType::Damage);
+    engine.process_action(act, t0);
+    TEST_ASSERT_EQ(engine.state(), EncounterState::InCombat);
+
+    // Action at t + 3s
+    const auto t1 = t0 + std::chrono::seconds(3);
+    act.damage = 15000;
+    engine.process_action(act, t1);
+    TEST_ASSERT_EQ(engine.state(), EncounterState::InCombat);
+
+    // Advance 7.5s past t1 (t + 10.5s) -> timeout triggers
+    const auto t2 = t1 + std::chrono::milliseconds(7500);
+    engine.update(t2);
+
+    TEST_ASSERT_EQ(engine.state(), EncounterState::Complete);
+    TEST_ASSERT_FALSE(engine.in_combat());
+
+    // Invariant: Duration is calculated from last activity (3s), NOT inflated by 7s timeout
+    const auto* pull = engine.latest_pull();
+    TEST_ASSERT(pull != nullptr);
+    TEST_ASSERT_NEAR(pull->duration_seconds, 3.0, 0.05);
+    TEST_ASSERT_EQ(pull->end_reason, EncounterEndReason::Inactivity);
+    TEST_ASSERT_EQ(pull->total_damage, 25000u);
+}
+
+TEST_CASE(MeterEngine, PartyWipeDetection) {
+    EncounterEngine engine;
+    const auto t0 = std::chrono::steady_clock::now();
+
+    hub::ipc::PartySyncPacket sync{};
+    sync.party_count = 2;
+    sync.entity_ids[0] = 101; sync.job_ids[0] = static_cast<uint32_t>(Job::WAR);
+    sync.entity_ids[1] = 102; sync.job_ids[1] = static_cast<uint32_t>(Job::WHM);
+    engine.process_party_sync(sync);
+
+    engine.registry().update_hp(101, 80000, 80000);
+    engine.registry().update_hp(102, 60000, 60000);
+
+    // Start encounter
+    hub::ipc::CombatActionPacket act{};
+    act.source_id = 101;
+    act.damage = 5000;
+    act.effect_type = static_cast<uint16_t>(EffectType::Damage);
+    engine.process_action(act, t0);
+    TEST_ASSERT_EQ(engine.state(), EncounterState::InCombat);
+
+    // One player dies
+    engine.registry().update_hp(101, 0);
+    engine.update(t0 + std::chrono::seconds(1));
+    TEST_ASSERT_EQ(engine.state(), EncounterState::InCombat); // Surviving WHM
+
+    // All dead -> Wipe
+    engine.registry().update_hp(102, 0);
+    engine.update(t0 + std::chrono::seconds(2));
+    TEST_ASSERT_EQ(engine.state(), EncounterState::Wipe);
+
+    const auto* pull = engine.latest_pull();
+    TEST_ASSERT(pull != nullptr);
+    TEST_ASSERT_EQ(pull->state, EncounterState::Wipe);
+    TEST_ASSERT_EQ(pull->end_reason, EncounterEndReason::Wipe);
+}
+
+TEST_CASE(MeterEngine, PullHistoryArchive) {
+    EncounterEngine engine;
+    engine.set_history_capacity(3);
+
+    for (int i = 1; i <= 5; ++i) {
+        const auto now = std::chrono::steady_clock::now();
+        hub::ipc::CombatActionPacket act{};
+        act.source_id = 1;
+        act.damage = static_cast<uint32_t>(i * 1000);
+        act.effect_type = static_cast<uint16_t>(EffectType::Damage);
+        engine.process_action(act, now);
+        engine.end_encounter(EncounterEndReason::Manual, now + std::chrono::seconds(2));
+    }
+
+    // Capacity is capped at 3
+    TEST_ASSERT_EQ(engine.pull_history().size(), 3u);
+    TEST_ASSERT_EQ(engine.pull_history()[2].total_damage, 5000u);
+    TEST_ASSERT_EQ(engine.pull_history()[1].total_damage, 4000u);
+    TEST_ASSERT_EQ(engine.pull_history()[0].total_damage, 3000u);
+}
+
+TEST_CASE(MeterPlugin, PluginLifecycleAndConfig) {
+    CombatPlugin plugin;
+    TEST_ASSERT_EQ(plugin.id(), hub::PluginId::CombatMeter);
+    TEST_ASSERT_EQ(std::string(plugin.name()), "Combat Meter");
+
+    TEST_ASSERT_TRUE(plugin.initialize());
+
+    // Serialize default config to JSON
+    hub::config::JsonValue json{hub::config::JsonValue::ObjectType{}};
+    plugin.serialize_config(json);
+    TEST_ASSERT_TRUE(json["enabled"].as_bool(false));
+    TEST_ASSERT_NEAR(json["inactivity_timeout_seconds"].as_double(0.0), 7.0, 0.01);
+    TEST_ASSERT_TRUE(json["party_only"].as_bool(false));
+
+    // Modify and deserialize back
+    json["inactivity_timeout_seconds"] = hub::config::JsonValue(10.0);
+    json["party_only"] = hub::config::JsonValue(false);
+    json["window_width"] = hub::config::JsonValue(950);
+    plugin.deserialize_config(json);
+
+    TEST_ASSERT_NEAR(plugin.config().inactivity_timeout_seconds, 10.0, 0.01);
+    TEST_ASSERT_NEAR(plugin.engine().inactivity_timeout(), 10.0, 0.01);
+    TEST_ASSERT_FALSE(plugin.config().party_only);
+    TEST_ASSERT_EQ(plugin.config().window_width, 950);
+
+    plugin.shutdown();
+}
+
+TEST_CASE(MeterPlugin, HookConsumerDispatch) {
+    CombatPlugin plugin;
+    plugin.initialize();
+
+    hub::game::ActionEffectHeader header{};
+    header.animation_target_id = 0x40001;
+    header.action_id = 31;
+    header.num_targets = 1;
+
+    std::array<hub::game::ActionEffectEntry, 8> entries{};
+    entries[0].effect_type = 0x03; // Damage
+    entries[0].value = 25000;
+
+    hub::game::CharacterObject chr{};
+    chr.entity_id = 777;
+    std::string test_name = "Krile";
+    std::copy(test_name.begin(), test_name.end(), chr.name);
+    chr.class_job = static_cast<uint8_t>(Job::PCT);
+    chr.current_hp = 50000;
+    chr.max_hp = 50000;
+
+    plugin.on_receive_action_effect(
+        777,
+        &chr,
+        &header,
+        entries.data(),
+        nullptr
+    );
+
+    TEST_ASSERT_TRUE(plugin.engine().in_combat());
+    TEST_ASSERT_EQ(plugin.engine().accumulator().total_damage(), 25000u);
+
+    const auto* actor = plugin.engine().registry().find_actor(777);
+    TEST_ASSERT(actor != nullptr);
+    TEST_ASSERT_EQ(actor->name, "Krile");
+    TEST_ASSERT_EQ(actor->job, Job::PCT);
+
+    plugin.shutdown();
+}

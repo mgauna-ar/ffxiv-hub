@@ -175,7 +175,24 @@ struct CombatPartySyncPayload {
 };
 static_assert(sizeof(CombatPartySyncPayload) == 72, "CombatPartySyncPayload must be 72 bytes");
 
+/// 0x0206: Combat Meter Encounter Control Packet
+struct CombatControlPayload {
+    uint32_t zone_id{0};
+    uint8_t  in_combat_flag{0};
+    uint8_t  control_command{0};
+    uint8_t  pad[2]{0};
+    uint64_t timestamp_us{0};
+};
+static_assert(sizeof(CombatControlPayload) == 16, "CombatControlPayload must be 16 bytes");
+
 #pragma pack(pop)
+
+// Friendly type aliases for combat meter components
+using CombatActionPacket = CombatActionPayload;
+using StatusTickPacket = CombatStatusTickPayload;
+using ActorInfoPacket = CombatActorInfoPayload;
+using PartySyncPacket = CombatPartySyncPayload;
+using EncounterControlPacket = CombatControlPayload;
 
 /// Serialize any typed payload into a byte vector with PacketHeader
 std::vector<uint8_t> serialize_packet(

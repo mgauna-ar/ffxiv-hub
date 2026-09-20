@@ -1,12 +1,13 @@
 CXX ?= clang++
-CXXFLAGS = -std=c++20 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc -Iplugins -Iplugins/latency_mitigator/include -Itests
+CXXFLAGS = -std=c++20 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc -Iplugins -Iplugins/latency_mitigator/include -Iplugins/combat_meter/include -Itests
 
 COMMON_SRCS = $(wildcard src/common/*.cpp) \
               $(wildcard src/common/ipc/*.cpp) \
               $(wildcard src/common/config/*.cpp) \
               $(wildcard src/common/os/*.cpp)
 
-PLUGIN_SRCS = $(wildcard plugins/latency_mitigator/src/*.cpp)
+PLUGIN_SRCS = $(wildcard plugins/latency_mitigator/src/*.cpp) \
+              $(wildcard plugins/combat_meter/src/*.cpp)
 
 TEST_SRCS = $(wildcard tests/*.cpp)
 

@@ -70,7 +70,12 @@ This document defines the architectural patterns, engineering principles, memory
 | **Auto-Start Registry** | `src/common/os/auto_start.hpp`<br>`src/common/os/auto_start.cpp` | Windows logon auto-start registration (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`) |
 | **System Tray Manager** | `src/common/os/tray_manager.hpp`<br>`src/common/os/tray_manager.cpp` | Shell NotifyIcon, continuous connection tooltip, native balloon notifications, and rich context menu |
 | **Latency Mitigator Plugin** | `plugins/latency_mitigator/` | Algorithmic RTT tracking (EMA + median spike filter), sequence matching, cast tracking, animation lock mitigation |
-| **Combat Meter Plugin** | `plugins/combat_meter/` | Dawntrail action packet decoding, combatant registry, automatic pet attribution, metrics accumulation, encounters |
+| **Combat Meter Types** | `plugins/combat_meter/include/meter/types.hpp` | Dawntrail 7.x jobs, roles, hit severities, effect types, stats structs, and config |
+| **Action Decoder** | `plugins/combat_meter/include/meter/action_decoder.hpp`<br>`plugins/combat_meter/src/action_decoder.cpp` | Pure binary decoder unpacking `ActionEffectHeader` and 8 `ActionEffectEntry` records into combat packets |
+| **Combatant Registry** | `plugins/combat_meter/include/meter/combatant_registry.hpp`<br>`plugins/combat_meter/src/combatant_registry.cpp` | Actor metadata cache, role mapping, party sync, automatic pet attribution, wipe detection |
+| **Metrics Accumulator** | `plugins/combat_meter/include/meter/metrics_accumulator.hpp`<br>`plugins/combat_meter/src/metrics_accumulator.cpp` | Real-time DPS, HPS (effective vs overheal), Crit%, DH%, CDH%, and per-action breakdowns |
+| **Encounter Engine** | `plugins/combat_meter/include/meter/encounter_engine.hpp`<br>`plugins/combat_meter/src/encounter_engine.cpp` | Encounter state machine (start on action, 7.0s inactivity split, wipe detection, pull history) |
+| **Combat Meter Plugin** | `plugins/combat_meter/include/meter/combat_plugin.hpp`<br>`plugins/combat_meter/src/combat_plugin.cpp` | `IPlugin`, `IConfigurable`, and `IHookConsumer` implementation dispatching game actions to engine |
 | **Payload Hook Manager** | `src/payload/hook_manager.hpp`<br>`src/payload/hook_manager.cpp` | Central MinHook lifecycle, hooking `ReceiveActionEffect`, `UseActionLocation`, and dispatching to plugins |
 | **DX11 Hook** | `src/payload/dx11_hook.hpp`<br>`src/payload/dx11_hook.cpp` | MinHook detours for `IDXGISwapChain::Present`, `ResizeBuffers`, and transparent shutdown passthrough |
 | **WndProc Hook** | `src/payload/wndproc_hook.hpp`<br>`src/payload/wndproc_hook.cpp` | Non-destructive `SetWindowLongPtrW` window procedure detour with ImGui input capture routing |
@@ -182,8 +187,9 @@ make test
 Or directly with Clang:
 ```bash
 clang++ -std=c++20 -Wall -Wextra -Wpedantic -Werror \
-  -Iinclude -Isrc -Itests -Iplugins \
-  src/common/*.cpp src/common/ipc/*.cpp src/common/config/*.cpp src/common/os/*.cpp tests/*.cpp \
+  -Iinclude -Isrc -Itests -Iplugins -Iplugins/latency_mitigator/include -Iplugins/combat_meter/include \
+  src/common/*.cpp src/common/ipc/*.cpp src/common/config/*.cpp src/common/os/*.cpp \
+  plugins/latency_mitigator/src/*.cpp plugins/combat_meter/src/*.cpp tests/*.cpp \
   -o hub_test_runner && ./hub_test_runner
 ```
 

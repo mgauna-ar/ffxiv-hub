@@ -33,9 +33,11 @@ enum class MessageType : uint16_t {
     CombatActionEffect  = 0x0201,
     CombatStatusTick    = 0x0202,
     CombatEncounterEvent= 0x0203,
-    CombatPartySync     = 0x0204,
-    CombatResetEncounter= 0x0205,
-    CombatOverlayGeometry=0x0206,
+    CombatActorInfo     = 0x0204,
+    CombatPartySync     = 0x0205,
+    CombatControl       = 0x0206,
+    CombatResetEncounter= 0x0207,
+    CombatOverlayGeometry=0x0208,
 };
 
 /// Runtime command IDs sent from desktop manager to payload plugins

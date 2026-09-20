@@ -39,6 +39,7 @@ include_directories(
     src
     plugins
     plugins/latency_mitigator/include
+    plugins/combat_meter/include
 )
 
 # Common Library & Plugins
@@ -48,6 +49,7 @@ file(GLOB COMMON_SOURCES
     src/common/config/*.cpp
     src/common/os/*.cpp
     plugins/latency_mitigator/src/*.cpp
+    plugins/combat_meter/src/*.cpp
 )
 
 add_library(hub_common STATIC ${COMMON_SOURCES})
@@ -56,6 +58,7 @@ target_include_directories(hub_common PUBLIC
     src
     plugins
     plugins/latency_mitigator/include
+    plugins/combat_meter/include
 )
 
 # Unit Tests Target (cross-platform runnable on macOS, Linux, Windows)
