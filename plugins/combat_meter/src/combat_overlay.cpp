@@ -129,9 +129,9 @@ void CombatOverlay::render_top_bar(const EncounterSummary& current) {
     ImGui::SameLine();
 
     if (m_active_tab == OverlayTab::Healing) {
-        ImGui::TextColored(ImVec4(0.10f, 0.80f, 0.40f, 1.0f), "%.0f HPS", current.raid_hps);
+        ImGui::TextColored(ImVec4(0.10f, 0.80f, 0.40f, 1.0f), "%.0f HPS", current.total_hps);
     } else {
-        ImGui::TextColored(ImVec4(0.96f, 0.50f, 0.20f, 1.0f), "%.0f DPS", current.raid_dps);
+        ImGui::TextColored(ImVec4(0.96f, 0.50f, 0.20f, 1.0f), "%.0f DPS", current.total_dps);
     }
 
     // 3. Right-anchored padlock toggle button
@@ -326,7 +326,7 @@ void CombatOverlay::render_history_tab() {
         const auto& p = history[m_selected_history_pull];
         uint32_t s = static_cast<uint32_t>(p.duration_seconds);
         std::snprintf(preview, sizeof(preview), "Pull #%d (%02u:%02u - %.0f DPS)",
-                      m_selected_history_pull + 1, s / 60, s % 60, p.raid_dps);
+                      m_selected_history_pull + 1, s / 60, s % 60, p.total_dps);
     } else {
         std::snprintf(preview, sizeof(preview), "Select Pull (Latest: #%zu)", history.size());
     }
@@ -336,7 +336,7 @@ void CombatOverlay::render_history_tab() {
             const auto& p = history[i];
             uint32_t s = static_cast<uint32_t>(p.duration_seconds);
             char item[64];
-            std::snprintf(item, sizeof(item), "Pull #%d (%02u:%02u - %.0f DPS)", i + 1, s / 60, s % 60, p.raid_dps);
+            std::snprintf(item, sizeof(item), "Pull #%d (%02u:%02u - %.0f DPS)", i + 1, s / 60, s % 60, p.total_dps);
             bool is_selected = (m_selected_history_pull == i);
             if (ImGui::Selectable(item, is_selected)) {
                 m_selected_history_pull = i;
