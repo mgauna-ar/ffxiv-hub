@@ -2,6 +2,7 @@
 #include "app/ui/theme.hpp"
 #include "app/ui/config_binding.hpp"
 #include <algorithm>
+#include <ctime>
 #include <iomanip>
 #include <sstream>
 #include <vector>
@@ -115,7 +116,18 @@ void render_view_latency(AppState& app_state) {
     ImGui::PushFont(bold_font());
     ImGui::TextColored(ImVec4(0.95f, 0.96f, 0.98f, 1.0f), "Latency Mitigator Telemetry");
     ImGui::PopFont();
-    ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "Real-time animation lock compensation & slide-cast preservation");
+    // Dry-run is otherwise invisible on this view, so the numbers below look like
+    // mitigation that never happened.
+    if (cfg_bool(MITI, "dry_run", false)) {
+        ImGui::TextColored(ImVec4(0.66f, 0.33f, 0.97f, 1.0f),
+                           "AUDITED (DRY-RUN) - measuring only, no memory writes");
+    } else if (!cfg_bool(MITI, "enabled", true)) {
+        ImGui::TextColored(ImVec4(0.94f, 0.27f, 0.27f, 1.0f),
+                           "MITIGATION DISABLED - measuring only");
+    } else {
+        ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f),
+                           "Real-time animation lock compensation & slide-cast preservation");
+    }
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
@@ -129,7 +141,9 @@ void render_view_latency(AppState& app_state) {
     ImGui::TextColored(ImVec4(0.231f, 0.510f, 0.965f, 1.0f), "%.1f ms", metrics.latest_smoothed_rtt_ms);
     const double net_ping = app_state.network_ping_ms();
     if (net_ping >= 0.0) {
-        ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "Net: %.0f ms | Raw: %.1f ms", net_ping, metrics.latest_measured_rtt_ms);
+        ImGui::TextColored(ping_grade_color(net_ping), "Net: %.0f ms", net_ping);
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "| Raw: %.1f ms", metrics.latest_measured_rtt_ms);
     } else {
         ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "Raw: %.1f ms", metrics.latest_measured_rtt_ms);
     }
@@ -182,38 +196,70 @@ void render_view_latency(AppState& app_state) {
     ImGui::Separator();
     ImGui::Spacing();
 
-    if (ImGui::BeginTable("##RecentActionsTable", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY)) {
+    if (ImGui::BeginTable("##RecentActionsTable", 8, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY)) {
+        ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthFixed, 66.0f * ui_scale());
         ImGui::TableSetupColumn("Action ID", ImGuiTableColumnFlags_WidthFixed, 70.0f * ui_scale());
         ImGui::TableSetupColumn("Seq", ImGuiTableColumnFlags_WidthFixed, 45.0f * ui_scale());
-        ImGui::TableSetupColumn("RTT", ImGuiTableColumnFlags_WidthFixed, 60.0f * ui_scale());
+        ImGui::TableSetupColumn("RTT", ImGuiTableColumnFlags_WidthFixed, 56.0f * ui_scale());
+        ImGui::TableSetupColumn("Raw Lock", ImGuiTableColumnFlags_WidthFixed, 68.0f * ui_scale());
+        ImGui::TableSetupColumn("Adj Lock", ImGuiTableColumnFlags_WidthFixed, 68.0f * ui_scale());
         ImGui::TableSetupColumn("Reduced", ImGuiTableColumnFlags_WidthFixed, 65.0f * ui_scale());
-        ImGui::TableSetupColumn("Flags", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupScrollFreeze(0, 1);
         ImGui::TableHeadersRow();
 
         for (auto it = telemetry.rbegin(); it != telemetry.rend(); ++it) {
             ImGui::TableNextRow();
 
             ImGui::TableSetColumnIndex(0);
-            ImGui::Text("#%u", it->action_id);
+            const std::time_t secs = static_cast<std::time_t>(it->timestamp_ms / 1000);
+            std::tm tm_buf{};
+#ifdef _WIN32
+            localtime_s(&tm_buf, &secs);
+#else
+            localtime_r(&secs, &tm_buf);
+#endif
+            ImGui::Text("%02d:%02d:%02d", tm_buf.tm_hour, tm_buf.tm_min, tm_buf.tm_sec);
 
             ImGui::TableSetColumnIndex(1);
-            ImGui::Text("%u", it->sequence);
+            ImGui::Text("#%u", it->action_id);
 
             ImGui::TableSetColumnIndex(2);
-            ImGui::Text("%.1f", it->measured_rtt_ms);
+            ImGui::Text("%u", it->sequence);
 
             ImGui::TableSetColumnIndex(3);
-            ImGui::Text("-%.1f", it->delay_reduced_ms);
+            ImGui::Text("%.1f", it->measured_rtt_ms);
 
+            // Raw and adjusted side by side: without both there is no way to see
+            // whether an action was actually mitigated.
             ImGui::TableSetColumnIndex(4);
-            if (it->spike_filtered) {
-                ImGui::TextColored(ImVec4(0.96f, 0.62f, 0.04f, 1.0f), "Spike");
-            } else if (it->clamped_floor) {
-                ImGui::TextColored(ImVec4(0.94f, 0.27f, 0.27f, 1.0f), "Floor");
-            } else if (it->cast_active) {
-                ImGui::TextColored(ImVec4(0.66f, 0.33f, 0.97f, 1.0f), "Cast");
+            ImGui::Text("%.1f", it->original_lock_ms);
+
+            ImGui::TableSetColumnIndex(5);
+            ImGui::Text("%.1f", it->adjusted_lock_ms);
+
+            ImGui::TableSetColumnIndex(6);
+            if (it->delay_reduced_ms > 0.0f) {
+                ImGui::Text("-%.1f", it->delay_reduced_ms);
             } else {
-                ImGui::TextColored(ImVec4(0.063f, 0.725f, 0.506f, 1.0f), "OK");
+                ImGui::TextDisabled("--");
+            }
+
+            ImGui::TableSetColumnIndex(7);
+            if (it->dry_run) {
+                ImGui::TextColored(ImVec4(0.66f, 0.33f, 0.97f, 1.0f), "Dry-run (not applied)");
+            } else if (it->spike_filtered) {
+                ImGui::TextColored(ImVec4(0.96f, 0.62f, 0.04f, 1.0f), "Spike filtered");
+            } else if (it->clamped_floor) {
+                ImGui::TextColored(ImVec4(0.94f, 0.27f, 0.27f, 1.0f), "Clamped to floor");
+            } else if (it->cast_active) {
+                ImGui::TextColored(ImVec4(0.66f, 0.33f, 0.97f, 1.0f), "Cast - skipped");
+            } else if (it->cold_start_guard) {
+                ImGui::TextColored(ImVec4(0.96f, 0.62f, 0.04f, 1.0f), "Cold start guard");
+            } else if (it->applied) {
+                ImGui::TextColored(ImVec4(0.063f, 0.725f, 0.506f, 1.0f), "Mitigated");
+            } else {
+                ImGui::TextDisabled("No change");
             }
         }
 
@@ -227,6 +273,16 @@ void render_view_latency(AppState& app_state) {
     ImGui::BeginChild("##MitigatorConfigPanel", ImVec2(half_w, 240.0f * ui_scale()), true);
     ImGui::TextColored(ImVec4(0.95f, 0.96f, 0.98f, 1.0f), "Algorithm & In-Game HUD Controls");
     ImGui::Separator();
+    ImGui::Spacing();
+
+    // Master switch: mitigation was previously only disableable by editing
+    // config.json and restarting.
+    bool miti_enabled = cfg_bool(MITI, "enabled", true);
+    if (ImGui::Checkbox("Enable Animation Lock Mitigation", &miti_enabled)) {
+        cfg_store(MITI, "enabled", miti_enabled);
+        app_state.send_mitigator_enabled(miti_enabled);
+    }
+
     ImGui::Spacing();
 
     float target_ping = cfg_float(MITI, "target_ping_ms", 15.0f);
@@ -292,6 +348,18 @@ void render_view_latency(AppState& app_state) {
     if (ImGui::Combo("HUD Layout", &hud_mode, hud_mode_names, 3)) {
         cfg_store(MITI, "overlay_mode", hud_mode);
         app_state.send_mitigator_hud_display_mode(static_cast<uint32_t>(hud_mode));
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    if (ImGui::Button("Reset HUD Position", ImVec2(160.0f * ui_scale(), 28.0f * ui_scale()))) {
+        app_state.send_mitigator_reset_overlay_geometry();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Reset Statistics", ImVec2(150.0f * ui_scale(), 28.0f * ui_scale()))) {
+        app_state.send_mitigator_reset_stats();
     }
 
     ImGui::EndChild();

@@ -6,6 +6,8 @@
 #include "mitigator/latency_overlay.hpp"
 #include "meter/combat_overlay.hpp"
 #include "meter/encounter_engine.hpp"
+#include "mitigator/latency_plugin.hpp"
+#include "payload/command_dispatcher.hpp"
 #include "hub/game_definitions.hpp"
 
 using namespace hub;
@@ -340,4 +342,77 @@ TEST_CASE(Payload, HideInactiveDropsZeroContributors) {
     const auto hidden = meter::CombatOverlay::sorted_combatants(summary, true, false, true);
     TEST_ASSERT_EQ(hidden.size(), 1u);
     TEST_ASSERT(hidden[0]->name == "Dealer");
+}
+
+TEST_CASE(Payload, DispatchesRuntimeMitigationToggle) {
+    // Mitigation had no runtime switch at all: MitigationConfig::enabled was
+    // reachable only by editing config.json and restarting the game.
+    mitigator::LatencyPlugin plugin;
+    payload::CommandDispatchTargets targets;
+    targets.latency_plugin = &plugin;
+
+    TEST_ASSERT(plugin.mitigator().get_config().enabled);
+
+    ipc::CommandPayload cmd{};
+    cmd.target_plugin_id = static_cast<uint32_t>(PluginId::LatencyMitigator);
+    cmd.command_id = static_cast<uint32_t>(CommandId::SetMitigationEnabled);
+    cmd.param_uint = 0;
+    payload::dispatch_command(targets, cmd);
+    TEST_ASSERT(!plugin.mitigator().get_config().enabled);
+
+    cmd.param_uint = 1;
+    payload::dispatch_command(targets, cmd);
+    TEST_ASSERT(plugin.mitigator().get_config().enabled);
+}
+
+TEST_CASE(Payload, DispatchesMeterColumnAndBehaviourCommands) {
+    meter::CombatOverlay overlay;
+    payload::CommandDispatchTargets targets;
+    targets.combat_overlay = &overlay;
+
+    ipc::CommandPayload cmd{};
+    cmd.target_plugin_id = static_cast<uint32_t>(PluginId::CombatMeter);
+
+    auto send = [&](CommandId id, uint32_t v) {
+        cmd.command_id = static_cast<uint32_t>(id);
+        cmd.param_uint = v;
+        payload::dispatch_command(targets, cmd);
+    };
+
+    send(CommandId::SetColumnShare, 0);
+    send(CommandId::SetColumnCrit, 0);
+    send(CommandId::SetColumnDh, 0);
+    send(CommandId::SetColumnCdh, 0);
+    TEST_ASSERT(!overlay.show_col_share());
+    TEST_ASSERT(!overlay.show_col_crit());
+    TEST_ASSERT(!overlay.show_col_dh());
+    TEST_ASSERT(!overlay.show_col_cdh());
+
+    send(CommandId::SetShowBars, 0);
+    TEST_ASSERT(!overlay.show_progress_bars());
+
+    send(CommandId::SetHideInactive, 1);
+    TEST_ASSERT(overlay.hide_inactive());
+
+    send(CommandId::SetRefreshInterval, 250);
+    TEST_ASSERT_EQ(overlay.refresh_interval_ms(), 250u);
+}
+
+TEST_CASE(Payload, ResetOverlayGeometryRearmsRestoreLatch) {
+    // Recovery path for an overlay saved on a monitor that is no longer attached.
+    meter::CombatOverlay overlay;
+    overlay.set_geometry(Rect{9000.0f, 9000.0f, 400.0f, 300.0f});
+    (void)overlay.consume_geometry_restore();
+
+    payload::CommandDispatchTargets targets;
+    targets.combat_overlay = &overlay;
+
+    ipc::CommandPayload cmd{};
+    cmd.target_plugin_id = static_cast<uint32_t>(PluginId::CombatMeter);
+    cmd.command_id = static_cast<uint32_t>(CommandId::ResetOverlayGeometry);
+    payload::dispatch_command(targets, cmd);
+
+    // A reset must re-arm the latch, or the new geometry is never applied.
+    TEST_ASSERT(overlay.consume_geometry_restore());
+    TEST_ASSERT(!overlay.has_saved_position());
 }

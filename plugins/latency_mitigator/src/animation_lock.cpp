@@ -185,6 +185,11 @@ void AnimationLockMitigator::set_dry_run(bool dry_run) {
     m_config.dry_run = dry_run;
 }
 
+void AnimationLockMitigator::set_enabled(bool enabled) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_config.enabled = enabled;
+}
+
 void AnimationLockMitigator::set_target_ping_ms(double target_ping_ms) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_config.target_ping_ms = std::max(0.0, target_ping_ms);

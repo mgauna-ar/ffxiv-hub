@@ -1,6 +1,7 @@
 #include "app/ui/view_settings.hpp"
 #include "app/ui/theme.hpp"
 #include "app/ui/config_binding.hpp"
+#include <filesystem>
 #include "common/os/auto_start.hpp"
 #include "common/os/logger.hpp"
 #include <fstream>
@@ -101,10 +102,42 @@ void render_view_settings(AppState& app_state) {
     ImGui::SameLine();
     if (ImGui::Button("Reload From Disk", ImVec2(160.0f * ui_scale(), 28.0f * ui_scale()))) {
         app_state.config_manager().load();
+        // The payload holds its own copy and autosaves over hand edits, so it has
+        // to be told as well.
+        app_state.send_reload_config();
     }
     ImGui::SameLine();
     if (ImGui::Button("Open Config Directory", ImVec2(180.0f * ui_scale(), 28.0f * ui_scale()))) {
         os::Logger::open_config_folder();
+    }
+
+    ImGui::Spacing();
+    if (ImGui::Button("Reset All Settings to Defaults", ImVec2(230.0f * ui_scale(), 28.0f * ui_scale()))) {
+        ImGui::OpenPopup("##ConfirmResetDefaults");
+    }
+
+    if (ImGui::BeginPopupModal("##ConfirmResetDefaults", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
+        ImGui::TextColored(ImVec4(0.95f, 0.96f, 0.98f, 1.0f), "Reset every setting to its default?");
+        ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f),
+                           "Overlay positions, mitigation tuning and meter options are all discarded.");
+        ImGui::Spacing();
+        if (ImGui::Button("Reset Everything", ImVec2(150.0f * ui_scale(), 26.0f * ui_scale()))) {
+            const auto path = app_state.config_manager().get_config_path();
+            std::error_code ec;
+            std::filesystem::remove(path, ec);
+            // The defaults live in the ConfigManager constructor, so a load with
+            // no file on disk leaves exactly those in memory.
+            app_state.config_manager().load();
+            app_state.config_manager().save();
+            app_state.send_reload_config();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(100.0f * ui_scale(), 26.0f * ui_scale()))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
     }
 
     ImGui::Spacing();

@@ -65,6 +65,17 @@ enum class CommandId : uint32_t {
     ToggleDryRun        = 17,
     UpdateNetworkPing   = 18,
     SetOverlayMode      = 19,
+    SetMitigationEnabled = 20,
+    ResetStats          = 21,
+    ResetOverlayGeometry = 22,
+    SetShowBars         = 23,
+    SetHideInactive     = 24,
+    SetRefreshInterval  = 25,
+    SetInactivityTimeout = 26,
+    SetColumnShare      = 27,
+    SetColumnCrit       = 28,
+    SetColumnDh         = 29,
+    SetColumnCdh        = 30,
 };
 
 /// Overall game attachment & IPC connection state

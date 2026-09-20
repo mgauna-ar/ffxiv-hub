@@ -6,6 +6,7 @@
 #include "app/ui/view_latency.hpp"
 #include "app/ui/view_settings.hpp"
 #include "common/os/logger.hpp"
+#include "common/os/auto_start.hpp"
 #include "common/os/process_finder.hpp"
 #include "common/os/single_instance.hpp"
 #include "common/os/tray_manager.hpp"
@@ -281,6 +282,34 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
         DestroyWindow(hwnd);
     });
 
+    tray_manager.set_auto_start(hub::os::AutoStart::is_enabled());
+    tray_manager.set_on_toggle_auto_start([&tray_manager](bool enabled) {
+        if (hub::os::AutoStart::set_enabled(enabled)) {
+            tray_manager.set_auto_start(enabled);
+            auto& root = hub::config::ConfigManager::instance().root();
+            root["hub"]["start_with_windows"] = hub::config::JsonValue(enabled);
+            hub::config::ConfigManager::instance().save();
+        } else {
+            // The checkmark has to follow the registry, not the click, or it
+            // silently claims a state that was never written.
+            tray_manager.set_auto_start(hub::os::AutoStart::is_enabled());
+            tray_manager.show_notification(
+                "FFXIV Hub",
+                "Could not change the Windows startup entry.");
+        }
+    });
+
+    tray_manager.set_on_open_logs([]() {
+        hub::os::Logger::open_log_file();
+    });
+
+    tray_manager.set_on_open_config([]() {
+        hub::os::Logger::open_config_folder();
+    });
+
+    tray_manager.set_notifications_enabled(
+        hub::config::ConfigManager::instance().root()["hub"]["show_notifications"].as_bool(true));
+
 #ifdef HAVE_IMGUI
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -313,6 +342,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     ShowWindow(hwnd, SW_SHOWDEFAULT);
     UpdateWindow(hwnd);
 
+    bool s_was_connected = false;
+    bool s_was_access_denied = false;
+
     MSG msg{};
     while (g_running) {
         while (PeekMessageW(&msg, nullptr, 0U, 0U, PM_REMOVE)) {
@@ -326,7 +358,32 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
 
         tray_manager.pump_messages();
         app_state.update();
-        tray_manager.set_game_connected(app_state.is_connected(), app_state.game_pid());
+
+        // Balloons on transition only. The app closes to tray by default, so
+        // without these a failed injection reports nowhere the user is looking.
+        const bool connected_now = app_state.is_connected();
+        const bool denied_now = app_state.is_access_denied();
+        if (connected_now != s_was_connected) {
+            if (connected_now) {
+                tray_manager.show_notification(
+                    "FFXIV Hub",
+                    "Attached to Final Fantasy XIV (PID " +
+                        std::to_string(app_state.game_pid()) + ").");
+            } else {
+                tray_manager.show_notification(
+                    "FFXIV Hub",
+                    "Final Fantasy XIV closed. Waiting for the game to start.");
+            }
+            s_was_connected = connected_now;
+        }
+        if (denied_now && !s_was_access_denied) {
+            tray_manager.show_notification(
+                "FFXIV Hub - Access Denied",
+                "Injection was refused. Run FFXIV Hub as administrator.");
+        }
+        s_was_access_denied = denied_now;
+
+        tray_manager.set_game_connected(connected_now, app_state.game_pid());
 
         if (g_window_minimized) {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));

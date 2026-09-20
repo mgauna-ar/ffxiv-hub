@@ -106,6 +106,16 @@ public:
     void send_combat_overlay_opacity(float opacity);
     void send_combat_overlay_scale(float scale);
     void send_combat_overlay_party_only(bool party_only);
+    void send_combat_show_bars(bool show);
+    void send_combat_hide_inactive(bool hide);
+    void send_combat_refresh_interval(uint32_t ms);
+    void send_combat_inactivity_timeout(float seconds);
+    void send_combat_column_share(bool show);
+    void send_combat_column_crit(bool show);
+    void send_combat_column_dh(bool show);
+    void send_combat_column_cdh(bool show);
+    void send_combat_reset_stats();
+    void send_combat_reset_overlay_geometry();
 
     // ==========================================
     // Latency Mitigator Plugin Integration
@@ -134,6 +144,13 @@ public:
     void send_mitigator_hud_opacity(float opacity);
     void send_mitigator_hud_scale(float scale);
     void send_mitigator_hud_display_mode(uint32_t mode);
+    void send_mitigator_enabled(bool enabled);
+    void send_mitigator_reset_stats();
+    void send_mitigator_reset_overlay_geometry();
+
+    /// Tells the payload to re-read config.json. Without it the payload keeps its
+    /// own copy and overwrites hand edits on its next autosave.
+    void send_reload_config();
 
     /// Independent ICMP ping to the game server, measured from the desktop process
     /// (not the in-game hooks), so it's available immediately on login.

@@ -39,6 +39,43 @@ void dispatch_combat_meter(const CommandDispatchTargets& t, const ipc::CommandPa
         case CommandId::ResetEncounter:
             if (t.combat_plugin) t.combat_plugin->engine().reset_current();
             break;
+        case CommandId::ResetStats:
+            if (t.combat_plugin) {
+                t.combat_plugin->engine().reset_current();
+                t.combat_plugin->engine().clear_history();
+            }
+            break;
+        case CommandId::ResetOverlayGeometry:
+            if (t.combat_overlay) {
+                t.combat_overlay->set_geometry(Rect{-1.0f, -1.0f, 800.0f, 480.0f});
+            }
+            break;
+        case CommandId::SetShowBars:
+            if (t.combat_overlay) t.combat_overlay->set_show_progress_bars(cmd.param_uint != 0);
+            break;
+        case CommandId::SetHideInactive:
+            if (t.combat_overlay) t.combat_overlay->set_hide_inactive(cmd.param_uint != 0);
+            break;
+        case CommandId::SetRefreshInterval:
+            if (t.combat_overlay) t.combat_overlay->set_refresh_interval_ms(cmd.param_uint);
+            break;
+        case CommandId::SetInactivityTimeout:
+            if (t.combat_plugin) {
+                t.combat_plugin->engine().set_inactivity_timeout(static_cast<double>(cmd.param_float));
+            }
+            break;
+        case CommandId::SetColumnShare:
+            if (t.combat_overlay) t.combat_overlay->set_show_col_share(cmd.param_uint != 0);
+            break;
+        case CommandId::SetColumnCrit:
+            if (t.combat_overlay) t.combat_overlay->set_show_col_crit(cmd.param_uint != 0);
+            break;
+        case CommandId::SetColumnDh:
+            if (t.combat_overlay) t.combat_overlay->set_show_col_dh(cmd.param_uint != 0);
+            break;
+        case CommandId::SetColumnCdh:
+            if (t.combat_overlay) t.combat_overlay->set_show_col_cdh(cmd.param_uint != 0);
+            break;
         case CommandId::ReloadConfig:
             if (t.combat_plugin) {
                 config::ConfigManager::instance().load();
@@ -91,6 +128,17 @@ void dispatch_latency_mitigator(const CommandDispatchTargets& t, const ipc::Comm
         case CommandId::SetDryRun:
         case CommandId::ToggleDryRun:
             if (t.latency_plugin) t.latency_plugin->mitigator().set_dry_run(cmd.param_uint != 0);
+            break;
+        case CommandId::SetMitigationEnabled:
+            if (t.latency_plugin) t.latency_plugin->mitigator().set_enabled(cmd.param_uint != 0);
+            break;
+        case CommandId::ResetStats:
+            if (t.latency_plugin) t.latency_plugin->mitigator().reset();
+            break;
+        case CommandId::ResetOverlayGeometry:
+            if (t.latency_overlay) {
+                t.latency_overlay->set_geometry(Rect{30.0f, 30.0f, 120.0f, 32.0f});
+            }
             break;
         case CommandId::ReloadConfig:
             if (t.latency_plugin) {

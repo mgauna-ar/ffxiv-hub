@@ -35,6 +35,7 @@ public:
     [[nodiscard]] MitigationConfig get_config() const;
     void set_config(const MitigationConfig& config);
     void set_dry_run(bool dry_run);
+    void set_enabled(bool enabled);
     void set_target_ping_ms(double target_ping_ms);
     void set_min_animation_lock_ms(double min_lock_ms);
     void set_spike_multiplier(double multiplier);

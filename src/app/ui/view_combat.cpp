@@ -375,6 +375,78 @@ void render_view_combat(AppState& app_state) {
             cfg_store(METER, "ui_scale", scale);
             app_state.send_combat_overlay_scale(scale);
         }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "TABLE COLUMNS");
+        ImGui::Spacing();
+
+        bool col_share = cfg_bool(METER, "show_col_share", true);
+        if (ImGui::Checkbox("Share %", &col_share)) {
+            cfg_store(METER, "show_col_share", col_share);
+            app_state.send_combat_column_share(col_share);
+        }
+        ImGui::SameLine();
+        bool col_crit = cfg_bool(METER, "show_col_crit", true);
+        if (ImGui::Checkbox("Crit %", &col_crit)) {
+            cfg_store(METER, "show_col_crit", col_crit);
+            app_state.send_combat_column_crit(col_crit);
+        }
+        ImGui::SameLine();
+        bool col_dh = cfg_bool(METER, "show_col_dh", true);
+        if (ImGui::Checkbox("Direct Hit %", &col_dh)) {
+            cfg_store(METER, "show_col_dh", col_dh);
+            app_state.send_combat_column_dh(col_dh);
+        }
+        ImGui::SameLine();
+        bool col_cdh = cfg_bool(METER, "show_col_cdh", true);
+        if (ImGui::Checkbox("Crit Direct Hit %", &col_cdh)) {
+            cfg_store(METER, "show_col_cdh", col_cdh);
+            app_state.send_combat_column_cdh(col_cdh);
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "BEHAVIOUR");
+        ImGui::Spacing();
+
+        bool show_bars = cfg_bool(METER, "show_bars", true);
+        if (ImGui::Checkbox("Job-Coloured Row Progress Bars", &show_bars)) {
+            cfg_store(METER, "show_bars", show_bars);
+            app_state.send_combat_show_bars(show_bars);
+        }
+
+        bool hide_inactive = cfg_bool(METER, "hide_inactive", false);
+        if (ImGui::Checkbox("Hide Combatants With No Contribution", &hide_inactive)) {
+            cfg_store(METER, "hide_inactive", hide_inactive);
+            app_state.send_combat_hide_inactive(hide_inactive);
+        }
+
+        int refresh_ms = cfg_int(METER, "refresh_interval_ms", 500);
+        if (ImGui::SliderInt("Overlay Refresh (ms)", &refresh_ms, 100, 2000, "%d ms")) {
+            cfg_store(METER, "refresh_interval_ms", refresh_ms);
+            app_state.send_combat_refresh_interval(static_cast<uint32_t>(refresh_ms));
+        }
+
+        float timeout_s = cfg_float(METER, "inactivity_timeout_seconds", 7.0f);
+        if (ImGui::SliderFloat("End Encounter After Idle (s)", &timeout_s, 3.0f, 60.0f, "%.0f s")) {
+            cfg_store(METER, "inactivity_timeout_seconds", timeout_s);
+            app_state.send_combat_inactivity_timeout(timeout_s);
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        if (ImGui::Button("Reset Overlay Position", ImVec2(190.0f * ui_scale(), 28.0f * ui_scale()))) {
+            app_state.send_combat_reset_overlay_geometry();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Reset Statistics", ImVec2(150.0f * ui_scale(), 28.0f * ui_scale()))) {
+            app_state.send_combat_reset_stats();
+            app_state.reset_encounter();
+            app_state.clear_pull_history();
+        }
     }
 
     // Selected Player Ability Breakdown Drilldown Panel

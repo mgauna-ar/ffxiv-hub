@@ -370,6 +370,62 @@ void AppState::send_mitigator_hud_display_mode(uint32_t mode) {
     m_pipe_server.send_command(PluginId::LatencyMitigator, CommandId::SetOverlayMode, mode);
 }
 
+void AppState::send_mitigator_enabled(bool enabled) {
+    m_pipe_server.send_command(PluginId::LatencyMitigator, CommandId::SetMitigationEnabled, enabled ? 1 : 0);
+}
+
+void AppState::send_mitigator_reset_stats() {
+    m_pipe_server.send_command(PluginId::LatencyMitigator, CommandId::ResetStats, 0);
+}
+
+void AppState::send_mitigator_reset_overlay_geometry() {
+    m_pipe_server.send_command(PluginId::LatencyMitigator, CommandId::ResetOverlayGeometry, 0);
+}
+
+void AppState::send_reload_config() {
+    m_pipe_server.send_command(PluginId::Core, CommandId::ReloadConfig, 0);
+}
+
+void AppState::send_combat_show_bars(bool show) {
+    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::SetShowBars, show ? 1 : 0);
+}
+
+void AppState::send_combat_hide_inactive(bool hide) {
+    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::SetHideInactive, hide ? 1 : 0);
+}
+
+void AppState::send_combat_refresh_interval(uint32_t ms) {
+    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::SetRefreshInterval, ms);
+}
+
+void AppState::send_combat_inactivity_timeout(float seconds) {
+    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::SetInactivityTimeout, 0, seconds);
+}
+
+void AppState::send_combat_column_share(bool show) {
+    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::SetColumnShare, show ? 1 : 0);
+}
+
+void AppState::send_combat_column_crit(bool show) {
+    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::SetColumnCrit, show ? 1 : 0);
+}
+
+void AppState::send_combat_column_dh(bool show) {
+    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::SetColumnDh, show ? 1 : 0);
+}
+
+void AppState::send_combat_column_cdh(bool show) {
+    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::SetColumnCdh, show ? 1 : 0);
+}
+
+void AppState::send_combat_reset_stats() {
+    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::ResetStats, 0);
+}
+
+void AppState::send_combat_reset_overlay_geometry() {
+    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::ResetOverlayGeometry, 0);
+}
+
 void AppState::send_network_ping(float ping_ms) {
     m_pipe_server.send_command(PluginId::LatencyMitigator, CommandId::UpdateNetworkPing, 0, ping_ms);
 }
