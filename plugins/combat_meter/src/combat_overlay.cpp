@@ -53,20 +53,11 @@ inline uint32_t get_job_accent_color(Job job) {
 } // namespace
 
 CombatOverlay::CombatOverlay(EncounterEngine* engine)
-    : m_engine(engine) {}
+    : m_engine(engine) {
+    set_geometry(Rect{50.0f, 100.0f, 420.0f, 220.0f});
+}
 
 CombatOverlay::~CombatOverlay() = default;
-
-Rect CombatOverlay::get_geometry() const noexcept {
-    return Rect{m_pos_x, m_pos_y, m_width, m_height};
-}
-
-void CombatOverlay::set_geometry(const Rect& rect) noexcept {
-    m_pos_x = rect.x;
-    m_pos_y = rect.y;
-    m_width = rect.width;
-    m_height = rect.height;
-}
 
 bool CombatOverlay::should_render() const noexcept {
     if (!m_visible.load()) return false;
@@ -410,20 +401,11 @@ void CombatOverlay::render() {
 namespace hub::meter {
 
 CombatOverlay::CombatOverlay(EncounterEngine* engine)
-    : m_engine(engine) {}
+    : m_engine(engine) {
+    set_geometry(Rect{50.0f, 100.0f, 420.0f, 220.0f});
+}
 
 CombatOverlay::~CombatOverlay() = default;
-
-Rect CombatOverlay::get_geometry() const noexcept {
-    return Rect{m_pos_x, m_pos_y, m_width, m_height};
-}
-
-void CombatOverlay::set_geometry(const Rect& rect) noexcept {
-    m_pos_x = rect.x;
-    m_pos_y = rect.y;
-    m_width = rect.width;
-    m_height = rect.height;
-}
 
 bool CombatOverlay::should_render() const noexcept {
     if (!m_visible.load()) return false;

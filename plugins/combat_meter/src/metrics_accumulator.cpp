@@ -1,4 +1,5 @@
 #include "meter/metrics_accumulator.hpp"
+#include "hub/game/entity.hpp"
 #include <algorithm>
 
 namespace hub::meter {
@@ -39,11 +40,7 @@ CombatantStats& MetricsAccumulator::get_or_create_stats(EntityId entity_id, cons
         stats.is_alive = (actor->current_hp > 0 || actor->max_hp == 0);
     } else {
         stats.name = "Entity_" + std::to_string(entity_id);
-        if ((entity_id & 0x40000000) != 0) {
-            stats.actor_type = ActorType::Monster;
-        } else {
-            stats.actor_type = ActorType::Player;
-        }
+        stats.actor_type = hub::game::is_monster_entity_id(entity_id) ? ActorType::Monster : ActorType::Player;
     }
 
     return m_combatants.emplace(entity_id, std::move(stats)).first->second;

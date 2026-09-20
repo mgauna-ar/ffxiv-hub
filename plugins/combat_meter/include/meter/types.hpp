@@ -1,5 +1,7 @@
 #pragma once
 
+#include "hub/game/job.hpp"
+#include "hub/game/actions.hpp"
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -14,6 +16,14 @@ using EntityId = uint32_t;
 using ActionId = uint32_t;
 using TimePoint = std::chrono::steady_clock::time_point;
 using Microseconds = std::chrono::duration<int64_t, std::micro>;
+
+// Generic FFXIV job/role knowledge lives in hub::game so other plugins (and the
+// app layer) can use it without depending on this plugin's headers.
+using hub::game::Job;
+using hub::game::Role;
+using hub::game::to_string;
+using hub::game::job_abbreviation;
+using hub::game::job_to_role;
 
 namespace constants {
     constexpr double DEFAULT_INACTIVITY_TIMEOUT_SECONDS = 7.0;
@@ -31,61 +41,6 @@ namespace constants {
     constexpr float MIN_UI_SCALE = 0.70f;
     constexpr float MAX_UI_SCALE = 2.0f;
 }
-
-enum class Job : uint32_t {
-    None = 0,
-    GLA = 1,
-    PGL = 2,
-    MRD = 3,
-    LNC = 4,
-    ARC = 5,
-    CNJ = 6,
-    THM = 7,
-    CRP = 8,
-    BSM = 9,
-    ARM = 10,
-    GSM = 11,
-    LTW = 12,
-    WVR = 13,
-    ALC = 14,
-    CUL = 15,
-    MIN = 16,
-    BTN = 17,
-    FSH = 18,
-    PLD = 19,
-    MNK = 20,
-    WAR = 21,
-    DRG = 22,
-    BRD = 23,
-    WHM = 24,
-    BLM = 25,
-    ACN = 26,
-    SMN = 27,
-    SCH = 28,
-    ROG = 29,
-    NIN = 30,
-    MCH = 31,
-    DRK = 32,
-    AST = 33,
-    SAM = 34,
-    RDM = 35,
-    BLU = 36,
-    GNB = 37,
-    DNC = 38,
-    RPR = 39,
-    SGE = 40,
-    VPR = 41,
-    PCT = 42
-};
-
-enum class Role : uint8_t {
-    None = 0,
-    Tank = 1,
-    Healer = 2,
-    Melee = 3,
-    Ranged = 4,
-    Caster = 5
-};
 
 enum class ActorType : uint8_t {
     Unknown = 0,
@@ -138,161 +93,6 @@ enum class EncounterEndReason : uint8_t {
     ZoneChange = 3,
     Manual = 4
 };
-
-[[nodiscard]] constexpr std::string_view to_string(Job job) noexcept {
-    switch (job) {
-        case Job::GLA: return "Gladiator";
-        case Job::PGL: return "Pugilist";
-        case Job::MRD: return "Marauder";
-        case Job::LNC: return "Lancer";
-        case Job::ARC: return "Archer";
-        case Job::CNJ: return "Conjurer";
-        case Job::THM: return "Thaumaturge";
-        case Job::CRP: return "Carpenter";
-        case Job::BSM: return "Blacksmith";
-        case Job::ARM: return "Armorer";
-        case Job::GSM: return "Goldsmith";
-        case Job::LTW: return "Leatherworker";
-        case Job::WVR: return "Weaver";
-        case Job::ALC: return "Alchemist";
-        case Job::CUL: return "Culinarian";
-        case Job::MIN: return "Miner";
-        case Job::BTN: return "Botanist";
-        case Job::FSH: return "Fisher";
-        case Job::PLD: return "Paladin";
-        case Job::MNK: return "Monk";
-        case Job::WAR: return "Warrior";
-        case Job::DRG: return "Dragoon";
-        case Job::BRD: return "Bard";
-        case Job::WHM: return "White Mage";
-        case Job::BLM: return "Black Mage";
-        case Job::ACN: return "Arcanist";
-        case Job::SMN: return "Summoner";
-        case Job::SCH: return "Scholar";
-        case Job::ROG: return "Rogue";
-        case Job::NIN: return "Ninja";
-        case Job::MCH: return "Machinist";
-        case Job::DRK: return "Dark Knight";
-        case Job::AST: return "Astrologian";
-        case Job::SAM: return "Samurai";
-        case Job::RDM: return "Red Mage";
-        case Job::BLU: return "Blue Mage";
-        case Job::GNB: return "Gunbreaker";
-        case Job::DNC: return "Dancer";
-        case Job::RPR: return "Reaper";
-        case Job::SGE: return "Sage";
-        case Job::VPR: return "Viper";
-        case Job::PCT: return "Pictomancer";
-        default: return "Unknown";
-    }
-}
-
-[[nodiscard]] constexpr std::string_view job_abbreviation(Job job) noexcept {
-    switch (job) {
-        case Job::GLA: return "GLA";
-        case Job::PGL: return "PGL";
-        case Job::MRD: return "MRD";
-        case Job::LNC: return "LNC";
-        case Job::ARC: return "ARC";
-        case Job::CNJ: return "CNJ";
-        case Job::THM: return "THM";
-        case Job::CRP: return "CRP";
-        case Job::BSM: return "BSM";
-        case Job::ARM: return "ARM";
-        case Job::GSM: return "GSM";
-        case Job::LTW: return "LTW";
-        case Job::WVR: return "WVR";
-        case Job::ALC: return "ALC";
-        case Job::CUL: return "CUL";
-        case Job::MIN: return "MIN";
-        case Job::BTN: return "BTN";
-        case Job::FSH: return "FSH";
-        case Job::PLD: return "PLD";
-        case Job::MNK: return "MNK";
-        case Job::WAR: return "WAR";
-        case Job::DRG: return "DRG";
-        case Job::BRD: return "BRD";
-        case Job::WHM: return "WHM";
-        case Job::BLM: return "BLM";
-        case Job::ACN: return "ACN";
-        case Job::SMN: return "SMN";
-        case Job::SCH: return "SCH";
-        case Job::ROG: return "ROG";
-        case Job::NIN: return "NIN";
-        case Job::MCH: return "MCH";
-        case Job::DRK: return "DRK";
-        case Job::AST: return "AST";
-        case Job::SAM: return "SAM";
-        case Job::RDM: return "RDM";
-        case Job::BLU: return "BLU";
-        case Job::GNB: return "GNB";
-        case Job::DNC: return "DNC";
-        case Job::RPR: return "RPR";
-        case Job::SGE: return "SGE";
-        case Job::VPR: return "VPR";
-        case Job::PCT: return "PCT";
-        default: return "???";
-    }
-}
-
-[[nodiscard]] constexpr Role job_to_role(Job job) noexcept {
-    switch (job) {
-        case Job::GLA:
-        case Job::MRD:
-        case Job::PLD:
-        case Job::WAR:
-        case Job::DRK:
-        case Job::GNB:
-            return Role::Tank;
-
-        case Job::CNJ:
-        case Job::WHM:
-        case Job::SCH:
-        case Job::AST:
-        case Job::SGE:
-            return Role::Healer;
-
-        case Job::PGL:
-        case Job::LNC:
-        case Job::ROG:
-        case Job::MNK:
-        case Job::DRG:
-        case Job::NIN:
-        case Job::SAM:
-        case Job::RPR:
-        case Job::VPR:
-            return Role::Melee;
-
-        case Job::ARC:
-        case Job::BRD:
-        case Job::MCH:
-        case Job::DNC:
-            return Role::Ranged;
-
-        case Job::THM:
-        case Job::ACN:
-        case Job::BLM:
-        case Job::SMN:
-        case Job::RDM:
-        case Job::BLU:
-        case Job::PCT:
-            return Role::Caster;
-
-        default:
-            return Role::None;
-    }
-}
-
-[[nodiscard]] constexpr std::string_view to_string(Role role) noexcept {
-    switch (role) {
-        case Role::Tank: return "Tank";
-        case Role::Healer: return "Healer";
-        case Role::Melee: return "Melee";
-        case Role::Ranged: return "Ranged";
-        case Role::Caster: return "Caster";
-        default: return "None";
-    }
-}
 
 [[nodiscard]] constexpr std::string_view to_string(HitSeverity severity) noexcept {
     switch (severity) {
@@ -406,51 +206,7 @@ struct ActionSummary {
 };
 
 [[nodiscard]] inline std::string action_id_to_name(ActionId action_id) {
-    switch (action_id) {
-        case 31: return "Heavy Swing";
-        case 120: return "Cure";
-        case 124: return "Medica";
-        case 135: return "Cure II";
-        case 137: return "Regen";
-        case 167: return "Energy Drain";
-        case 185: return "Adloquium";
-        case 186: return "Succor";
-        case 1205: return "Dia";
-        case 3571: return "Assize";
-        case 3576: return "Blizzard IV";
-        case 3577: return "Fire IV";
-        case 3594: return "Benefic";
-        case 3595: return "Aspected Benefic";
-        case 3601: return "Aspected Helios";
-        case 3610: return "Benefic II";
-        case 7388: return "Rampart";
-        case 7449: return "Akh Morn";
-        case 16407: return "Glare III";
-        case 16505: return "Despair";
-        case 16507: return "Xenoglossy";
-        case 16518: return "Revelation";
-        case 16534: return "Afflatus Solace";
-        case 16535: return "Afflatus Rapture";
-        case 16537: return "Whispering Dawn";
-        case 16540: return "Biolysis";
-        case 16554: return "Combust III";
-        case 24283: return "Dosis III";
-        case 24284: return "Diagnosis";
-        case 24286: return "Prognosis";
-        case 24293: return "Eukrasian Dosis III";
-        case 25797: return "Paradox";
-        case 25820: return "Astral Impulse";
-        case 25821: return "Sunflare";
-        case 25865: return "Broil IV";
-        case 25871: return "Fall Malefic";
-        case 34606: return "Steel Fangs";
-        case 34607: return "Reaving Fangs";
-        case 34614: return "Dreadwinder";
-        case 34650: return "Fire in Red";
-        case 34651: return "Aero in Green";
-        case 34652: return "Water in Blue";
-        default: return "Action " + std::to_string(action_id);
-    }
+    return hub::game::action_name(action_id);
 }
 
 struct CombatantStats {

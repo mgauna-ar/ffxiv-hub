@@ -1,7 +1,7 @@
 #pragma once
 
 #include "hub/types.hpp"
-#include "meter/types.hpp"
+#include "hub/game/job.hpp"
 #include <cstdint>
 #include <string>
 
@@ -46,10 +46,10 @@ void set_bold_font(ImFont* font);
 [[nodiscard]] ImFont* bold_font();
 
 /// Returns IM_COL32 formatted color for FFXIV Job
-[[nodiscard]] uint32_t get_job_color_u32(meter::Job job, float alpha = 1.0f);
+[[nodiscard]] uint32_t get_job_color_u32(game::Job job, float alpha = 1.0f);
 
 /// Returns IM_COL32 formatted color for FFXIV Role
-[[nodiscard]] uint32_t get_role_color_u32(meter::Role role, float alpha = 1.0f);
+[[nodiscard]] uint32_t get_role_color_u32(game::Role role, float alpha = 1.0f);
 
 // Formatting helpers
 [[nodiscard]] std::string format_dps(double dps);

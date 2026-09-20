@@ -108,14 +108,14 @@ void apply_slate_theme() {
 #endif
 }
 
-uint32_t get_role_color_u32(meter::Role role, float alpha) {
+uint32_t get_role_color_u32(game::Role role, float alpha) {
     uint32_t base_color = colors::NeutralGray;
     switch (role) {
-        case meter::Role::Tank:    base_color = colors::TankBlue; break;
-        case meter::Role::Healer:  base_color = colors::HealerGreen; break;
-        case meter::Role::Melee:   base_color = colors::MeleeRed; break;
-        case meter::Role::Ranged:  base_color = colors::RangedOrange; break;
-        case meter::Role::Caster:  base_color = colors::CasterPurple; break;
+        case game::Role::Tank:    base_color = colors::TankBlue; break;
+        case game::Role::Healer:  base_color = colors::HealerGreen; break;
+        case game::Role::Melee:   base_color = colors::MeleeRed; break;
+        case game::Role::Ranged:  base_color = colors::RangedOrange; break;
+        case game::Role::Caster:  base_color = colors::CasterPurple; break;
         default: break;
     }
 
@@ -123,8 +123,8 @@ uint32_t get_role_color_u32(meter::Role role, float alpha) {
     return (base_color & 0x00FFFFFF) | (a << 24);
 }
 
-uint32_t get_job_color_u32(meter::Job job, float alpha) {
-    return get_role_color_u32(meter::job_to_role(job), alpha);
+uint32_t get_job_color_u32(game::Job job, float alpha) {
+    return get_role_color_u32(game::job_to_role(job), alpha);
 }
 
 std::string format_dps(double dps) {

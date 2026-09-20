@@ -11,19 +11,10 @@
 
 namespace hub::mitigator {
 
-LatencyOverlay::LatencyOverlay() = default;
+LatencyOverlay::LatencyOverlay() {
+    set_geometry(Rect{20.0f, 20.0f, 120.0f, 32.0f});
+}
 LatencyOverlay::~LatencyOverlay() = default;
-
-Rect LatencyOverlay::get_geometry() const noexcept {
-    return Rect{m_pos_x, m_pos_y, m_width, m_height};
-}
-
-void LatencyOverlay::set_geometry(const Rect& rect) noexcept {
-    m_pos_x = rect.x;
-    m_pos_y = rect.y;
-    m_width = rect.width;
-    m_height = rect.height;
-}
 
 void LatencyOverlay::update_rtt(double smoothed_rtt_ms, bool has_samples) noexcept {
     m_smoothed_rtt_ms.store(smoothed_rtt_ms);
@@ -191,19 +182,10 @@ void LatencyOverlay::render() {
 
 namespace hub::mitigator {
 
-LatencyOverlay::LatencyOverlay() = default;
+LatencyOverlay::LatencyOverlay() {
+    set_geometry(Rect{20.0f, 20.0f, 120.0f, 32.0f});
+}
 LatencyOverlay::~LatencyOverlay() = default;
-
-Rect LatencyOverlay::get_geometry() const noexcept {
-    return Rect{m_pos_x, m_pos_y, m_width, m_height};
-}
-
-void LatencyOverlay::set_geometry(const Rect& rect) noexcept {
-    m_pos_x = rect.x;
-    m_pos_y = rect.y;
-    m_width = rect.width;
-    m_height = rect.height;
-}
 
 void LatencyOverlay::update_rtt(double smoothed_rtt_ms, bool has_samples) noexcept {
     m_smoothed_rtt_ms.store(smoothed_rtt_ms);

@@ -1,102 +1,18 @@
 #include "meter/combatant_registry.hpp"
+#include "hub/game/entity.hpp"
+#include "hub/game/pets.hpp"
 #include <cstring>
 #include <algorithm>
 #include <cctype>
 
 namespace hub::meter {
 
-namespace {
-
-std::string to_lower_ascii(std::string_view sv) {
-    std::string result;
-    result.reserve(sv.size());
-    for (char ch : sv) {
-        result.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
-    }
-    return result;
-}
-
-bool contains_ignore_case(std::string_view haystack, std::string_view needle) {
-    std::string h = to_lower_ascii(haystack);
-    std::string n = to_lower_ascii(needle);
-    return h.find(n) != std::string::npos;
-}
-
-} // anonymous namespace
-
 bool CombatantRegistry::is_known_pet_name(std::string_view name) {
-    if (name.empty()) {
-        return false;
-    }
-    static constexpr std::string_view KNOWN_PETS[] = {
-        "bahamut",
-        "demi-bahamut",
-        "solar bahamut",
-        "phoenix",
-        "demi-phoenix",
-        "ifrit",
-        "ifrit-egi",
-        "ruby ifrit",
-        "titan",
-        "titan-egi",
-        "topaz titan",
-        "garuda",
-        "garuda-egi",
-        "emerald garuda",
-        "carbuncle",
-        "ruby carbuncle",
-        "topaz carbuncle",
-        "emerald carbuncle",
-        "moonstone carbuncle",
-        "eos",
-        "selene",
-        "seraph",
-        "automaton queen",
-        "queen",
-        "rook autoturret",
-        "autoturret",
-        "living shadow",
-        "esteem",
-        "bunshin",
-        "shadow"
-    };
-
-    for (const auto& pet : KNOWN_PETS) {
-        if (contains_ignore_case(name, pet)) {
-            return true;
-        }
-    }
-    return false;
+    return hub::game::is_known_pet_name(name);
 }
 
 Job CombatantRegistry::infer_pet_job(std::string_view name) {
-    if (contains_ignore_case(name, "bahamut") ||
-        contains_ignore_case(name, "phoenix") ||
-        contains_ignore_case(name, "ifrit") ||
-        contains_ignore_case(name, "titan") ||
-        contains_ignore_case(name, "garuda") ||
-        contains_ignore_case(name, "carbuncle")) {
-        return Job::SMN;
-    }
-    if (contains_ignore_case(name, "eos") ||
-        contains_ignore_case(name, "selene") ||
-        contains_ignore_case(name, "seraph")) {
-        return Job::SCH;
-    }
-    if (contains_ignore_case(name, "automaton") ||
-        contains_ignore_case(name, "queen") ||
-        contains_ignore_case(name, "autoturret") ||
-        contains_ignore_case(name, "rook")) {
-        return Job::MCH;
-    }
-    if (contains_ignore_case(name, "living shadow") ||
-        contains_ignore_case(name, "esteem")) {
-        return Job::DRK;
-    }
-    if (contains_ignore_case(name, "bunshin")) {
-        return Job::NIN;
-    }
-    return Job::None;
+    return hub::game::infer_pet_job(name);
 }
 
 void CombatantRegistry::register_actor(const ipc::ActorInfoPacket& packet) {
@@ -382,8 +298,7 @@ bool CombatantRegistry::is_friendly(EntityId entity_id) const {
         }
     }
 
-    // FFXIV entity ID convention: Monsters and NPCs have bit 0x40000000 set (0x40xxxxxx)
-    if ((entity_id & 0x40000000) != 0) {
+    if (hub::game::is_monster_entity_id(entity_id)) {
         return false;
     }
 
