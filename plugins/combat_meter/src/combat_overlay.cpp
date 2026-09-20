@@ -18,17 +18,17 @@ inline uint32_t get_role_color(Job job) {
     Role role = job_to_role(job);
     switch (role) {
         case Role::Tank:
-            return IM_COL32(59, 130, 246, 75);  // #3B82F6 Blue
+            return IM_COL32(59, 130, 246, 48);  // #3B82F6 Blue
         case Role::Healer:
-            return IM_COL32(16, 185, 129, 75);  // #10B981 Green
+            return IM_COL32(16, 185, 129, 48);  // #10B981 Green
         case Role::Melee:
-            return IM_COL32(239, 68, 68, 75);   // #EF4444 Red
+            return IM_COL32(239, 68, 68, 48);   // #EF4444 Red
         case Role::Ranged:
-            return IM_COL32(249, 115, 22, 75);  // #F97316 Orange
+            return IM_COL32(249, 115, 22, 48);  // #F97316 Orange
         case Role::Caster:
-            return IM_COL32(168, 85, 247, 75);  // #A855F7 Purple
+            return IM_COL32(168, 85, 247, 48);  // #A855F7 Purple
         default:
-            return IM_COL32(100, 116, 139, 75); // Slate
+            return IM_COL32(100, 116, 139, 48); // Slate
     }
 }
 
@@ -74,17 +74,18 @@ void CombatOverlay::render_row_progress_bar(float fraction, uint32_t color_u32) 
     fraction = std::clamp(fraction, 0.0f, 1.0f);
     if (fraction <= 0.0f) return;
 
-    ImVec2 min_pos = ImGui::GetItemRectMin();
-    ImVec2 max_pos = ImGui::GetItemRectMax();
-    float bar_width = (max_pos.x - min_pos.x) * fraction;
+    // Spans the whole row, so it has to come from the table's geometry. The
+    // last-item rect belongs to whatever cell was submitted most recently.
+    ImGuiContext* g = ImGui::GetCurrentContext();
+    if (!g) return;
+    ImGuiTable* table = g->CurrentTable;
+    if (!table) return;
 
-    ImDrawList* draw_list = ImGui::GetWindowDrawList();
-    draw_list->AddRectFilled(
-        min_pos,
-        ImVec2(min_pos.x + bar_width, max_pos.y),
-        color_u32,
-        4.0f
-    );
+    const ImVec2 row_min(table->WorkRect.Min.x, table->RowPosY1);
+    const float row_w = table->WorkRect.Max.x - table->WorkRect.Min.x;
+    const ImVec2 row_max(row_min.x + row_w * fraction, table->RowPosY2);
+
+    ImGui::GetWindowDrawList()->AddRectFilled(row_min, row_max, color_u32, 0.0f);
 }
 
 void CombatOverlay::render_top_bar(const EncounterSummary& current) {
@@ -175,10 +176,6 @@ void CombatOverlay::render_damage_tab(const EncounterSummary& summary) {
         for (const auto& player : players) {
             ImGui::TableNextRow(0, 24.0f);
 
-            // Background progress bar
-            float fraction = static_cast<float>(player.dps / top_dps);
-            render_row_progress_bar(fraction, get_role_color(player.job));
-
             // Rank
             ImGui::TableSetColumnIndex(0);
             ImGui::TextDisabled("%d", rank++);
@@ -217,6 +214,11 @@ void CombatOverlay::render_damage_tab(const EncounterSummary& summary) {
             // CDH%
             ImGui::TableSetColumnIndex(6);
             ImGui::Text("%.1f%%", player.hits.cdh_rate());
+
+            render_row_progress_bar(
+                static_cast<float>(player.dps / top_dps),
+                get_role_color(player.job)
+            );
         }
         ImGui::EndTable();
     }
@@ -255,9 +257,6 @@ void CombatOverlay::render_healing_tab(const EncounterSummary& summary) {
         for (const auto& player : healers) {
             ImGui::TableNextRow(0, 24.0f);
 
-            float fraction = static_cast<float>(player.hps / top_hps);
-            render_row_progress_bar(fraction, get_role_color(player.job));
-
             ImGui::TableSetColumnIndex(0);
             ImGui::TextDisabled("%d", rank++);
 
@@ -283,6 +282,11 @@ void CombatOverlay::render_healing_tab(const EncounterSummary& summary) {
 
             ImGui::TableSetColumnIndex(4);
             ImGui::Text("%.1f%%", player.overheal_pct());
+
+            render_row_progress_bar(
+                static_cast<float>(player.hps / top_hps),
+                get_role_color(player.job)
+            );
         }
         ImGui::EndTable();
     }

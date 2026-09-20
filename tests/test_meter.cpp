@@ -652,6 +652,64 @@ TEST_CASE(MeterPlugin, HookConsumerDispatch) {
     plugin.shutdown();
 }
 
+TEST_CASE(MeterPlugin, CountsDamageOverTimeTicks) {
+    // ProcessHotDot ticks were dropped entirely, so every DoT/HoT was missing
+    // from the totals.
+    CombatPlugin plugin;
+    plugin.initialize();
+
+    hub::ipc::PacketRingBuffer ring;
+    plugin.set_ring_buffer(&ring);
+
+    // Open an encounter so ticks have somewhere to land.
+    hub::game::ActionEffectHeader header{};
+    header.animation_target_id = 0x40001;
+    header.action_id = 31;
+    header.num_targets = 1;
+
+    std::array<hub::game::ActionEffectEntry, 8> entries{};
+    entries[0].effect_type = 0x03;
+    entries[0].value = 1000;
+
+    hub::game::CharacterObject chr{};
+    chr.entity_id = 777;
+    chr.object_kind = 1;
+    chr.owner_id = 0xE0000000;
+    chr.current_hp = 50000;
+    chr.max_hp = 50000;
+
+    plugin.on_receive_action_effect(777, &chr, &header, entries.data(), nullptr);
+    TEST_ASSERT_TRUE(plugin.engine().in_combat());
+
+    const uint64_t damage_before = plugin.engine().accumulator().total_damage();
+
+    // damage_type != 0 and tick_mode != 4 => damage-over-time
+    plugin.on_status_tick(0x40000123, 777, 1871, 4500, /*is_heal=*/false);
+
+    TEST_ASSERT_EQ(plugin.engine().accumulator().total_damage(), damage_before + 4500u);
+
+    const uint64_t healing_before = plugin.engine().accumulator().total_healing();
+    plugin.on_status_tick(777, 777, 158, 2200, /*is_heal=*/true);
+    TEST_ASSERT_EQ(plugin.engine().accumulator().total_healing(), healing_before + 2200u);
+
+    plugin.shutdown();
+}
+
+TEST_CASE(MeterPlugin, StatusTickIgnoredWhenDisabledOrTargetless) {
+    CombatPlugin plugin;
+    plugin.initialize();
+    plugin.config().enabled = false;
+
+    plugin.on_status_tick(0x40000123, 777, 1871, 4500, false);
+    TEST_ASSERT_FALSE(plugin.engine().in_combat());
+
+    plugin.config().enabled = true;
+    plugin.on_status_tick(0, 777, 1871, 4500, false);
+    TEST_ASSERT_FALSE(plugin.engine().in_combat());
+
+    plugin.shutdown();
+}
+
 TEST_CASE(MeterPlugin, MapsGameObjectKindToActorType) {
     CombatPlugin plugin;
     plugin.initialize();

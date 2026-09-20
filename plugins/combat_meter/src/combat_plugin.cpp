@@ -141,7 +141,10 @@ void CombatPlugin::on_receive_action_effect(
         return;
     }
 
-    if (source_character != nullptr) {
+    if (source_character == nullptr) {
+        // No character pointer in this packet, so fall back to the object table.
+        if (m_actor_resolver) m_actor_resolver(source_entity_id);
+    } else {
         const auto* chr = reinterpret_cast<const game::CharacterObject*>(source_character);
         if (chr->entity_id == source_entity_id) {
             const uint32_t owner_id = normalize_owner_id(chr->owner_id);
@@ -165,6 +168,9 @@ void CombatPlugin::on_receive_action_effect(
         targets,
         0,
         [this](const ipc::CombatActionPacket& packet) {
+            if (m_actor_resolver && packet.target_id != 0) {
+                m_actor_resolver(static_cast<uint32_t>(packet.target_id));
+            }
             m_engine.process_action(packet);
 
             if (m_ring_buffer) {
@@ -175,6 +181,40 @@ void CombatPlugin::on_receive_action_effect(
             }
         }
     );
+}
+
+void CombatPlugin::on_status_tick(
+    uint32_t target_entity_id,
+    uint32_t source_entity_id,
+    uint16_t status_id,
+    uint32_t damage_or_heal,
+    bool is_heal
+) {
+    if (!m_initialized || !m_config.enabled || target_entity_id == 0) {
+        return;
+    }
+
+    ipc::StatusTickPacket tick{};
+    tick.target_id = target_entity_id;
+    tick.source_id = source_entity_id;
+    tick.status_id = status_id;
+    tick.damage_or_heal = damage_or_heal;
+    tick.effect_type = static_cast<uint8_t>(is_heal ? EffectType::Heal : EffectType::Damage);
+    tick.is_crit = 0;
+    tick.timestamp_us = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()
+        ).count()
+    );
+
+    m_engine.process_status_tick(tick);
+
+    if (m_ring_buffer) {
+        auto bytes = ipc::serialize_typed_packet(
+            PluginId::CombatMeter, MessageType::CombatStatusTick, ++m_sequence, tick
+        );
+        m_ring_buffer->push(bytes);
+    }
 }
 
 } // namespace hub::meter

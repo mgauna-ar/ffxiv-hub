@@ -53,8 +53,8 @@ private:
     };
 
     std::mutex m_cache_mutex;
-    [[maybe_unused]] std::unordered_map<uint32_t, CachedActor> m_actor_cache;
-    [[maybe_unused]] ipc::PartySyncPacket m_last_party_sync{};
+    std::unordered_map<uint32_t, CachedActor> m_actor_cache;
+    ipc::PartySyncPacket m_last_party_sync{};
 };
 
 } // namespace hub::payload

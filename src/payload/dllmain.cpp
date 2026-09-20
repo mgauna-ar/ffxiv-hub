@@ -1,5 +1,6 @@
 #include "payload/hook_manager.hpp"
 #include "payload/dx11_hook.hpp"
+#include "hub/game_definitions.hpp"
 #include "payload/overlay_host.hpp"
 #include "payload/object_reader.hpp"
 #include "payload/command_dispatcher.hpp"
@@ -110,7 +111,9 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
     const bool hooks_installed = hook_mgr.install();
     hub::os::Logger::info(
         "HookManager::install() -> " + std::string(hooks_installed ? "ok" : "FAILED") +
-        " (" + std::to_string(hook_mgr.active_hook_count()) + "/3 hooks active)"
+        " (" + std::to_string(hook_mgr.active_hook_count()) +
+        "/" + std::to_string(hub::game::definitions::TOTAL_AVAILABLE_HOOKS) + " hooks active)" +
+        " [" + hook_mgr.last_error() + "]"
     );
     hub::os::Logger::info(
         std::string("ActionManager instance -> ") + (hook_mgr.action_manager() ? "resolved" : "NOT FOUND (mitigation waits for first action)")
@@ -120,6 +123,12 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
     auto object_reader = std::make_unique<hub::payload::ObjectReader>(&pipe_client->ring_buffer());
     const bool object_reader_ok = object_reader->initialize();
     hub::os::Logger::info(std::string("ObjectReader::initialize() -> ") + (object_reader_ok ? "ok" : "FAILED"));
+
+    combat_plugin->set_actor_resolver(
+        [reader = object_reader.get(), plugin = combat_plugin.get()](uint32_t entity_id) {
+            reader->inspect_and_sync_actor(entity_id, &plugin->engine().registry());
+        }
+    );
 
     // 7. Install DirectX 11 Hook (Present & ResizeBuffers)
     const bool dx11_ok = hub::payload::Dx11Hook::instance().install();

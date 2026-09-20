@@ -21,6 +21,10 @@ namespace definitions {
     /// Total number of detours managed in game hooks
     constexpr uint32_t TOTAL_AVAILABLE_HOOKS = 3; // ReceiveActionEffect, UseActionLocation, ProcessHotDot
 
+    /// Bounds the wait for in-flight detours to return before MinHook is torn down
+    constexpr uint32_t HOOK_DRAIN_TIMEOUT_MS = 2000;
+    constexpr uint32_t HOOK_DRAIN_POLL_INTERVAL_MS = 10;
+
     /// Minimum animation lock threshold in seconds for local player action effect detection
     constexpr float MIN_ACTION_EFFECT_LOCK_SECONDS = 0.01f;
 
@@ -183,12 +187,20 @@ struct PartyMemberObject {
     uint32_t max_hp{0};                      // 0x410: Maximum health points
     uint16_t current_mp{0};                  // 0x414: Current mana points
     uint16_t max_mp{0};                      // 0x416: Maximum mana points
-    char name[64]{0};                        // 0x418 - 0x458: Member name
-    uint8_t pad_458[0x11]{0};                // 0x458 - 0x469
+    uint16_t territory_type{0};              // 0x418: Zone territory
+    uint16_t home_world{0};                  // 0x41A: Home world ID
+    char name[64]{0};                        // 0x41C: Member name
+    uint8_t pad_45c[0x0D]{0};                // 0x45C - 0x469
     uint8_t class_job{0};                    // 0x469: Job ID
-    uint8_t pad_46a[0x26]{0};                // 0x46A - 0x490
+    uint8_t level{0};                        // 0x46A: Current level
+    uint8_t pad_46b[0x25]{0};                // 0x46B - 0x490
 };
-static_assert(sizeof(PartyMemberObject) == 0x490, "PartyMemberObject must be 0x490 bytes");
+static_assert(sizeof(PartyMemberObject) == offsets::PARTY_MEMBER_SIZE, "PartyMemberObject size mismatch");
+static_assert(offsetof(PartyMemberObject, entity_id) == offsets::PARTY_MEMBER_ENTITY_ID, "PartyMemberObject::entity_id offset mismatch");
+static_assert(offsetof(PartyMemberObject, current_hp) == offsets::PARTY_MEMBER_CURRENT_HP, "PartyMemberObject::current_hp offset mismatch");
+static_assert(offsetof(PartyMemberObject, max_hp) == offsets::PARTY_MEMBER_MAX_HP, "PartyMemberObject::max_hp offset mismatch");
+static_assert(offsetof(PartyMemberObject, name) == offsets::PARTY_MEMBER_NAME, "PartyMemberObject::name offset mismatch");
+static_assert(offsetof(PartyMemberObject, class_job) == offsets::PARTY_MEMBER_CLASS_JOB, "PartyMemberObject::class_job offset mismatch");
 
 #pragma pack(pop)
 

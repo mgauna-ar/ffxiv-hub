@@ -76,29 +76,52 @@ static bool SafeReadCharacter(
     }
 }
 
+struct ExtractedPartyMember {
+    uint32_t entity_id{0};
+    uint32_t current_hp{0};
+    uint32_t max_hp{0};
+    uint8_t job_id{0};
+    char name[64]{0};
+};
+
+struct ExtractedParty {
+    uint8_t count{0};
+    ExtractedPartyMember members[game::definitions::MAX_PARTY_MEMBERS];
+};
+
 static bool SafeReadParty(
     uintptr_t group_mgr_addr,
-    ipc::PartySyncPacket& out
+    ipc::PartySyncPacket& out,
+    ExtractedParty& out_members
 ) {
     __try {
         if (group_mgr_addr == 0) return false;
 
-        uintptr_t group_mgr = *reinterpret_cast<uintptr_t*>(group_mgr_addr);
-        if (group_mgr == 0) return false;
+        // GroupManager is the static instance itself, not a pointer to one.
+        const uintptr_t main_group = group_mgr_addr + game::offsets::GROUP_MAIN_GROUP;
 
-        const uint32_t count = *reinterpret_cast<const uint32_t*>(group_mgr + game::offsets::GROUP_MEMBER_COUNT);
-        if (count == 0 || count > game::definitions::MAX_PARTY_MEMBERS) {
-            out.party_count = 0;
-            return true;
+        uint8_t count = *reinterpret_cast<const uint8_t*>(main_group + game::offsets::GROUP_MEMBER_COUNT);
+        if (count > game::definitions::MAX_PARTY_MEMBERS) {
+            count = static_cast<uint8_t>(game::definitions::MAX_PARTY_MEMBERS);
         }
 
         out.party_count = count;
-        uintptr_t party_base = group_mgr + game::offsets::GROUP_MAIN_GROUP;
+        out_members.count = count;
 
-        for (uint32_t i = 0; i < count; ++i) {
-            uintptr_t member_addr = party_base + (i * game::offsets::PARTY_MEMBER_SIZE);
-            out.entity_ids[i] = *reinterpret_cast<const uint32_t*>(member_addr + game::offsets::PARTY_MEMBER_ENTITY_ID);
-            out.job_ids[i] = *reinterpret_cast<const uint8_t*>(member_addr + game::offsets::PARTY_MEMBER_CLASS_JOB);
+        for (uint8_t i = 0; i < count; ++i) {
+            const auto* member = reinterpret_cast<const game::PartyMemberObject*>(
+                main_group + (i * game::offsets::PARTY_MEMBER_SIZE)
+            );
+            out.entity_ids[i] = member->entity_id;
+            out.job_ids[i] = member->class_job;
+
+            auto& extracted = out_members.members[i];
+            extracted.entity_id = member->entity_id;
+            extracted.current_hp = member->current_hp;
+            extracted.max_hp = member->max_hp;
+            extracted.job_id = member->class_job;
+            std::memcpy(extracted.name, member->name, sizeof(extracted.name) - 1);
+            extracted.name[sizeof(extracted.name) - 1] = '\0';
         }
         return true;
     }
@@ -149,8 +172,26 @@ bool ObjectReader::read_character(uint32_t entity_id, ipc::ActorInfoPacket& out_
 }
 
 void ObjectReader::inspect_and_sync_actor(uint32_t entity_id, meter::CombatantRegistry* registry) {
+    if (entity_id == 0 || entity_id == 0xE0000000) {
+        return;
+    }
+
+    // This runs per decoded effect, so skip the SEH + object-table lookup once
+    // the actor is fully identified.
+    {
+        std::lock_guard<std::mutex> lock(m_cache_mutex);
+        auto it = m_actor_cache.find(entity_id);
+        if (it != m_actor_cache.end() && it->second.job_id != 0 && !it->second.name.empty()) {
+            return;
+        }
+    }
+
     ipc::ActorInfoPacket packet{};
     if (read_character(entity_id, packet)) {
+        {
+            std::lock_guard<std::mutex> lock(m_cache_mutex);
+            m_actor_cache[entity_id] = CachedActor{packet.owner_id, packet.job_id, packet.max_hp, packet.name};
+        }
         if (registry) {
             registry->register_actor(
                 packet.entity_id,
@@ -202,17 +243,82 @@ void ObjectReader::sync_party(meter::CombatantRegistry* registry) {
     if (m_group_manager_addr == 0) return;
 
     ipc::PartySyncPacket sync{};
-    if (SafeReadParty(m_group_manager_addr, sync)) {
-        if (registry) {
-            registry->sync_party(sync);
-        }
+    ExtractedParty extracted{};
+    if (!SafeReadParty(m_group_manager_addr, sync, extracted)) {
+        return;
+    }
 
-        if (m_ring_buffer) {
-            std::vector<uint8_t> bytes = ipc::serialize_typed_packet(
-                PluginId::CombatMeter, MessageType::CombatPartySync, 0, sync
-            );
-            m_ring_buffer->push(bytes);
+    // Party members carry name/job/HP that the action hook only learns once an
+    // actor has acted, so publish them as actor info too.
+    for (uint8_t i = 0; i < extracted.count; ++i) {
+        const auto& m = extracted.members[i];
+        if (m.entity_id == 0) continue;
+
+        bool actor_changed = false;
+        {
+            std::lock_guard<std::mutex> lock(m_cache_mutex);
+            auto it = m_actor_cache.find(m.entity_id);
+            if (it == m_actor_cache.end() || it->second.job_id != m.job_id || it->second.name != m.name) {
+                m_actor_cache[m.entity_id] = CachedActor{0, m.job_id, m.max_hp, m.name};
+                actor_changed = true;
+            }
         }
+        if (!actor_changed) continue;
+
+        ipc::ActorInfoPacket actor{};
+        actor.entity_id = m.entity_id;
+        actor.job_id = m.job_id;
+        actor.current_hp = m.current_hp;
+        actor.max_hp = m.max_hp;
+        actor.actor_type = static_cast<uint8_t>(meter::ActorType::Player);
+        std::memcpy(actor.name, m.name, sizeof(actor.name) - 1);
+        actor.name[sizeof(actor.name) - 1] = '\0';
+
+        if (registry) {
+            registry->register_actor(
+                actor.entity_id,
+                actor.name,
+                static_cast<meter::Job>(actor.job_id),
+                0,
+                meter::ActorType::Player,
+                actor.max_hp,
+                actor.current_hp
+            );
+        }
+        if (m_ring_buffer) {
+            m_ring_buffer->push(ipc::serialize_typed_packet(
+                PluginId::CombatMeter, MessageType::CombatActorInfo, 0, actor
+            ));
+        }
+    }
+
+    bool party_changed = false;
+    {
+        std::lock_guard<std::mutex> lock(m_cache_mutex);
+        if (sync.party_count != m_last_party_sync.party_count) {
+            party_changed = true;
+        } else {
+            for (uint32_t i = 0; i < sync.party_count; ++i) {
+                if (sync.entity_ids[i] != m_last_party_sync.entity_ids[i] ||
+                    sync.job_ids[i] != m_last_party_sync.job_ids[i]) {
+                    party_changed = true;
+                    break;
+                }
+            }
+        }
+        if (party_changed) {
+            m_last_party_sync = sync;
+        }
+    }
+
+    if (registry) {
+        registry->sync_party(sync);
+    }
+
+    if (party_changed && m_ring_buffer) {
+        m_ring_buffer->push(ipc::serialize_typed_packet(
+            PluginId::CombatMeter, MessageType::CombatPartySync, 0, sync
+        ));
     }
 }
 

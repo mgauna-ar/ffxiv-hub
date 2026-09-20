@@ -90,6 +90,21 @@ public:
     /// found nothing. Default is a no-op.
     virtual void on_action_manager_resolved(void* /*action_manager*/) {}
 
+    /// Called when ProcessHotDot is intercepted, once per periodic damage or heal
+    /// tick. Default is a no-op.
+    /// @param target_entity_id Entity receiving the tick
+    /// @param source_entity_id Entity credited with the tick
+    /// @param status_id Status effect producing the tick
+    /// @param damage_or_heal Tick magnitude
+    /// @param is_heal True for a regen tick, false for a damage-over-time tick
+    virtual void on_status_tick(
+        uint32_t /*target_entity_id*/,
+        uint32_t /*source_entity_id*/,
+        uint16_t /*status_id*/,
+        uint32_t /*damage_or_heal*/,
+        bool /*is_heal*/
+    ) {}
+
     /// Called when ReceiveActionEffect is intercepted
     /// @param source_entity_id Entity ID of the acting character
     /// @param source_character Pointer to character object in game memory
