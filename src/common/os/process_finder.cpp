@@ -64,20 +64,23 @@ bool ProcessFinder::enable_debug_privilege() {
         return false;
     }
 
-    LUID luid{};
-    if (!LookupPrivilegeValueW(nullptr, L"SeDebugPrivilege", &luid)) {
-        CloseHandle(token);
-        return false;
-    }
+    auto enable_priv = [&](LPCWSTR priv_name) -> bool {
+        LUID luid{};
+        if (!LookupPrivilegeValueW(nullptr, priv_name, &luid)) {
+            return false;
+        }
+        TOKEN_PRIVILEGES tp{};
+        tp.PrivilegeCount = 1;
+        tp.Privileges[0].Luid = luid;
+        tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+        const BOOL res = AdjustTokenPrivileges(token, FALSE, &tp, sizeof(TOKEN_PRIVILEGES), nullptr, nullptr);
+        return res && (GetLastError() != ERROR_NOT_ALL_ASSIGNED);
+    };
 
-    TOKEN_PRIVILEGES tp{};
-    tp.PrivilegeCount = 1;
-    tp.Privileges[0].Luid = luid;
-    tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
-
-    const BOOL res = AdjustTokenPrivileges(token, FALSE, &tp, sizeof(TOKEN_PRIVILEGES), nullptr, nullptr);
+    const bool debug_ok = enable_priv(L"SeDebugPrivilege");
+    enable_priv(L"SeSecurityPrivilege");
     CloseHandle(token);
-    return res && (GetLastError() == ERROR_SUCCESS);
+    return debug_ok;
 }
 
 void* ProcessFinder::find_game_window(uint32_t pid) {
@@ -88,41 +91,106 @@ void* ProcessFinder::find_game_window(uint32_t pid) {
 }
 
 std::optional<ProcessInfo> ProcessFinder::find_process(std::string_view process_name) {
-    const HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snapshot == INVALID_HANDLE_VALUE) {
-        return std::nullopt;
-    }
-
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     PROCESSENTRY32W entry{};
     entry.dwSize = sizeof(PROCESSENTRY32W);
 
-    const int wlen = MultiByteToWideChar(CP_UTF8, 0, process_name.data(), static_cast<int>(process_name.size()), nullptr, 0);
-    std::wstring target_name_w(wlen, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, process_name.data(), static_cast<int>(process_name.size()), target_name_w.data(), wlen);
+    std::wstring target_name_w(process_name.begin(), process_name.end());
+    std::optional<ProcessInfo> fallback_proc;
 
-    if (Process32FirstW(snapshot, &entry)) {
+    if (snapshot != INVALID_HANDLE_VALUE && Process32FirstW(snapshot, &entry)) {
         do {
-            if (_wcsicmp(entry.szExeFile, target_name_w.c_str()) == 0) {
-                const uint32_t pid = entry.th32ProcessID;
-                CloseHandle(snapshot);
-                return find_process_by_pid(pid);
+            const bool match = (_wcsicmp(entry.szExeFile, target_name_w.c_str()) == 0) ||
+                               (_wcsicmp(entry.szExeFile, L"ffxiv_dx11.exe") == 0) ||
+                               (_wcsicmp(entry.szExeFile, L"ffxiv.exe") == 0);
+            if (match) {
+                HANDLE h_process = OpenProcess(
+                    PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION |
+                    PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ | SYNCHRONIZE,
+                    FALSE,
+                    entry.th32ProcessID
+                );
+
+                const DWORD err = h_process ? 0 : GetLastError();
+                const bool is_64 = h_process ? is_process_64_bit(h_process) : false;
+                void* hwnd = find_game_window(entry.th32ProcessID);
+
+                ProcessInfo info{
+                    .pid = entry.th32ProcessID,
+                    .name = std::string(process_name),
+                    .is_64_bit = is_64,
+                    .handle = h_process,
+                    .window_handle = hwnd,
+                    .last_error = err
+                };
+
+                if (h_process != nullptr) {
+                    CloseHandle(snapshot);
+                    return info;
+                }
+
+                if (!fallback_proc.has_value()) {
+                    fallback_proc = info;
+                }
             }
         } while (Process32NextW(snapshot, &entry));
     }
 
-    CloseHandle(snapshot);
-    return std::nullopt;
+    if (snapshot != INVALID_HANDLE_VALUE) {
+        CloseHandle(snapshot);
+    }
+
+    // Fallback: If not found in snapshot or couldn't open process with valid handle,
+    // search directly by window class "FFXIVGAME"
+    if (!fallback_proc.has_value() || fallback_proc->handle == nullptr) {
+        HWND game_hwnd = FindWindowW(L"FFXIVGAME", nullptr);
+        if (game_hwnd != nullptr) {
+            DWORD win_pid = 0;
+            GetWindowThreadProcessId(game_hwnd, &win_pid);
+            if (win_pid != 0) {
+                HANDLE h_process = OpenProcess(
+                    PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION |
+                    PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ | SYNCHRONIZE,
+                    FALSE,
+                    win_pid
+                );
+
+                const DWORD err = h_process ? 0 : GetLastError();
+                const bool is_64 = h_process ? is_process_64_bit(h_process) : false;
+
+                ProcessInfo win_info{
+                    .pid = win_pid,
+                    .name = std::string(process_name),
+                    .is_64_bit = is_64,
+                    .handle = h_process,
+                    .window_handle = game_hwnd,
+                    .last_error = err
+                };
+
+                if (h_process != nullptr) {
+                    return win_info;
+                }
+                if (!fallback_proc.has_value()) {
+                    fallback_proc = win_info;
+                }
+            }
+        }
+    }
+
+    return fallback_proc;
 }
 
 std::optional<ProcessInfo> ProcessFinder::find_process_by_pid(uint32_t pid) {
     const HANDLE handle = OpenProcess(
-        PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ,
+        PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION |
+        PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ | SYNCHRONIZE,
         FALSE,
         pid
     );
 
     ProcessInfo info;
     info.pid = pid;
+    info.name = "PID " + std::to_string(pid);
     info.handle = handle;
     info.last_error = (handle == nullptr) ? GetLastError() : 0;
     info.window_handle = find_game_window(pid);

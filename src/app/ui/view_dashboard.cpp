@@ -34,8 +34,13 @@ void render_view_dashboard(AppState& app_state) {
     if (pid != 0) {
         ImGui::Text("Process: Running (PID %u)", pid);
         ImGui::Text("Target Executable: ffxiv_dx11.exe");
-        ImGui::Text("Payload State: %s",
-            app_state.is_connected() ? "Hooked & Active (hub_payload.dll)" : "Injected / Awaiting Handshake");
+        if (app_state.is_access_denied()) {
+            ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f), "State: Access Denied (Error 5)");
+            ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.25f, 1.0f), "Please run FFXIV Hub as Administrator!");
+        } else {
+            ImGui::Text("Payload State: %s",
+                app_state.is_connected() ? "Hooked & Active (hub_payload.dll)" : "Injected / Awaiting Handshake");
+        }
     } else {
         ImGui::TextColored(ImVec4(0.70f, 0.74f, 0.82f, 1.0f), "Process: Not detected");
         ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "Start Final Fantasy XIV (Dawntrail) to auto-attach");

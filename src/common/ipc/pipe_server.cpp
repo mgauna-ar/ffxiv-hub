@@ -7,6 +7,7 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <sddl.h>
 #endif
 
 namespace hub::ipc {
@@ -234,6 +235,30 @@ void PipeServer::server_worker_thread() {
     const auto h_stop = static_cast<HANDLE>(m_stop_event);
 
     while (m_running.load()) {
+        SECURITY_ATTRIBUTES sa{};
+        sa.nLength = sizeof(SECURITY_ATTRIBUTES);
+        sa.bInheritHandle = FALSE;
+
+        SECURITY_DESCRIPTOR sd{};
+        InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION);
+        SetSecurityDescriptorDacl(&sd, TRUE, nullptr, FALSE);
+
+        PSECURITY_DESCRIPTOR p_ml_sd = nullptr;
+        if (ConvertStringSecurityDescriptorToSecurityDescriptorA(
+                "S:(ML;;NW;;;LW)",
+                SDDL_REVISION_1,
+                &p_ml_sd,
+                nullptr)) {
+            PACL p_sacl = nullptr;
+            BOOL sacl_present = FALSE;
+            BOOL sacl_defaulted = FALSE;
+            if (GetSecurityDescriptorSacl(p_ml_sd, &sacl_present, &p_sacl, &sacl_defaulted) && sacl_present && p_sacl) {
+                SetSecurityDescriptorSacl(&sd, TRUE, p_sacl, FALSE);
+            }
+        }
+
+        sa.lpSecurityDescriptor = &sd;
+
         HANDLE hPipe = CreateNamedPipeA(
             m_pipe_name.c_str(),
             PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
@@ -242,8 +267,12 @@ void PipeServer::server_worker_thread() {
             65536,
             65536,
             1000,
-            nullptr
+            &sa
         );
+
+        if (p_ml_sd) {
+            LocalFree(p_ml_sd);
+        }
 
         if (hPipe == INVALID_HANDLE_VALUE) {
             if (!m_running.load()) break;

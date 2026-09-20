@@ -122,20 +122,70 @@ void AppState::check_game_process() {
 
     if (pid == 0) {
         m_connection_state.store(ConnectionState::WaitingForGame);
+        m_access_denied.store(false);
         return;
     }
 
+    // Check if OpenProcess failed (e.g. Access Denied / privilege mismatch)
+    if (!proc->handle) {
+        m_connection_state.store(ConnectionState::WaitingForGame);
+        if (proc->last_error == 5) { // ERROR_ACCESS_DENIED
+            m_access_denied.store(true);
+            static uint32_t last_warned_pid = 0;
+            if (last_warned_pid != pid) {
+                last_warned_pid = pid;
+                os::Logger::error("FFXIV detected (PID " + std::to_string(pid) +
+                    ") but OpenProcess failed with ERROR_ACCESS_DENIED (5). Please run FFXIV Hub as Administrator.");
+            }
+        } else {
+            m_access_denied.store(false);
+            static uint32_t last_warned_pid = 0;
+            if (last_warned_pid != pid) {
+                last_warned_pid = pid;
+                os::Logger::warn("FFXIV detected (PID " + std::to_string(pid) +
+                    ") but OpenProcess failed with Win32 Error " + std::to_string(proc->last_error) + ".");
+            }
+        }
+        return;
+    }
+    m_access_denied.store(false);
+
     if (m_pipe_server.is_connected()) {
         m_connection_state.store(ConnectionState::Connected);
+#ifdef _WIN32
+        CloseHandle(static_cast<HANDLE>(proc->handle));
+#endif
         return;
     }
 
     // Process is running, but not connected yet
     auto current_state = m_connection_state.load();
     if (current_state == ConnectionState::WaitingForGame) {
+#ifdef _WIN32
+        // Window Readiness Guard: Ensure the main game window (FFXIVGAME) is created
+        // before injecting. If injected too early on process spawn, DirectX 11 device creation hasn't
+        // occurred yet or the hook binds to transient pre-boot swapchains.
+        HWND h_game_wnd = FindWindowW(L"FFXIVGAME", nullptr);
+        bool window_ready = false;
+        if (h_game_wnd != nullptr) {
+            DWORD wnd_pid = 0;
+            GetWindowThreadProcessId(h_game_wnd, &wnd_pid);
+            if (wnd_pid == pid) {
+                window_ready = true;
+            }
+        }
+        if (!window_ready) {
+            CloseHandle(static_cast<HANDLE>(proc->handle));
+            return;
+        }
+#endif
+
         if (os::DllInjector::is_payload_already_loaded(*proc)) {
             m_connection_state.store(ConnectionState::InjectedWaitingPipe);
             os::Logger::info("hub_payload.dll is already resident in FFXIV (PID: " + std::to_string(pid) + "). Awaiting IPC handshake...");
+#ifdef _WIN32
+            CloseHandle(static_cast<HANDLE>(proc->handle));
+#endif
             return;
         }
 
@@ -166,6 +216,10 @@ void AppState::check_game_process() {
             os::Logger::warn("Failed to inject hub_payload.dll: " + injector.last_error());
         }
     }
+
+#ifdef _WIN32
+    CloseHandle(static_cast<HANDLE>(proc->handle));
+#endif
 }
 
 bool AppState::is_connected() const noexcept {
@@ -173,6 +227,9 @@ bool AppState::is_connected() const noexcept {
 }
 
 std::string AppState::connection_status_string() const {
+    if (m_access_denied.load()) {
+        return "Access Denied (Run as Admin)";
+    }
     switch (m_connection_state.load()) {
         case ConnectionState::WaitingForGame:
             return "Searching for FFXIV...";

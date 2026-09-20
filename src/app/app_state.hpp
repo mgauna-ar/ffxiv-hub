@@ -69,6 +69,7 @@ public:
     [[nodiscard]] ConnectionState connection_state() const noexcept { return m_connection_state.load(); }
     [[nodiscard]] uint32_t game_pid() const noexcept { return m_game_pid.load(); }
     [[nodiscard]] bool is_connected() const noexcept;
+    [[nodiscard]] bool is_access_denied() const noexcept { return m_access_denied.load(); }
     [[nodiscard]] std::string connection_status_string() const;
 
     // Config Manager
@@ -140,6 +141,7 @@ private:
 
     std::atomic<ConnectionState> m_connection_state{ConnectionState::WaitingForGame};
     std::atomic<uint32_t> m_game_pid{0};
+    std::atomic<bool> m_access_denied{false};
     std::chrono::steady_clock::time_point m_last_process_check{};
 
     std::vector<RegisteredPluginInfo> m_plugins;

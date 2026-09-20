@@ -6,6 +6,7 @@
 #include "app/ui/view_latency.hpp"
 #include "app/ui/view_settings.hpp"
 #include "common/os/logger.hpp"
+#include "common/os/process_finder.hpp"
 #include "common/os/single_instance.hpp"
 #include "common/os/tray_manager.hpp"
 #include <iostream>
@@ -146,6 +147,13 @@ LRESULT WINAPI MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     hub::os::Logger::init();
     hub::os::Logger::info("Starting FFXIV Hub Desktop Manager v1.0.0...");
+
+    // Enable SeDebugPrivilege and SeSecurityPrivilege for game process attachment
+    if (hub::os::ProcessFinder::enable_debug_privilege()) {
+        hub::os::Logger::info("SeDebugPrivilege acquired successfully.");
+    } else {
+        hub::os::Logger::warn("Could not acquire SeDebugPrivilege. If FFXIV is running as Administrator, please run FFXIV Hub as Administrator.");
+    }
 
     hub::os::SingleInstance single_instance("Local\\FFXIVHubSingleInstanceMutex");
     if (!single_instance.try_acquire()) {
