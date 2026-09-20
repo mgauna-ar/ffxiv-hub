@@ -273,6 +273,15 @@ bool Dx11Hook::install() {
     );
 
     if (FAILED(hr) || !dummy_swap_chain) {
+        // Fallback to WARP software driver for headless environments / CI virtual machines
+        hr = D3D11CreateDeviceAndSwapChain(
+            nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0,
+            feature_levels, 1, D3D11_SDK_VERSION, &scd,
+            &dummy_swap_chain, &dummy_device, &feature_level, &dummy_context
+        );
+    }
+
+    if (FAILED(hr) || !dummy_swap_chain) {
         DestroyWindow(dummy_hwnd);
         UnregisterClassW(wc.lpszClassName, wc.hInstance);
         m_last_error = "Failed to create dummy D3D11 device and swap chain";

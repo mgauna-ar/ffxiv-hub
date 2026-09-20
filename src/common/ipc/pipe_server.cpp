@@ -51,23 +51,11 @@ void PipeServer::stop() {
         SetEvent(static_cast<HANDLE>(m_stop_event));
     }
 
-    // Dummy connect to wake up any blocking ConnectNamedPipe
-    HANDLE dummy = CreateFileA(
-        m_pipe_name.c_str(),
-        GENERIC_READ | GENERIC_WRITE,
-        0,
-        nullptr,
-        OPEN_EXISTING,
-        FILE_ATTRIBUTE_NORMAL,
-        nullptr
-    );
-    if (dummy != INVALID_HANDLE_VALUE) {
-        CloseHandle(dummy);
-    }
-
     {
         std::lock_guard<std::mutex> lock(m_send_mutex);
         if (m_pipe_handle && m_pipe_handle != INVALID_HANDLE_VALUE) {
+            CancelIoEx(static_cast<HANDLE>(m_pipe_handle), nullptr);
+            DisconnectNamedPipe(static_cast<HANDLE>(m_pipe_handle));
             CloseHandle(static_cast<HANDLE>(m_pipe_handle));
             m_pipe_handle = nullptr;
         }
@@ -120,14 +108,22 @@ bool PipeServer::send_packet(
     }
 
     std::lock_guard<std::mutex> lock(m_send_mutex);
+    OVERLAPPED ov_write{};
+    ov_write.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!ov_write.hEvent) return false;
+
     DWORD written = 0;
     BOOL ok = WriteFile(
         static_cast<HANDLE>(m_pipe_handle),
         framed.data(),
         static_cast<DWORD>(framed.size()),
         &written,
-        nullptr
+        &ov_write
     );
+    if (!ok && GetLastError() == ERROR_IO_PENDING) {
+        ok = GetOverlappedResult(static_cast<HANDLE>(m_pipe_handle), &ov_write, &written, TRUE);
+    }
+    CloseHandle(ov_write.hEvent);
     return (ok && written == framed.size());
 #else
     (void)framed;
@@ -235,10 +231,12 @@ bool PipeServer::process_raw_packet(std::span<const uint8_t> data) {
 
 #ifdef _WIN32
 void PipeServer::server_worker_thread() {
+    const auto h_stop = static_cast<HANDLE>(m_stop_event);
+
     while (m_running.load()) {
         HANDLE hPipe = CreateNamedPipeA(
             m_pipe_name.c_str(),
-            PIPE_ACCESS_DUPLEX,
+            PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
             PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
             1,
             65536,
@@ -248,7 +246,8 @@ void PipeServer::server_worker_thread() {
         );
 
         if (hPipe == INVALID_HANDLE_VALUE) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            if (!m_running.load()) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
             continue;
         }
 
@@ -257,9 +256,36 @@ void PipeServer::server_worker_thread() {
             m_pipe_handle = hPipe;
         }
 
-        BOOL connected = ConnectNamedPipe(hPipe, nullptr) ? TRUE : (GetLastError() == ERROR_PIPE_CONNECTED);
+        OVERLAPPED ov_connect{};
+        ov_connect.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        if (!ov_connect.hEvent) {
+            CloseHandle(hPipe);
+            std::lock_guard<std::mutex> lock(m_send_mutex);
+            m_pipe_handle = nullptr;
+            break;
+        }
+
+        BOOL connected = ConnectNamedPipe(hPipe, &ov_connect);
+        if (!connected) {
+            const DWORD err = GetLastError();
+            if (err == ERROR_PIPE_CONNECTED) {
+                connected = TRUE;
+            } else if (err == ERROR_IO_PENDING) {
+                HANDLE wait_events[2] = { ov_connect.hEvent, h_stop };
+                const DWORD wait_res = WaitForMultipleObjects(2, wait_events, FALSE, INFINITE);
+                if (wait_res == WAIT_OBJECT_0) {
+                    DWORD unused = 0;
+                    connected = GetOverlappedResult(hPipe, &ov_connect, &unused, FALSE);
+                } else {
+                    CancelIoEx(hPipe, &ov_connect);
+                    connected = FALSE;
+                }
+            }
+        }
+        CloseHandle(ov_connect.hEvent);
 
         if (!connected || !m_running.load()) {
+            DisconnectNamedPipe(hPipe);
             CloseHandle(hPipe);
             std::lock_guard<std::mutex> lock(m_send_mutex);
             m_pipe_handle = nullptr;
@@ -271,11 +297,26 @@ void PipeServer::server_worker_thread() {
         std::vector<uint8_t> read_buffer;
         read_buffer.reserve(65536);
 
+        OVERLAPPED ov_read{};
+        ov_read.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+
         while (m_running.load() && m_connected.load()) {
             PacketHeader header{};
             DWORD bytes_read = 0;
 
-            BOOL ok = ReadFile(hPipe, &header, sizeof(PacketHeader), &bytes_read, nullptr);
+            ResetEvent(ov_read.hEvent);
+            BOOL ok = ReadFile(hPipe, &header, sizeof(PacketHeader), &bytes_read, &ov_read);
+            if (!ok && GetLastError() == ERROR_IO_PENDING) {
+                HANDLE wait_events[2] = { ov_read.hEvent, h_stop };
+                const DWORD wait_res = WaitForMultipleObjects(2, wait_events, FALSE, INFINITE);
+                if (wait_res == WAIT_OBJECT_0) {
+                    ok = GetOverlappedResult(hPipe, &ov_read, &bytes_read, FALSE);
+                } else {
+                    CancelIoEx(hPipe, &ov_read);
+                    break;
+                }
+            }
+
             if (!ok || bytes_read != sizeof(PacketHeader)) {
                 break;
             }
@@ -294,26 +335,44 @@ void PipeServer::server_worker_thread() {
 
                 DWORD payload_read = 0;
                 DWORD total_payload_read = 0;
+                bool payload_ok = true;
                 while (total_payload_read < header.payload_size) {
+                    ResetEvent(ov_read.hEvent);
                     ok = ReadFile(
                         hPipe,
                         read_buffer.data() + sizeof(PacketHeader) + total_payload_read,
                         header.payload_size - total_payload_read,
                         &payload_read,
-                        nullptr
+                        &ov_read
                     );
+                    if (!ok && GetLastError() == ERROR_IO_PENDING) {
+                        HANDLE wait_events[2] = { ov_read.hEvent, h_stop };
+                        const DWORD wait_res = WaitForMultipleObjects(2, wait_events, FALSE, INFINITE);
+                        if (wait_res == WAIT_OBJECT_0) {
+                            ok = GetOverlappedResult(hPipe, &ov_read, &payload_read, FALSE);
+                        } else {
+                            CancelIoEx(hPipe, &ov_read);
+                            payload_ok = false;
+                            break;
+                        }
+                    }
                     if (!ok || payload_read == 0) {
+                        payload_ok = false;
                         break;
                     }
                     total_payload_read += payload_read;
                 }
 
-                if (total_payload_read != header.payload_size) {
+                if (!payload_ok || total_payload_read != header.payload_size) {
                     break;
                 }
             }
 
             process_raw_packet(read_buffer);
+        }
+
+        if (ov_read.hEvent) {
+            CloseHandle(ov_read.hEvent);
         }
 
         m_connected.store(false);
