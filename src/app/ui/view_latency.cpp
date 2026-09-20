@@ -21,8 +21,18 @@ namespace hub::app::ui {
 
 #ifdef HAVE_IMGUI
 
-namespace { constexpr const char* MITI = "latency_mitigator"; }
 namespace {
+
+constexpr const char* MITI = "latency_mitigator";
+
+/// Same grading thresholds as the in-game HUD dot.
+ImVec4 ping_grade_color(double ping_ms) {
+    if (ping_ms < 0.0)    return ImVec4(0.55f, 0.60f, 0.70f, 0.80f);
+    if (ping_ms < 180.0)  return ImVec4(0.20f, 0.85f, 0.40f, 1.00f);
+    if (ping_ms <= 260.0) return ImVec4(0.12f, 0.79f, 0.59f, 1.00f);
+    if (ping_ms <= 340.0) return ImVec4(0.95f, 0.70f, 0.20f, 1.00f);
+    return ImVec4(0.95f, 0.25f, 0.25f, 1.00f);
+}
 
 void render_rtt_graph(const std::vector<ipc::MitigatorTelemetryPayload>& samples, float target_ping) {
     ImVec2 canvas_size(ImGui::GetContentRegionAvail().x, 180.0f * ui_scale());
