@@ -1,4 +1,5 @@
 #include "meter/combat_overlay.hpp"
+#include "payload/overlay_host.hpp"
 #include <algorithm>
 #include <cstdio>
 
@@ -50,7 +51,27 @@ inline uint32_t get_job_accent_color(Job job) {
     }
 }
 
+/// Table headers render in bold; the body font is whatever the window pushed.
+void push_header_font() {
+    ImFont* bold = hub::payload::OverlayHost::instance().font_bold();
+    if (bold != nullptr && bold != ImGui::GetFont()) {
+        ImGui::PushFont(bold);
+    }
+}
+
+void pop_header_font() {
+    ImFont* bold = hub::payload::OverlayHost::instance().font_bold();
+    if (bold != nullptr && bold == ImGui::GetFont()) {
+        ImGui::PopFont();
+    }
+}
+
 } // namespace
+
+float CombatOverlay::row_height() const {
+    // Rows track the rendered text so they stay proportionate as scale changes.
+    return std::max(24.0f, ImGui::GetTextLineHeightWithSpacing() + 6.0f);
+}
 
 CombatOverlay::CombatOverlay(EncounterEngine* engine)
     : m_engine(engine) {
@@ -170,11 +191,16 @@ void CombatOverlay::render_damage_tab(const EncounterSummary& summary) {
         ImGui::TableSetupColumn("CRIT", ImGuiTableColumnFlags_WidthFixed, 42.0f);
         ImGui::TableSetupColumn("DH", ImGuiTableColumnFlags_WidthFixed, 38.0f);
         ImGui::TableSetupColumn("CDH", ImGuiTableColumnFlags_WidthFixed, 40.0f);
-        ImGui::TableHeadersRow();
+        ImGui::TableSetupScrollFreeze(0, 1);
 
+        push_header_font();
+        ImGui::TableHeadersRow();
+        pop_header_font();
+
+        const float row_h = row_height();
         int rank = 1;
         for (const auto& player : players) {
-            ImGui::TableNextRow(0, 24.0f);
+            ImGui::TableNextRow(0, row_h);
 
             // Rank
             ImGui::TableSetColumnIndex(0);
@@ -251,11 +277,16 @@ void CombatOverlay::render_healing_tab(const EncounterSummary& summary) {
         ImGui::TableSetupColumn("HPS", ImGuiTableColumnFlags_WidthFixed, 65.0f);
         ImGui::TableSetupColumn("Heal", ImGuiTableColumnFlags_WidthFixed, 60.0f);
         ImGui::TableSetupColumn("Overheal", ImGuiTableColumnFlags_WidthFixed, 60.0f);
-        ImGui::TableHeadersRow();
+        ImGui::TableSetupScrollFreeze(0, 1);
 
+        push_header_font();
+        ImGui::TableHeadersRow();
+        pop_header_font();
+
+        const float row_h = row_height();
         int rank = 1;
         for (const auto& player : healers) {
-            ImGui::TableNextRow(0, 24.0f);
+            ImGui::TableNextRow(0, row_h);
 
             ImGui::TableSetColumnIndex(0);
             ImGui::TextDisabled("%d", rank++);
@@ -351,23 +382,35 @@ void CombatOverlay::render_history_tab() {
 void CombatOverlay::render() {
     if (!should_render()) return;
 
-    const float opacity = std::clamp(m_opacity.load(), 0.1f, 1.0f);
+    const float opacity = std::clamp(m_opacity.load(), 0.2f, 1.0f);
+    const float scale = std::clamp(m_scale.load(), 0.7f, 2.0f);
+
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar |
-                             ImGuiWindowFlags_NoSavedSettings |
+                             ImGuiWindowFlags_NoCollapse |
                              ImGuiWindowFlags_NoFocusOnAppearing;
 
+    if (m_click_through.load()) {
+        flags |= ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoMove;
+    }
     if (m_locked.load()) {
-        flags |= ImGuiWindowFlags_NoMove;
+        flags |= ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize;
     }
 
     ImGui::SetNextWindowPos(ImVec2(m_pos_x, m_pos_y), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(m_width, m_height), ImGuiCond_FirstUseEver);
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 6.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 10.0f));
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.08f, 0.09f, 0.12f, opacity));
 
+    const auto scaled_font = hub::payload::OverlayHost::instance().font_for_scale(scale, /*bold_base=*/false);
+    const bool push_font = (scaled_font.font != nullptr && scaled_font.font != ImGui::GetFont());
+    if (push_font) {
+        ImGui::PushFont(scaled_font.font);
+    }
+
     if (ImGui::Begin(overlay_id(), nullptr, flags)) {
+        ImGui::SetWindowFontScale(scaled_font.residual);
         ImVec2 cur_pos = ImGui::GetWindowPos();
         ImVec2 cur_size = ImGui::GetWindowSize();
         m_pos_x = cur_pos.x;
@@ -394,6 +437,9 @@ void CombatOverlay::render() {
     }
     ImGui::End();
 
+    if (push_font) {
+        ImGui::PopFont();
+    }
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(2);
 }

@@ -1,4 +1,5 @@
 #include "mitigator/latency_overlay.hpp"
+#include "payload/overlay_host.hpp"
 #include <algorithm>
 #include <cstdio>
 
@@ -33,10 +34,9 @@ void LatencyOverlay::notify_spike_filtered() noexcept {
 void LatencyOverlay::render() {
     if (!m_visible.load()) return;
 
-    // Check if spike alert duration (1.2 seconds) has elapsed
     if (m_spike_active.load()) {
         auto now = std::chrono::steady_clock::now();
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - m_last_spike_time).count() > 1200) {
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - m_last_spike_time).count() > 1500) {
             m_spike_active.store(false);
         }
     }
@@ -50,12 +50,17 @@ void LatencyOverlay::render() {
     const OverlayDisplayMode mode = m_display_mode.load();
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar |
+                             ImGuiWindowFlags_NoResize |
                              ImGuiWindowFlags_AlwaysAutoResize |
-                             ImGuiWindowFlags_NoSavedSettings |
+                             ImGuiWindowFlags_NoScrollbar |
+                             ImGuiWindowFlags_NoCollapse |
                              ImGuiWindowFlags_NoFocusOnAppearing;
 
     if (m_locked.load()) {
         flags |= ImGuiWindowFlags_NoMove;
+    }
+    if (m_click_through.load()) {
+        flags |= ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoMove;
     }
 
     ImGui::SetNextWindowPos(ImVec2(m_pos_x, m_pos_y), ImGuiCond_FirstUseEver);
@@ -64,13 +69,15 @@ void LatencyOverlay::render() {
     // Scale: Green < 180ms, Teal/Mint <= 260ms, Amber <= 340ms, Red > 340ms
     const double dot_metric = (net_ping >= 0.0) ? net_ping : (has_rtt && rtt > 0.0 ? rtt : -1.0);
 
-    ImVec4 bg_col, dot_color, text_col;
+    ImVec4 bg_col, dot_color, text_col, border_col;
     if (is_spike) {
         bg_col     = ImVec4(0.25f, 0.12f, 0.02f, opacity);
         dot_color  = ImVec4(1.00f, 0.45f, 0.10f, 1.00f);
         text_col   = ImVec4(1.00f, 0.70f, 0.20f, 1.00f);
+        border_col = ImVec4(0.95f, 0.55f, 0.15f, 0.90f);
     } else {
         bg_col = ImVec4(0.08f, 0.09f, 0.12f, opacity);
+        border_col = ImVec4(0.20f, 0.23f, 0.30f, 0.70f);
         if (dot_metric < 0.0) {
             dot_color = ImVec4(0.55f, 0.60f, 0.70f, 0.80f); // Muted gray/slate
         } else if (dot_metric < 180.0) {
@@ -82,14 +89,22 @@ void LatencyOverlay::render() {
         } else {
             dot_color = ImVec4(0.95f, 0.25f, 0.25f, 1.00f); // Red (> 340ms)
         }
-        text_col = ImVec4(0.92f, 0.93f, 0.95f, 1.0f);
+        text_col = ImVec4(0.92f, 0.94f, 0.98f, 1.00f);
     }
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f * scale, 4.0f * scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 6.0f));
     ImGui::PushStyleColor(ImGuiCol_WindowBg, bg_col);
+    ImGui::PushStyleColor(ImGuiCol_Border, border_col);
+
+    const auto scaled_font = hub::payload::OverlayHost::instance().font_for_scale(scale, /*bold_base=*/true);
+    const bool push_font = (scaled_font.font != nullptr && scaled_font.font != ImGui::GetFont());
+    if (push_font) {
+        ImGui::PushFont(scaled_font.font);
+    }
 
     if (ImGui::Begin(overlay_id(), nullptr, flags)) {
+        ImGui::SetWindowFontScale(scaled_font.residual);
         ImVec2 cur_pos = ImGui::GetWindowPos();
         ImVec2 cur_size = ImGui::GetWindowSize();
 
@@ -112,13 +127,15 @@ void LatencyOverlay::render() {
         m_width = cur_size.x;
         m_height = cur_size.y;
 
-        // Status indicator dot
+        // Status indicator dot, centred on the text baseline so it tracks the
+        // font tier instead of drifting at larger scales.
         ImDrawList* draw_list = ImGui::GetWindowDrawList();
         ImVec2 p = ImGui::GetCursorScreenPos();
-        float radius = 4.0f * scale;
-        draw_list->AddCircleFilled(ImVec2(p.x + radius, p.y + radius + 2.0f), radius, ImGui::ColorConvertFloat4ToU32(dot_color));
+        const float radius = 4.5f * scale;
+        const float cy = p.y + ImGui::GetTextLineHeight() * 0.5f;
+        draw_list->AddCircleFilled(ImVec2(p.x + radius + 1.0f, cy), radius, ImGui::ColorConvertFloat4ToU32(dot_color));
 
-        ImGui::Dummy(ImVec2(radius * 2.0f + 4.0f, radius * 2.0f));
+        ImGui::Dummy(ImVec2(radius * 2.0f + 4.0f, 0.0f));
         ImGui::SameLine();
 
         char ping_str[32];
@@ -161,18 +178,27 @@ void LatencyOverlay::render() {
             ImGui::BeginTooltip();
             ImGui::Text("FFXIV Latency Mitigator");
             ImGui::Separator();
-            ImGui::Text("Smoothed RTT: %.1f ms", rtt);
             if (net_ping >= 0.0) {
-                ImGui::Text("Network Ping: %.1f ms", net_ping);
+                ImGui::Text("Network Ping (ICMP): %.1f ms", net_ping);
+            } else {
+                ImGui::Text("Network Ping (ICMP): Waiting / N/A");
             }
-            ImGui::Text("Status: %s", is_spike ? "Spike Filtered" : (has_rtt ? "Active" : "Idle"));
-            ImGui::Text("Locked: %s", m_locked.load() ? "Yes" : "No");
+            if (has_rtt && rtt > 0.0) {
+                ImGui::Text("Action RTT (Combat): %.1f ms", rtt);
+            } else {
+                ImGui::Text("Action RTT (Combat): Idle (-- ms)");
+            }
+            ImGui::Text("Status: %s", is_spike ? "Action RTT Spike Filtered (!)" : "Mitigating");
+            ImGui::Text("Click-through: %s", m_click_through.load() ? "Enabled" : "Disabled");
             ImGui::EndTooltip();
         }
     }
     ImGui::End();
 
-    ImGui::PopStyleColor();
+    if (push_font) {
+        ImGui::PopFont();
+    }
+    ImGui::PopStyleColor(2);
     ImGui::PopStyleVar(2);
 }
 

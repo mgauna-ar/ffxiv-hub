@@ -70,6 +70,7 @@ private:
     void render_healing_tab(const EncounterSummary& summary);
     void render_history_tab();
     void render_row_progress_bar(float fraction, uint32_t color_u32);
+    [[nodiscard]] float row_height() const;
 #endif
 };
 

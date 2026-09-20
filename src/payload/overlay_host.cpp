@@ -1,5 +1,7 @@
 #include "payload/overlay_host.hpp"
 #include <algorithm>
+#include <initializer_list>
+#include <string>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -96,17 +98,31 @@ void OverlayHost::setup_fonts() {
 
     char win_dir[MAX_PATH];
     UINT len = GetWindowsDirectoryA(win_dir, MAX_PATH);
-    std::string fonts_path = (len > 0) ? (std::string(win_dir) + "\\Fonts\\") : "C:\\Windows\\Fonts\\";
+    const std::string fonts_path = (len > 0) ? (std::string(win_dir) + "\\Fonts\\") : "C:\\Windows\\Fonts\\";
 
-    std::string segoe_ui_b = fonts_path + "segoeuib.ttf";
-    std::string segoe_ui   = fonts_path + "segoeui.ttf";
+    // Segoe UI Semibold reads better than the regular face at overlay sizes, but
+    // is not present on every install, so fall back through to Arial.
+    auto first_present = [&](std::initializer_list<const char*> candidates) -> std::string {
+        for (const char* name : candidates) {
+            std::string path = fonts_path + name;
+            if (GetFileAttributesA(path.c_str()) != INVALID_FILE_ATTRIBUTES) {
+                return path;
+            }
+        }
+        return {};
+    };
 
-    if (GetFileAttributesA(segoe_ui.c_str()) != INVALID_FILE_ATTRIBUTES) {
-        m_font_regular = io.Fonts->AddFontFromFileTTF(segoe_ui.c_str(), 15.0f, &cfg);
-        m_font_bold    = io.Fonts->AddFontFromFileTTF(segoe_ui_b.c_str(), 15.0f, &cfg);
-        m_font_medium  = io.Fonts->AddFontFromFileTTF(segoe_ui.c_str(), 18.0f, &cfg);
-        m_font_large   = io.Fonts->AddFontFromFileTTF(segoe_ui_b.c_str(), 22.0f, &cfg);
-    } else {
+    const std::string regular_path = first_present({"seguisb.ttf", "segoeui.ttf", "arial.ttf"});
+    const std::string bold_path    = first_present({"segoeuib.ttf", "seguisb.ttf", "arialbd.ttf"});
+
+    if (!regular_path.empty() && !bold_path.empty()) {
+        m_font_regular = io.Fonts->AddFontFromFileTTF(regular_path.c_str(), FONT_SIZE_BASE, &cfg);
+        m_font_bold    = io.Fonts->AddFontFromFileTTF(bold_path.c_str(), FONT_SIZE_BASE, &cfg);
+        m_font_medium  = io.Fonts->AddFontFromFileTTF(bold_path.c_str(), FONT_SIZE_MEDIUM, &cfg);
+        m_font_large   = io.Fonts->AddFontFromFileTTF(bold_path.c_str(), FONT_SIZE_LARGE, &cfg);
+    }
+
+    if (!m_font_regular) {
         m_font_regular = io.Fonts->AddFontDefault();
         m_font_bold    = m_font_regular;
         m_font_medium  = m_font_regular;

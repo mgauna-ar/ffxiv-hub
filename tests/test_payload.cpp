@@ -91,6 +91,31 @@ TEST_CASE(Payload, CombatOverlayInterfaceAndTabs) {
     TEST_ASSERT(overlay.should_render());
 }
 
+TEST_CASE(Payload, OverlayScaleSelectsFontTier) {
+    // Overlay scale used to change nothing but padding, so text never resized.
+    // Both overlays share one ImGui context, hence a per-window residual rather
+    // than io.FontGlobalScale.
+    auto& host = payload::OverlayHost::instance();
+
+    // No font atlas exists in the mock build, so every tier resolves to null and
+    // the base size carries the whole factor: residual must equal the scale.
+    for (float s : {0.7f, 1.0f, 1.2f, 1.5f, 2.0f}) {
+        const auto f = host.font_for_scale(s, false);
+        TEST_ASSERT_NEAR(f.residual, s, 0.001f);
+    }
+
+    // Rendered size is residual x the selected tier's size, so with a null tier
+    // it stays strictly monotonic in scale rather than snapping to steps.
+    TEST_ASSERT_TRUE(host.font_for_scale(1.0f, false).residual <
+                     host.font_for_scale(1.2f, false).residual);
+    TEST_ASSERT_TRUE(host.font_for_scale(1.2f, false).residual <
+                     host.font_for_scale(2.0f, false).residual);
+
+    // The bold flag selects a face, never a different size.
+    TEST_ASSERT_NEAR(host.font_for_scale(1.0f, true).residual,
+                     host.font_for_scale(1.0f, false).residual, 0.001f);
+}
+
 TEST_CASE(Payload, OverlayHostRegistrationAndManagement) {
     auto& host = payload::OverlayHost::instance();
 
