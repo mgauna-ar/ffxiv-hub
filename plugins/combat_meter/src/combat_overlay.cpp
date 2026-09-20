@@ -282,16 +282,16 @@ void CombatOverlay::render_healing_tab(const EncounterSummary& summary) {
             ImGui::Text("%.1f", player.hps);
 
             ImGui::TableSetColumnIndex(3);
-            if (player.effective_heal >= 1'000'000) {
-                ImGui::Text("%.2fM", player.effective_heal / 1'000'000.0);
-            } else if (player.effective_heal >= 1'000) {
-                ImGui::Text("%.1fk", player.effective_heal / 1'000.0);
+            if (player.effective_healing >= 1'000'000) {
+                ImGui::Text("%.2fM", player.effective_healing / 1'000'000.0);
+            } else if (player.effective_healing >= 1'000) {
+                ImGui::Text("%.1fk", player.effective_healing / 1'000.0);
             } else {
-                ImGui::Text("%llu", static_cast<unsigned long long>(player.effective_heal));
+                ImGui::Text("%llu", static_cast<unsigned long long>(player.effective_healing));
             }
 
             ImGui::TableSetColumnIndex(4);
-            ImGui::Text("%.1f%%", player.overheal_pct);
+            ImGui::Text("%.1f%%", player.overheal_pct());
         }
         ImGui::EndTable();
     }
