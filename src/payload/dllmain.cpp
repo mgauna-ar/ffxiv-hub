@@ -112,6 +112,9 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
         "HookManager::install() -> " + std::string(hooks_installed ? "ok" : "FAILED") +
         " (" + std::to_string(hook_mgr.active_hook_count()) + "/3 hooks active)"
     );
+    hub::os::Logger::info(
+        std::string("ActionManager instance -> ") + (hook_mgr.action_manager() ? "resolved" : "NOT FOUND (mitigation waits for first action)")
+    );
 
     // 6. Initialize ObjectReader
     auto object_reader = std::make_unique<hub::payload::ObjectReader>(&pipe_client->ring_buffer());
@@ -127,6 +130,8 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
     auto last_party_sync = std::chrono::steady_clock::now();
     auto last_reconnect_attempt = std::chrono::steady_clock::now();
     auto last_config_save = std::chrono::steady_clock::now();
+    auto last_meter_report = std::chrono::steady_clock::now();
+    size_t last_combatant_count = 0;
     bool prev_connected = pipe_client->is_connected();
     bool latency_overlay_prev_visible = latency_overlay->is_visible();
     latency_plugin->set_connected(prev_connected);
@@ -176,6 +181,21 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
             latency_plugin->mitigator().get_rtt_tracker().get_smoothed_rtt_ms(),
             latency_plugin->mitigator().get_rtt_tracker().sample_count() > 0
         );
+
+        // Report combat-meter activity so an empty overlay can be told apart from
+        // an overlay that never received any action data.
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_meter_report).count() > 3000) {
+            const auto summary = combat_plugin->engine().current_summary();
+            if (summary.combatants.size() != last_combatant_count) {
+                hub::os::Logger::info(
+                    "CombatMeter: " + std::to_string(summary.combatants.size()) + " combatant(s), " +
+                    std::to_string(static_cast<int>(summary.state)) + " state, " +
+                    std::to_string(static_cast<uint64_t>(summary.total_dps)) + " total dps"
+                );
+                last_combatant_count = summary.combatants.size();
+            }
+            last_meter_report = now;
+        }
 
         // Persist live overlay/plugin state (position, lock, opacity, ...) to
         // config.json every few seconds. This is the only place that writes the

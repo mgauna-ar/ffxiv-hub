@@ -179,6 +179,12 @@ void LatencyPlugin::on_use_action_location(
     );
 }
 
+void LatencyPlugin::on_action_manager_resolved(void* action_manager) {
+    if (action_manager != nullptr) {
+        m_action_manager.store(action_manager);
+    }
+}
+
 void LatencyPlugin::on_pre_receive_action_effect() {
     m_pre_lock_snapshot.store(SafeReadAnimationLock(m_action_manager.load()));
 }

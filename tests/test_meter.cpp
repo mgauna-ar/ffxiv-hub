@@ -625,6 +625,8 @@ TEST_CASE(MeterPlugin, HookConsumerDispatch) {
     std::string test_name = "Krile";
     std::copy(test_name.begin(), test_name.end(), chr.name);
     chr.class_job = static_cast<uint8_t>(Job::PCT);
+    chr.object_kind = 1; // Player
+    chr.owner_id = 0xE0000000; // Game's "no owner" sentinel
     chr.current_hp = 50000;
     chr.max_hp = 50000;
 
@@ -643,6 +645,56 @@ TEST_CASE(MeterPlugin, HookConsumerDispatch) {
     TEST_ASSERT(actor != nullptr);
     TEST_ASSERT_EQ(actor->name, "Krile");
     TEST_ASSERT_EQ(actor->job, Job::PCT);
+    TEST_ASSERT_EQ(actor->actor_type, ActorType::Player);
+    TEST_ASSERT_EQ(actor->owner_id, 0u);
+    TEST_ASSERT_TRUE(plugin.engine().registry().is_friendly(777));
+
+    plugin.shutdown();
+}
+
+TEST_CASE(MeterPlugin, MapsGameObjectKindToActorType) {
+    CombatPlugin plugin;
+    plugin.initialize();
+
+    hub::game::ActionEffectHeader header{};
+    header.animation_target_id = 0x40001;
+    header.action_id = 31;
+    header.num_targets = 1;
+
+    std::array<hub::game::ActionEffectEntry, 8> entries{};
+    entries[0].effect_type = 0x03;
+    entries[0].value = 1000;
+
+    // object_kind 2 is a monster in the game, but 2 is ActorType::Pet - a direct
+    // cast would file every enemy as a friendly pet.
+    hub::game::CharacterObject monster{};
+    monster.entity_id = 0x40000123;
+    monster.object_kind = 2;
+    monster.owner_id = 0xE0000000;
+    monster.current_hp = 9000;
+    monster.max_hp = 9000;
+
+    plugin.on_receive_action_effect(0x40000123, &monster, &header, entries.data(), nullptr);
+
+    const auto* enemy = plugin.engine().registry().find_actor(0x40000123);
+    TEST_ASSERT(enemy != nullptr);
+    TEST_ASSERT_EQ(enemy->actor_type, ActorType::Monster);
+    TEST_ASSERT_FALSE(plugin.engine().registry().is_friendly(0x40000123));
+
+    // object_kind 5 is a pet, which ActorType spells 2.
+    hub::game::CharacterObject pet{};
+    pet.entity_id = 888;
+    pet.object_kind = 5;
+    pet.owner_id = 777;
+    pet.current_hp = 100;
+    pet.max_hp = 100;
+
+    plugin.on_receive_action_effect(888, &pet, &header, entries.data(), nullptr);
+
+    const auto* pet_actor = plugin.engine().registry().find_actor(888);
+    TEST_ASSERT(pet_actor != nullptr);
+    TEST_ASSERT_EQ(pet_actor->actor_type, ActorType::Pet);
+    TEST_ASSERT_EQ(pet_actor->owner_id, 777u);
 
     plugin.shutdown();
 }

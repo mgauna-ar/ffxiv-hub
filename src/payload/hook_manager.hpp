@@ -27,6 +27,7 @@ public:
 
     [[nodiscard]] bool is_installed() const noexcept { return m_installed.load(); }
     [[nodiscard]] uint32_t active_hook_count() const noexcept { return m_active_hooks.load(); }
+    [[nodiscard]] void* action_manager() const noexcept { return m_action_manager.load(); }
 
     void set_latency_consumer(IHookConsumer* consumer) noexcept { m_latency_consumer.store(consumer); }
     void set_meter_consumer(IHookConsumer* consumer) noexcept { m_meter_consumer.store(consumer); }
@@ -58,6 +59,7 @@ private:
     std::atomic<IHookConsumer*> m_latency_consumer{nullptr};
     std::atomic<IHookConsumer*> m_meter_consumer{nullptr};
     std::atomic<RingBuffer*> m_ring_buffer{nullptr};
+    std::atomic<void*> m_action_manager{nullptr};
 };
 
 } // namespace hub::payload

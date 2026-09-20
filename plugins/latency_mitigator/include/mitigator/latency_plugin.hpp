@@ -42,6 +42,8 @@ public:
 
     void on_pre_receive_action_effect() override;
 
+    void on_action_manager_resolved(void* action_manager) override;
+
     void on_receive_action_effect(
         uint32_t source_entity_id,
         const void* source_character,

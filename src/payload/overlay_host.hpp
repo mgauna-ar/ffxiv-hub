@@ -1,6 +1,7 @@
 #pragma once
 
 #include "hub/plugin_api.hpp"
+#include "common/os/process_exit.hpp"
 #include <memory>
 #include <vector>
 #include <string_view>
@@ -44,7 +45,7 @@ public:
 
 private:
     OverlayHost() = default;
-    ~OverlayHost() { shutdown(); }
+    ~OverlayHost() { if (!hub::os::is_process_exiting()) { shutdown(); } }
     OverlayHost(const OverlayHost&) = delete;
     OverlayHost& operator=(const OverlayHost&) = delete;
 

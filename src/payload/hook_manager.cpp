@@ -276,6 +276,24 @@ bool HookManager::install() {
         }
     }
 
+    uintptr_t action_mgr_insn = common::pe::scan_module_section(h_game, ".text", game::signatures::ACTION_MANAGER_INSTANCE_PRIMARY);
+    if (!action_mgr_insn) {
+        action_mgr_insn = common::pe::scan_module_section(h_game, ".text", game::signatures::ACTION_MANAGER_INSTANCE_FALLBACK);
+    }
+    if (action_mgr_insn) {
+        const uintptr_t action_mgr = hub::memory::resolve_rip_relative(
+            action_mgr_insn,
+            game::definitions::ACTION_MGR_RIP_DISP_OFFSET,
+            game::definitions::ACTION_MGR_RIP_INSN_LEN
+        );
+        if (action_mgr) {
+            m_action_manager.store(reinterpret_cast<void*>(action_mgr));
+            if (auto* latency = m_latency_consumer.load()) {
+                latency->on_action_manager_resolved(reinterpret_cast<void*>(action_mgr));
+            }
+        }
+    }
+
     m_active_hooks.store(installed_count);
     m_installed.store(installed_count > 0);
     return m_installed.load();

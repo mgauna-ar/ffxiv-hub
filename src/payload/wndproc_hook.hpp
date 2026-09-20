@@ -1,5 +1,6 @@
 #pragma once
 
+#include "common/os/process_exit.hpp"
 #include <atomic>
 
 namespace hub::payload {
@@ -24,7 +25,7 @@ public:
 
 private:
     WndProcHook() = default;
-    ~WndProcHook() { uninstall(); }
+    ~WndProcHook() { if (!hub::os::is_process_exiting()) { uninstall(); } }
     WndProcHook(const WndProcHook&) = delete;
     WndProcHook& operator=(const WndProcHook&) = delete;
 

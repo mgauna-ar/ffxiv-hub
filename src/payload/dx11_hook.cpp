@@ -1,6 +1,7 @@
 #include "payload/dx11_hook.hpp"
 #include "payload/overlay_host.hpp"
 #include "payload/wndproc_hook.hpp"
+#include "common/os/process_exit.hpp"
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -116,7 +117,10 @@ static HRESULT SafeCallResizeBuffers(
 }
 
 HRESULT WINAPI hooked_present(IDXGISwapChain* swap_chain, UINT sync_interval, UINT flags) {
-    if (g_shutting_down.load() || g_game_exiting.load() || !swap_chain) {
+    // Polled here rather than trusting a flag another thread sets: at process
+    // exit that thread is killed without warning, and one more rendered frame
+    // touches a device the game is already releasing.
+    if (Dx11Hook::is_shutting_down() || !swap_chain) {
         if (fp_original_present && swap_chain) {
             return SafeCallPresent(fp_original_present, swap_chain, sync_interval, flags);
         }
@@ -179,7 +183,7 @@ HRESULT WINAPI hooked_resize_buffers(
     DXGI_FORMAT new_format,
     UINT swap_chain_flags
 ) {
-    if (g_shutting_down.load() || g_game_exiting.load()) {
+    if (Dx11Hook::is_shutting_down()) {
         if (fp_original_resize_buffers && swap_chain) {
             return SafeCallResizeBuffers(fp_original_resize_buffers, swap_chain, buffer_count, width, height, new_format, swap_chain_flags);
         }
@@ -210,17 +214,10 @@ Dx11Hook& Dx11Hook::instance() noexcept {
 bool Dx11Hook::is_shutting_down() noexcept {
     if (g_shutting_down.load() || g_game_exiting.load()) return true;
 
-    HMODULE h_ntdll = GetModuleHandleW(L"ntdll.dll");
-    if (h_ntdll) {
-        using FnRtlDllShutdownInProgress = BOOLEAN(NTAPI*)();
-        auto pfn = reinterpret_cast<FnRtlDllShutdownInProgress>(
-            GetProcAddress(h_ntdll, "RtlDllShutdownInProgress")
-        );
-        if (pfn && pfn()) {
-            g_game_exiting.store(true);
-            g_shutting_down.store(true);
-            return true;
-        }
+    if (hub::os::is_process_exiting()) {
+        g_game_exiting.store(true);
+        g_shutting_down.store(true);
+        return true;
     }
     return false;
 }

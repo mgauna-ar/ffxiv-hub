@@ -266,6 +266,60 @@ TEST_CASE(Mitigator, LatencyPluginGatesOnLocalPlayerLockChange) {
     TEST_ASSERT_FALSE(ring.pop(item));
 }
 
+TEST_CASE(Mitigator, ResolvedActionManagerObservesLockWithoutPriorAction) {
+    // The sigscanned instance is what lets the very first action effect be seen;
+    // without it there is no ActionManager until UseActionLocation has fired.
+    LatencyPlugin plugin;
+    plugin.initialize();
+
+    ipc::PacketRingBuffer ring;
+    plugin.set_ring_buffer(&ring);
+    plugin.set_connected(true);
+
+    std::vector<uint8_t> mgr_buf(0x200, 0);
+    plugin.on_action_manager_resolved(mgr_buf.data());
+
+    plugin.on_pre_receive_action_effect();
+
+    const float server_lock_seconds = 0.6f;
+    std::memcpy(mgr_buf.data() + game::offsets::ACTION_MANAGER_ANIMATION_LOCK, &server_lock_seconds, sizeof(float));
+
+    game::ActionEffectHeader hdr{};
+    hdr.action_id = 900;
+    hdr.source_sequence = 0;
+    plugin.on_receive_action_effect(0, nullptr, &hdr, nullptr, nullptr);
+
+    std::vector<uint8_t> item;
+    TEST_ASSERT_TRUE(ring.pop(item));
+}
+
+TEST_CASE(Mitigator, ResolvedActionManagerIgnoresNull) {
+    // A failed scan must not clear a pointer UseActionLocation already supplied.
+    LatencyPlugin plugin;
+    plugin.initialize();
+
+    ipc::PacketRingBuffer ring;
+    plugin.set_ring_buffer(&ring);
+    plugin.set_connected(true);
+
+    std::vector<uint8_t> mgr_buf(0x200, 0);
+    plugin.on_use_action_location(mgr_buf.data(), 0, 500, 0, nullptr, 0, /*result=*/1);
+    plugin.on_action_manager_resolved(nullptr);
+
+    plugin.on_pre_receive_action_effect();
+
+    const float server_lock_seconds = 0.5f;
+    std::memcpy(mgr_buf.data() + game::offsets::ACTION_MANAGER_ANIMATION_LOCK, &server_lock_seconds, sizeof(float));
+
+    game::ActionEffectHeader hdr{};
+    hdr.action_id = 500;
+    hdr.source_sequence = 0;
+    plugin.on_receive_action_effect(0, nullptr, &hdr, nullptr, nullptr);
+
+    std::vector<uint8_t> item;
+    TEST_ASSERT_TRUE(ring.pop(item));
+}
+
 TEST_CASE(Mitigator, LatencyPluginEmitsTelemetryAndAppliesWriteBack) {
     LatencyPlugin plugin;
     plugin.initialize();

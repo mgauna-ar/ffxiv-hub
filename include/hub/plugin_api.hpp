@@ -85,6 +85,11 @@ public:
     /// need this.
     virtual void on_pre_receive_action_effect() {}
 
+    /// Called once at hook install with the game's ActionManager singleton, so a
+    /// consumer can read it before the player's first action. Null when the scan
+    /// found nothing. Default is a no-op.
+    virtual void on_action_manager_resolved(void* /*action_manager*/) {}
+
     /// Called when ReceiveActionEffect is intercepted
     /// @param source_entity_id Entity ID of the acting character
     /// @param source_character Pointer to character object in game memory

@@ -6,6 +6,23 @@
 
 namespace hub::meter {
 
+namespace {
+
+// The game's object_kind values (1=Player, 2=Monster, 3=NPC, 5=Pet) do not line
+// up with ActorType, so only Player survives a direct cast.
+ActorType actor_type_from_object_kind(uint8_t object_kind, uint32_t owner_id) {
+    if (object_kind == 5 || owner_id != 0) return ActorType::Pet;
+    if (object_kind == 1) return ActorType::Player;
+    return ActorType::Monster;
+}
+
+/// The game writes 0xE0000000 rather than 0 when an actor has no owner.
+uint32_t normalize_owner_id(uint32_t owner_id) {
+    return (owner_id != 0xE0000000) ? owner_id : 0;
+}
+
+} // namespace
+
 CombatPlugin::CombatPlugin() = default;
 
 bool CombatPlugin::initialize() {
@@ -127,12 +144,13 @@ void CombatPlugin::on_receive_action_effect(
     if (source_character != nullptr) {
         const auto* chr = reinterpret_cast<const game::CharacterObject*>(source_character);
         if (chr->entity_id == source_entity_id) {
+            const uint32_t owner_id = normalize_owner_id(chr->owner_id);
             m_engine.registry().register_actor(
                 chr->entity_id,
                 chr->name,
                 static_cast<Job>(chr->class_job),
-                chr->owner_id,
-                static_cast<ActorType>(chr->object_kind),
+                owner_id,
+                actor_type_from_object_kind(chr->object_kind, owner_id),
                 chr->max_hp,
                 chr->current_hp
             );

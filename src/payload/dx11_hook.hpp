@@ -26,7 +26,9 @@ public:
 
 private:
     Dx11Hook() = default;
-    ~Dx11Hook() { uninstall(); }
+    // Runs from the loader during DLL_PROCESS_DETACH, where releasing D3D and
+    // shutting ImGui down would fault.
+    ~Dx11Hook() { if (!is_shutting_down()) { uninstall(); } }
     Dx11Hook(const Dx11Hook&) = delete;
     Dx11Hook& operator=(const Dx11Hook&) = delete;
 
