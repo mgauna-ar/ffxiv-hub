@@ -222,7 +222,7 @@ bool HookManager::install() {
     // Scan for ReceiveActionEffect
     uintptr_t recv_addr = common::pe::scan_module_section(h_game, ".text", game::signatures::RECEIVE_ACTION_EFFECT_PRIMARY);
     if (recv_addr) {
-        recv_addr = common::sigscan::resolve_call_relative(recv_addr, 1, 5);
+        recv_addr = hub::memory::resolve_call_relative(recv_addr);
     } else {
         recv_addr = common::pe::scan_module_section(h_game, ".text", game::signatures::RECEIVE_ACTION_EFFECT_FALLBACK);
     }
@@ -230,7 +230,7 @@ bool HookManager::install() {
     // Scan for UseActionLocation
     uintptr_t use_addr = common::pe::scan_module_section(h_game, ".text", game::signatures::USE_ACTION_LOCATION_PRIMARY);
     if (use_addr) {
-        use_addr = common::sigscan::resolve_call_relative(use_addr, 1, 5);
+        use_addr = hub::memory::resolve_call_relative(use_addr);
     } else {
         use_addr = common::pe::scan_module_section(h_game, ".text", game::signatures::USE_ACTION_LOCATION_FALLBACK);
     }

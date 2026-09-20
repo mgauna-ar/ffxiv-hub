@@ -29,6 +29,7 @@ if(MSVC)
         /permissive-
         /MP
         /utf-8
+        /wd4324
     )
     add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
     # Statically link C/C++ runtime for zero-dependency portability
