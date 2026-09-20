@@ -6,6 +6,7 @@
 #include "common/ipc/ring_buffer.hpp"
 #include "common/ipc/pipe_client.hpp"
 #include "common/config/config_manager.hpp"
+#include "common/os/logger.hpp"
 #include "meter/combat_plugin.hpp"
 #include "meter/combat_overlay.hpp"
 #include "mitigator/latency_plugin.hpp"
@@ -15,6 +16,7 @@
 #include <chrono>
 #include <thread>
 #include <memory>
+#include <string>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -30,6 +32,18 @@ std::atomic<bool> g_shutdown_requested{false};
 DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
     (void)module_handle;
 
+    // 0. Diagnostic log for this in-game payload, separate from the desktop app's
+    //    own hub.log (a second process truncating/writing that same file would
+    //    corrupt it) so both sides of the handshake can be inspected independently.
+    {
+        const auto cfg_path = hub::config::ConfigManager::instance().get_config_path();
+        const std::string payload_log_path = cfg_path.has_parent_path()
+            ? (cfg_path.parent_path() / "hub_payload.log").string()
+            : "hub_payload.log";
+        hub::os::Logger::init(payload_log_path, /*rotate=*/true);
+    }
+    hub::os::Logger::info("Payload thread started. Waiting for FFXIVGAME window...");
+
     // 1. Wait for game window readiness to avoid hooking transient splash screens
     HWND game_hwnd = nullptr;
     for (int attempts = 0; attempts < 60 && !g_shutdown_requested.load(); ++attempts) {
@@ -41,8 +55,10 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
     }
 
     if (!game_hwnd) {
+        hub::os::Logger::error("Payload thread giving up: FFXIVGAME window never appeared (or shutdown was requested).");
         return 0;
     }
+    hub::os::Logger::info("Game window found. Initializing plugins and hooks...");
 
     // 2. Initialize plugins and overlays
     auto latency_plugin = std::make_shared<hub::mitigator::LatencyPlugin>();
@@ -79,14 +95,20 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
     hook_mgr.set_meter_consumer(combat_plugin.get());
     hook_mgr.set_ring_buffer(&pipe_client->ring_buffer());
 
-    hook_mgr.install();
+    const bool hooks_installed = hook_mgr.install();
+    hub::os::Logger::info(
+        "HookManager::install() -> " + std::string(hooks_installed ? "ok" : "FAILED") +
+        " (" + std::to_string(hook_mgr.active_hook_count()) + "/3 hooks active)"
+    );
 
     // 5. Initialize ObjectReader
     auto object_reader = std::make_unique<hub::payload::ObjectReader>(&pipe_client->ring_buffer());
-    object_reader->initialize();
+    const bool object_reader_ok = object_reader->initialize();
+    hub::os::Logger::info(std::string("ObjectReader::initialize() -> ") + (object_reader_ok ? "ok" : "FAILED"));
 
     // 6. Install DirectX 11 Hook (Present & ResizeBuffers)
-    hub::payload::Dx11Hook::instance().install();
+    const bool dx11_ok = hub::payload::Dx11Hook::instance().install();
+    hub::os::Logger::info(std::string("Dx11Hook::install() -> ") + (dx11_ok ? "ok" : "FAILED"));
 
     // 7. Bootstrap plugin config from disk now that ring buffers/overlays are wired,
     //    so persisted desktop settings apply in-game without waiting for a live command.
@@ -96,7 +118,9 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
 
     // 8. Connect to the desktop app's named pipe. If the app hasn't started its
     //    server yet, keep retrying from the orchestration loop below.
-    pipe_client->connect(5000);
+    hub::os::Logger::info("Connecting to desktop app pipe (" + std::string(hub::ipc::DEFAULT_PIPE_NAME) + ")...");
+    const bool connected_initially = pipe_client->connect(5000);
+    hub::os::Logger::info(std::string("Initial pipe connect -> ") + (connected_initially ? "connected" : "not connected yet, will keep retrying"));
 
     // 9. Background orchestration loop
     auto last_party_sync = std::chrono::steady_clock::now();
@@ -118,6 +142,7 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
         // user's configured dry_run preference. Restore prior visibility on reconnect.
         const bool connected = pipe_client->is_connected();
         if (connected != prev_connected) {
+            hub::os::Logger::info(std::string("Pipe connection state changed -> ") + (connected ? "connected" : "disconnected"));
             latency_plugin->set_connected(connected);
             if (!connected) {
                 latency_overlay_prev_visible = latency_overlay->is_visible();
@@ -152,6 +177,7 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
     }
 
     // Graceful teardown when explicit unload is requested
+    hub::os::Logger::info("Payload shutting down.");
     hook_mgr.uninstall();
     hub::payload::Dx11Hook::instance().uninstall();
     pipe_client->disconnect();

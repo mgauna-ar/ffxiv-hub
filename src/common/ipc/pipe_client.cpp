@@ -1,5 +1,7 @@
 #include "common/ipc/pipe_client.hpp"
+#include "common/os/logger.hpp"
 #include <chrono>
+#include <string>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -26,6 +28,7 @@ bool PipeClient::connect(uint32_t timeout_ms) {
     if (m_connected.load()) return true;
 
     const auto start = std::chrono::steady_clock::now();
+    DWORD last_error = 0;
     while (true) {
         HANDLE h_pipe = CreateFileA(
             m_pipe_name.c_str(),
@@ -43,21 +46,31 @@ bool PipeClient::connect(uint32_t timeout_ms) {
             m_pipe_handle = static_cast<void*>(h_pipe);
             m_connected.store(true);
             start_worker_threads();
+            hub::os::Logger::info("PipeClient: connected to " + m_pipe_name);
             return true;
         }
 
-        if (GetLastError() == ERROR_PIPE_BUSY) {
+        last_error = GetLastError();
+        if (last_error == ERROR_PIPE_BUSY) {
             if (!WaitNamedPipeA(m_pipe_name.c_str(), 500)) {
                 auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now() - start
                 ).count();
-                if (elapsed >= timeout_ms) return false;
+                if (elapsed >= timeout_ms) {
+                    hub::os::Logger::warn("PipeClient: connect timed out waiting on a busy pipe (" + m_pipe_name + ")");
+                    return false;
+                }
             }
         } else {
             auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - start
             ).count();
-            if (elapsed >= timeout_ms) return false;
+            if (elapsed >= timeout_ms) {
+                hub::os::Logger::warn(
+                    "PipeClient: connect to " + m_pipe_name + " failed, Win32 error " + std::to_string(last_error)
+                );
+                return false;
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
     }
@@ -125,6 +138,11 @@ void PipeClient::reader_thread_func() {
         BOOL ok = ReadFile(h_pipe, &hdr, sizeof(hdr), &bytes_read, nullptr);
 
         if (!ok || bytes_read != sizeof(hdr)) {
+            if (m_running.load()) {
+                hub::os::Logger::warn(
+                    "PipeClient: reader thread lost connection (Win32 error " + std::to_string(GetLastError()) + ")"
+                );
+            }
             m_connected.store(false);
             break;
         }
