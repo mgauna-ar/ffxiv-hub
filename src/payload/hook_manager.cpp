@@ -173,27 +173,22 @@ static void FFXIV_FASTCALL hooked_receive_action_effect(
 
     auto* latency = HookManager::instance().latency_consumer();
 
-    // 0. Let the latency consumer snapshot ActionManager::animation_lock before
-    //    the original function overwrites it with the server's response.
+    // Snapshot the animation lock before the original writes the server's value.
     if (latency) {
         latency->on_pre_receive_action_effect();
     }
 
-    // 1. Forward to original game engine function: this is what actually
-    //    writes the server's animation lock value into ActionManager memory.
-    //    Consumers must run AFTER this call, or a mitigation write-back would
-    //    be immediately clobbered by the original function.
+    // Original must run first - it writes the server's lock value, which a
+    // mitigation write-back needs to follow, not precede.
     const bool original_ok = SafeCallOriginalReceiveActionEffect(fp_original_receive_action_effect, source_id, source_character, pos, effect_header, effect_data, targets);
     if (!original_ok) {
         return;
     }
 
-    // 2. Latency Mitigator executes SECOND: reads/adjusts animation lock in memory
     if (latency) {
         latency->on_receive_action_effect(source_id, source_character, effect_header, effect_data, reinterpret_cast<const uint64_t*>(targets));
     }
 
-    // 3. Combat Meter executes THIRD: decodes in read-only mode
     auto* meter = HookManager::instance().meter_consumer();
     if (meter) {
         meter->on_receive_action_effect(source_id, source_character, effect_header, effect_data, reinterpret_cast<const uint64_t*>(targets));
@@ -228,6 +223,10 @@ HookManager& HookManager::instance() noexcept {
 
 bool HookManager::install() {
     if (m_installed.load()) return true;
+
+    if (MH_Initialize() != MH_OK && MH_Initialize() != MH_ERROR_ALREADY_INITIALIZED) {
+        return false;
+    }
 
     HMODULE h_game = GetModuleHandleW(nullptr);
     if (!h_game) return false;

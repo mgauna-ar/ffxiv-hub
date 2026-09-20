@@ -192,13 +192,8 @@ void LatencyPlugin::on_receive_action_effect(
 ) {
     if (!effect_header) return;
 
-    // ReceiveActionEffect fires for every actor's actions in the zone, not just
-    // the local player's, and the packet header can carry a nonzero
-    // animation_lock for other players' effects too. Gate on whether THIS call
-    // actually changed our own ActionManager::animation_lock (read before/after
-    // the original engine call via HookManager's on_pre_receive_action_effect),
-    // matching the original working mitigator's approach, so we never stomp our
-    // own lock based on someone else's action effect.
+    // ReceiveActionEffect fires for every actor in the zone, so only mitigate
+    // when this call actually changed our own animation_lock.
     void* mgr = m_action_manager.load();
     const float old_lock = m_pre_lock_snapshot.load();
     const float new_lock = SafeReadAnimationLock(mgr);

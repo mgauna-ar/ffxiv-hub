@@ -83,14 +83,8 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
     combat_plugin->deserialize_config(hub::config::ConfigManager::instance().root()["combat_meter"]);
     latency_plugin->deserialize_config(hub::config::ConfigManager::instance().root()["latency_mitigator"]);
 
-    // 4. Initialize the outbound IPC client and connect to the desktop app's named
-    //    pipe BEFORE touching any game memory (sigscan/MinHook detours below).
-    //    Both original standalone apps this was merged from connected first, then
-    //    installed hooks - matching that order here matters: if hook/sigscan
-    //    installation hangs or crashes on a game patch this payload hasn't been
-    //    updated for, the pipe is already up and the desktop app shows "Connected"
-    //    instead of hanging at "Awaiting IPC handshake" with zero information
-    //    about why.
+    // 4. Connect to the desktop app's pipe before touching any game memory below,
+    //    so a hook/sigscan failure still leaves the app able to report it.
     auto pipe_client = std::make_unique<hub::ipc::PipeClient>();
     combat_plugin->set_ring_buffer(&pipe_client->ring_buffer());
     latency_plugin->set_ring_buffer(&pipe_client->ring_buffer());
@@ -198,16 +192,8 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
         }
     }
 
-    // If the game process itself is exiting (detected via RtlDllShutdownInProgress
-    // in Dx11Hook::is_shutting_down(), as opposed to g_shutdown_requested, which
-    // only means an explicit unload-while-game-keeps-running was requested), do
-    // NOT touch DirectX COM objects, MinHook trampolines, background threads, or
-    // disk I/O from this thread - the OS is already tearing the process down and
-    // any of that here risks a crash on exit. Just stop; the OS reclaims
-    // everything. This mirrors the original ffxiv-combat-meter/ffxiv-latency-
-    // mitigator payloads, which had this exact guard - the unified payload had
-    // dropped it and unconditionally ran full teardown (including a config file
-    // save) on every loop exit, which is the likely cause of crashes on game close.
+    // Game process exiting (not just an explicit unload) - don't touch DirectX,
+    // MinHook, threads, or disk from here. The OS reclaims everything.
     if (hub::payload::Dx11Hook::is_shutting_down()) {
         return 0;
     }
