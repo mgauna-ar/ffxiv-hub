@@ -23,9 +23,9 @@ inline uint32_t get_role_color(Job job) {
             return IM_COL32(16, 185, 129, 75);  // #10B981 Green
         case Role::Melee:
             return IM_COL32(239, 68, 68, 75);   // #EF4444 Red
-        case Role::RangedPhysical:
+        case Role::Ranged:
             return IM_COL32(249, 115, 22, 75);  // #F97316 Orange
-        case Role::RangedMagical:
+        case Role::Caster:
             return IM_COL32(168, 85, 247, 75);  // #A855F7 Purple
         default:
             return IM_COL32(100, 116, 139, 75); // Slate
@@ -41,9 +41,9 @@ inline uint32_t get_job_accent_color(Job job) {
             return IM_COL32(52, 211, 153, 255);
         case Role::Melee:
             return IM_COL32(248, 113, 113, 255);
-        case Role::RangedPhysical:
+        case Role::Ranged:
             return IM_COL32(251, 146, 60, 255);
-        case Role::RangedMagical:
+        case Role::Caster:
             return IM_COL32(192, 132, 252, 255);
         default:
             return IM_COL32(148, 163, 184, 255);
@@ -154,7 +154,7 @@ void CombatOverlay::render_damage_tab(const EncounterSummary& summary) {
     if (m_party_only.load()) {
         players.erase(
             std::remove_if(players.begin(), players.end(), [](const CombatantStats& c) {
-                return !c.is_friendly;
+                return !c.is_friendly();
             }),
             players.end()
         );
@@ -197,7 +197,7 @@ void CombatOverlay::render_damage_tab(const EncounterSummary& summary) {
             ImGui::TextColored(
                 ImColor(get_job_accent_color(player.job)),
                 "[%s] %s",
-                job_to_string(player.job),
+                std::string(job_abbreviation(player.job)).c_str(),
                 player.name.c_str()
             );
 
@@ -217,15 +217,15 @@ void CombatOverlay::render_damage_tab(const EncounterSummary& summary) {
 
             // CRIT%
             ImGui::TableSetColumnIndex(4);
-            ImGui::Text("%.1f%%", player.crit_pct);
+            ImGui::Text("%.1f%%", player.hits.crit_rate());
 
             // DH%
             ImGui::TableSetColumnIndex(5);
-            ImGui::Text("%.1f%%", player.dh_pct);
+            ImGui::Text("%.1f%%", player.hits.dh_rate());
 
             // CDH%
             ImGui::TableSetColumnIndex(6);
-            ImGui::Text("%.1f%%", player.cdh_pct);
+            ImGui::Text("%.1f%%", player.hits.cdh_rate());
         }
         ImGui::EndTable();
     }
@@ -236,7 +236,7 @@ void CombatOverlay::render_healing_tab(const EncounterSummary& summary) {
     if (m_party_only.load()) {
         healers.erase(
             std::remove_if(healers.begin(), healers.end(), [](const CombatantStats& c) {
-                return !c.is_friendly;
+                return !c.is_friendly();
             }),
             healers.end()
         );
@@ -274,7 +274,7 @@ void CombatOverlay::render_healing_tab(const EncounterSummary& summary) {
             ImGui::TextColored(
                 ImColor(get_job_accent_color(player.job)),
                 "[%s] %s",
-                job_to_string(player.job),
+                std::string(job_abbreviation(player.job)).c_str(),
                 player.name.c_str()
             );
 
