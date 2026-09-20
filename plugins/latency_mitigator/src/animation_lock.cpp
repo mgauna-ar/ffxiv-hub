@@ -83,7 +83,7 @@ MitigationResult AnimationLockMitigator::calculate_mitigation(
             const double outlier_tolerance = std::max({
                 constants::MIN_OUTLIER_TOLERANCE_MS,
                 median_rtt * 0.5,
-                constants::JITTER_SPIKE_MULTIPLIER * jitter
+                m_config.spike_multiplier * jitter
             });
             const double outlier_threshold = median_rtt + outlier_tolerance;
             if (effective_rtt > outlier_threshold) {
@@ -193,6 +193,11 @@ void AnimationLockMitigator::set_target_ping_ms(double target_ping_ms) {
 void AnimationLockMitigator::set_min_animation_lock_ms(double min_lock_ms) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_config.min_animation_lock_ms = std::max(constants::ABSOLUTE_MIN_ANIMATION_LOCK_FLOOR_MS, min_lock_ms);
+}
+
+void AnimationLockMitigator::set_spike_multiplier(double multiplier) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_config.spike_multiplier = std::max(1.0, multiplier);
 }
 
 SessionStats AnimationLockMitigator::get_session_stats() const {

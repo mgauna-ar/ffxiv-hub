@@ -5,6 +5,7 @@
 #include <memory>
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 namespace hub::ipc {
 
@@ -75,5 +76,10 @@ private:
     alignas(64) std::atomic<uint64_t> m_dropped_count{0};
     std::unique_ptr<std::array<T, Capacity>> m_buffer;
 };
+
+/// Shared SPSC buffer type for serialized outbound IPC packets, produced by the
+/// game-thread hook consumers (plugins, ObjectReader) and drained by PipeClient's
+/// writer thread onto the named pipe.
+using PacketRingBuffer = SpscRingBuffer<std::vector<uint8_t>, 4096>;
 
 } // namespace hub::ipc

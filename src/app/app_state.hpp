@@ -3,6 +3,7 @@
 #include "hub/types.hpp"
 #include "common/config/config_manager.hpp"
 #include "common/ipc/pipe_server.hpp"
+#include "common/os/network_monitor.hpp"
 #include "meter/encounter_engine.hpp"
 #include "meter/combatant_registry.hpp"
 #include <string>
@@ -129,8 +130,15 @@ public:
     void send_mitigator_dry_run(bool dry_run);
     void send_mitigator_hud_visible(bool visible);
     void send_mitigator_hud_locked(bool locked);
+    void send_mitigator_hud_click_through(bool click_through);
     void send_mitigator_hud_opacity(float opacity);
     void send_mitigator_hud_scale(float scale);
+    void send_mitigator_hud_display_mode(uint32_t mode);
+
+    /// Independent ICMP ping to the game server, measured from the desktop process
+    /// (not the in-game hooks), so it's available immediately on login.
+    [[nodiscard]] double network_ping_ms() const noexcept { return m_network_monitor.get_current_ping_ms(); }
+    void send_network_ping(float ping_ms);
 
 private:
     void register_ipc_callbacks();
@@ -143,6 +151,10 @@ private:
     std::atomic<uint32_t> m_game_pid{0};
     std::atomic<bool> m_access_denied{false};
     std::chrono::steady_clock::time_point m_last_process_check{};
+
+    os::NetworkMonitor m_network_monitor;
+    double m_last_sent_ping_ms{-1.0};
+    std::chrono::steady_clock::time_point m_last_ping_check{};
 
     std::vector<RegisteredPluginInfo> m_plugins;
 

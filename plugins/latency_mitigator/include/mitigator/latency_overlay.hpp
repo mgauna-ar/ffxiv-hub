@@ -1,6 +1,7 @@
 #pragma once
 
 #include "hub/plugin_api.hpp"
+#include "mitigator/types.hpp"
 #include <atomic>
 #include <chrono>
 #include <string>
@@ -46,12 +47,16 @@ public:
     void set_scale(float scale) noexcept { m_scale.store(scale); }
     [[nodiscard]] float scale() const noexcept { return m_scale.load(); }
 
+    void set_display_mode(OverlayDisplayMode mode) noexcept { m_display_mode.store(mode); }
+    [[nodiscard]] OverlayDisplayMode display_mode() const noexcept { return m_display_mode.load(); }
+
 private:
     std::atomic<bool> m_visible{true};
     std::atomic<bool> m_locked{false};
     std::atomic<bool> m_click_through{false};
     std::atomic<float> m_opacity{0.85f};
     std::atomic<float> m_scale{1.0f};
+    std::atomic<OverlayDisplayMode> m_display_mode{OverlayDisplayMode::CompactInline};
 
     float m_pos_x{20.0f};
     float m_pos_y{20.0f};

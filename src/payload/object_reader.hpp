@@ -22,7 +22,7 @@ namespace hub::payload {
  */
 class ObjectReader {
 public:
-    using RingBuffer = ipc::SpscRingBuffer<std::vector<uint8_t>, 4096>;
+    using RingBuffer = ipc::PacketRingBuffer;
 
     explicit ObjectReader(RingBuffer* ring_buffer = nullptr);
     ~ObjectReader() = default;

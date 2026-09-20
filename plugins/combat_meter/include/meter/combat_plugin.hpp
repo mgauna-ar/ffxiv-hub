@@ -2,6 +2,7 @@
 
 #include "hub/plugin_api.hpp"
 #include "meter/encounter_engine.hpp"
+#include "common/ipc/ring_buffer.hpp"
 #include <memory>
 
 namespace hub::meter {
@@ -40,10 +41,15 @@ public:
     [[nodiscard]] CombatConfig& config() noexcept { return m_config; }
     [[nodiscard]] const CombatConfig& config() const noexcept { return m_config; }
 
+    /// Sets the outbound packet sink used to stream combat data to the desktop app.
+    void set_ring_buffer(ipc::PacketRingBuffer* ring_buffer) noexcept { m_ring_buffer = ring_buffer; }
+
 private:
     EncounterEngine m_engine;
     CombatConfig m_config;
     bool m_initialized{false};
+    ipc::PacketRingBuffer* m_ring_buffer{nullptr};
+    uint32_t m_sequence{0};
 };
 
 } // namespace hub::meter

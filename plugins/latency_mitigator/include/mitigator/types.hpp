@@ -47,9 +47,19 @@ struct MitigationConfig {
     double max_animation_lock_ms{constants::DEFAULT_MAX_ANIMATION_LOCK_MS};
     size_t rtt_sample_window{constants::DEFAULT_RTT_SAMPLE_WINDOW};
     double safety_margin_ms{constants::DEFAULT_SAFETY_MARGIN_MS};
+    double spike_multiplier{constants::JITTER_SPIKE_MULTIPLIER};
     bool   dry_run{false};
     bool   verbose{false};
     bool   enabled{true};
+    bool   auto_start{false};
+    bool   notifications_enabled{true};
+};
+
+/// In-game micro ping HUD layout mode
+enum class OverlayDisplayMode : uint32_t {
+    CompactInline,
+    TwoRow,
+    PingOnly,
 };
 
 /// Record of an action request sent from client to server

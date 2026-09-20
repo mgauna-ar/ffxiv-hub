@@ -171,20 +171,33 @@ static void FFXIV_FASTCALL hooked_receive_action_effect(
         return;
     }
 
-    // 1. Latency Mitigator executes FIRST: adjusts animation lock in memory
     auto* latency = HookManager::instance().latency_consumer();
+
+    // 0. Let the latency consumer snapshot ActionManager::animation_lock before
+    //    the original function overwrites it with the server's response.
+    if (latency) {
+        latency->on_pre_receive_action_effect();
+    }
+
+    // 1. Forward to original game engine function: this is what actually
+    //    writes the server's animation lock value into ActionManager memory.
+    //    Consumers must run AFTER this call, or a mitigation write-back would
+    //    be immediately clobbered by the original function.
+    const bool original_ok = SafeCallOriginalReceiveActionEffect(fp_original_receive_action_effect, source_id, source_character, pos, effect_header, effect_data, targets);
+    if (!original_ok) {
+        return;
+    }
+
+    // 2. Latency Mitigator executes SECOND: reads/adjusts animation lock in memory
     if (latency) {
         latency->on_receive_action_effect(source_id, source_character, effect_header, effect_data, reinterpret_cast<const uint64_t*>(targets));
     }
 
-    // 2. Combat Meter executes SECOND: decodes in read-only mode
+    // 3. Combat Meter executes THIRD: decodes in read-only mode
     auto* meter = HookManager::instance().meter_consumer();
     if (meter) {
         meter->on_receive_action_effect(source_id, source_character, effect_header, effect_data, reinterpret_cast<const uint64_t*>(targets));
     }
-
-    // 3. Forward to original game engine function
-    SafeCallOriginalReceiveActionEffect(fp_original_receive_action_effect, source_id, source_character, pos, effect_header, effect_data, targets);
 }
 
 // Detour 3: ProcessHotDot

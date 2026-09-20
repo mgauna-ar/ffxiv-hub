@@ -78,6 +78,13 @@ class IHookConsumer {
 public:
     virtual ~IHookConsumer() = default;
 
+    /// Called immediately before the original ReceiveActionEffect engine function
+    /// executes, so a consumer can snapshot any game-memory state it needs to diff
+    /// afterward (e.g. ActionManager::animation_lock before the engine overwrites
+    /// it with the server's response). Default is a no-op; most consumers don't
+    /// need this.
+    virtual void on_pre_receive_action_effect() {}
+
     /// Called when ReceiveActionEffect is intercepted
     /// @param source_entity_id Entity ID of the acting character
     /// @param source_character Pointer to character object in game memory

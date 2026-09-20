@@ -46,10 +46,12 @@ AppState::~AppState() {
 bool AppState::initialize() {
     config::ConfigManager::instance().load();
     m_pipe_server.start();
+    m_network_monitor.start(0);
     return true;
 }
 
 void AppState::shutdown() {
+    m_network_monitor.stop();
     m_pipe_server.stop();
     config::ConfigManager::instance().save();
 }
@@ -107,6 +109,17 @@ void AppState::update() {
         std::lock_guard<std::mutex> lock(m_combat_mutex);
         m_engine.update();
     }
+
+    // Forward newly-measured network ping to the in-game HUD, throttled to once/sec.
+    const auto now = std::chrono::steady_clock::now();
+    if (std::chrono::duration_cast<std::chrono::milliseconds>(now - m_last_ping_check).count() >= 1000) {
+        m_last_ping_check = now;
+        const double ping = m_network_monitor.get_current_ping_ms();
+        if (is_connected() && std::abs(ping - m_last_sent_ping_ms) > 0.5) {
+            m_last_sent_ping_ms = ping;
+            send_network_ping(static_cast<float>(ping));
+        }
+    }
 }
 
 void AppState::check_game_process() {
@@ -118,6 +131,9 @@ void AppState::check_game_process() {
 
     auto proc = os::ProcessFinder::find_process();
     const uint32_t pid = proc ? proc->pid : 0;
+    if (pid != m_game_pid.load()) {
+        m_network_monitor.set_target_pid(pid);
+    }
     m_game_pid.store(pid);
 
     if (pid == 0) {
@@ -344,6 +360,18 @@ void AppState::send_mitigator_hud_opacity(float opacity) {
 
 void AppState::send_mitigator_hud_scale(float scale) {
     m_pipe_server.send_command(PluginId::LatencyMitigator, CommandId::SetScale, 0, scale);
+}
+
+void AppState::send_mitigator_hud_click_through(bool click_through) {
+    m_pipe_server.send_command(PluginId::LatencyMitigator, CommandId::ClickThrough, click_through ? 1 : 0);
+}
+
+void AppState::send_mitigator_hud_display_mode(uint32_t mode) {
+    m_pipe_server.send_command(PluginId::LatencyMitigator, CommandId::SetOverlayMode, mode);
+}
+
+void AppState::send_network_ping(float ping_ms) {
+    m_pipe_server.send_command(PluginId::LatencyMitigator, CommandId::UpdateNetworkPing, 0, ping_ms);
 }
 
 } // namespace hub::app

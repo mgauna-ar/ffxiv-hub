@@ -122,7 +122,12 @@ void render_view_latency(AppState& app_state) {
     ImGui::BeginChild("##PingCard", ImVec2(card_w, 75.0f), true);
     ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "SMOOTHED RTT");
     ImGui::TextColored(ImVec4(0.231f, 0.510f, 0.965f, 1.0f), "%.1f ms", metrics.latest_smoothed_rtt_ms);
-    ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "Raw: %.1f ms", metrics.latest_measured_rtt_ms);
+    const double net_ping = app_state.network_ping_ms();
+    if (net_ping >= 0.0) {
+        ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "Net: %.0f ms | Raw: %.1f ms", net_ping, metrics.latest_measured_rtt_ms);
+    } else {
+        ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "Raw: %.1f ms", metrics.latest_measured_rtt_ms);
+    }
     ImGui::EndChild();
 
     ImGui::SameLine();
@@ -250,6 +255,27 @@ void render_view_latency(AppState& app_state) {
     static bool hud_locked = false;
     if (ImGui::Checkbox("Lock Micro Ping HUD Position", &hud_locked)) {
         app_state.send_mitigator_hud_locked(hud_locked);
+    }
+
+    static float hud_opacity = 0.90f;
+    if (ImGui::SliderFloat("HUD Opacity", &hud_opacity, 0.1f, 1.0f, "%.2f")) {
+        app_state.send_mitigator_hud_opacity(hud_opacity);
+    }
+
+    static float hud_scale = 1.0f;
+    if (ImGui::SliderFloat("HUD Scale", &hud_scale, 0.5f, 3.0f, "%.2fx")) {
+        app_state.send_mitigator_hud_scale(hud_scale);
+    }
+
+    static bool hud_click_through = false;
+    if (ImGui::Checkbox("Click-Through HUD", &hud_click_through)) {
+        app_state.send_mitigator_hud_click_through(hud_click_through);
+    }
+
+    static int hud_mode = 0;
+    static const char* hud_mode_names[] = { "Compact Inline", "Two Row", "Ping Only" };
+    if (ImGui::Combo("HUD Layout", &hud_mode, hud_mode_names, 3)) {
+        app_state.send_mitigator_hud_display_mode(static_cast<uint32_t>(hud_mode));
     }
 
     ImGui::EndChild();

@@ -8,6 +8,7 @@
 #include "common/config/json.hpp"
 #include <array>
 #include <vector>
+#include <cstring>
 
 using namespace hub::meter;
 
@@ -644,4 +645,36 @@ TEST_CASE(MeterPlugin, HookConsumerDispatch) {
     TEST_ASSERT_EQ(actor->job, Job::PCT);
 
     plugin.shutdown();
+}
+
+TEST_CASE(MeterPlugin, EmitsCombatActionOverIpc) {
+    CombatPlugin plugin;
+    plugin.initialize();
+
+    hub::ipc::PacketRingBuffer ring;
+    plugin.set_ring_buffer(&ring);
+
+    hub::game::ActionEffectHeader header{};
+    header.animation_target_id = 0x40001;
+    header.action_id = 31;
+    header.num_targets = 1;
+
+    std::array<hub::game::ActionEffectEntry, 8> entries{};
+    entries[0].effect_type = 0x03; // Damage
+    entries[0].value = 25000;
+
+    plugin.on_receive_action_effect(777, nullptr, &header, entries.data(), nullptr);
+
+    std::vector<uint8_t> item;
+    TEST_ASSERT_TRUE(ring.pop(item));
+
+    auto pkt_header = hub::ipc::deserialize_header(item);
+    TEST_ASSERT_TRUE(pkt_header.has_value());
+    TEST_ASSERT(pkt_header->plugin_id == static_cast<uint16_t>(hub::PluginId::CombatMeter));
+    TEST_ASSERT(pkt_header->message_type == static_cast<uint16_t>(hub::MessageType::CombatAction));
+
+    hub::ipc::CombatActionPayload payload{};
+    std::memcpy(&payload, item.data() + sizeof(hub::ipc::PacketHeader), sizeof(payload));
+    TEST_ASSERT_EQ(payload.action_id, 31u);
+    TEST_ASSERT_EQ(payload.damage, 25000u);
 }

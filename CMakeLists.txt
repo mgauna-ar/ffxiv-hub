@@ -67,6 +67,7 @@ file(GLOB COMMON_SOURCES
     src/payload/wndproc_hook.cpp
     src/payload/hook_manager.cpp
     src/payload/object_reader.cpp
+    src/payload/command_dispatcher.cpp
     plugins/latency_mitigator/src/*.cpp
     plugins/combat_meter/src/*.cpp
     src/app/app_state.cpp

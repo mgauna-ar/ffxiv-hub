@@ -37,6 +37,7 @@ public:
     void set_dry_run(bool dry_run);
     void set_target_ping_ms(double target_ping_ms);
     void set_min_animation_lock_ms(double min_lock_ms);
+    void set_spike_multiplier(double multiplier);
 
     [[nodiscard]] SessionStats get_session_stats() const;
     [[nodiscard]] const RollingRttTracker& get_rtt_tracker() const noexcept { return m_rtt_tracker; }

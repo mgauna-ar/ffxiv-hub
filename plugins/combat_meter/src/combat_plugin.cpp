@@ -111,6 +111,13 @@ void CombatPlugin::on_receive_action_effect(
         0,
         [this](const ipc::CombatActionPacket& packet) {
             m_engine.process_action(packet);
+
+            if (m_ring_buffer) {
+                auto bytes = ipc::serialize_typed_packet(
+                    PluginId::CombatMeter, MessageType::CombatAction, ++m_sequence, packet
+                );
+                m_ring_buffer->push(bytes);
+            }
         }
     );
 }

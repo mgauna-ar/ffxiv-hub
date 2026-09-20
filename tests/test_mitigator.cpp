@@ -1,5 +1,7 @@
 #include "test_framework.hpp"
 #include "common/config/json.hpp"
+#include "common/ipc/protocol.hpp"
+#include "hub/game_definitions.hpp"
 #include "mitigator/rolling_rtt.hpp"
 #include "mitigator/sequence_tracker.hpp"
 #include "mitigator/cast_tracker.hpp"
@@ -7,7 +9,9 @@
 #include "mitigator/latency_plugin.hpp"
 #include <thread>
 #include <chrono>
+#include <cstring>
 
+using namespace hub;
 using namespace hub::mitigator;
 
 TEST_CASE(Mitigator, RttTrackerBasicEmaAndJitter) {
@@ -189,4 +193,122 @@ TEST_CASE(Mitigator, LatencyPluginConfigSerialization) {
 
     TEST_ASSERT_NEAR(plugin.mitigator().get_config().target_ping_ms, 20.0, 0.01);
     TEST_ASSERT_NEAR(plugin.mitigator().get_config().min_animation_lock_ms, 30.0, 0.01);
+
+    // spike_multiplier round-trips too (added alongside the desktop UI's live slider)
+    TEST_ASSERT_NEAR(plugin.mitigator().get_config().spike_multiplier, 3.0, 0.01);
+    doc["spike_multiplier"] = hub::config::JsonValue(2.5);
+    plugin.deserialize_config(doc);
+    TEST_ASSERT_NEAR(plugin.mitigator().get_config().spike_multiplier, 2.5, 0.01);
+}
+
+TEST_CASE(Mitigator, SpikeMultiplierAffectsOutlierThreshold) {
+    // A tighter multiplier should flag an RTT spike that a looser one tolerates,
+    // once the multiplier*jitter term dominates the outlier tolerance formula
+    // (median*0.5 and the 50ms floor are the same for both, by construction).
+    AnimationLockMitigator mit_tight;
+    mit_tight.set_spike_multiplier(1.0);
+    AnimationLockMitigator mit_loose;
+    mit_loose.set_spike_multiplier(10.0);
+
+    auto t0 = std::chrono::steady_clock::now();
+    // Seed 5 noisy-but-plausible samples (alternating 20ms/80ms) so the
+    // median-filter path is active and jitter is well above zero.
+    const int seed_elapsed_ms[5] = {20, 80, 20, 80, 20};
+    for (int i = 0; i < 5; ++i) {
+        const auto req_time = t0 + std::chrono::milliseconds(i * 200);
+        mit_tight.record_action_request(100 + i, i, req_time);
+        (void)mit_tight.calculate_mitigation(100 + i, i, 600.0, req_time + std::chrono::milliseconds(seed_elapsed_ms[i]));
+        mit_loose.record_action_request(100 + i, i, req_time);
+        (void)mit_loose.calculate_mitigation(100 + i, i, 600.0, req_time + std::chrono::milliseconds(seed_elapsed_ms[i]));
+    }
+
+    TEST_ASSERT_TRUE(mit_tight.get_rtt_tracker().get_jitter_ms() > 5.0);
+
+    // A spike far enough above the median to clear the tight tolerance
+    // (median + max(50, median*0.5, 1*jitter)) but stay inside the loose one
+    // (median + max(50, median*0.5, 10*jitter)).
+    const auto spike_time = t0 + std::chrono::milliseconds(5 * 200);
+    mit_tight.record_action_request(200, 5, spike_time);
+    const auto res_tight = mit_tight.calculate_mitigation(200, 5, 600.0, spike_time + std::chrono::milliseconds(150));
+
+    mit_loose.record_action_request(200, 5, spike_time);
+    const auto res_loose = mit_loose.calculate_mitigation(200, 5, 600.0, spike_time + std::chrono::milliseconds(150));
+
+    TEST_ASSERT_TRUE(res_tight.spike_filtered);
+    TEST_ASSERT_FALSE(res_loose.spike_filtered);
+}
+
+TEST_CASE(Mitigator, LatencyPluginGatesOnLocalPlayerLockChange) {
+    // ReceiveActionEffect fires for every actor in the zone; on_receive_action_effect
+    // must only mitigate when THIS call actually changed our own ActionManager's
+    // animation_lock, not merely because the packet header carries a value.
+    LatencyPlugin plugin;
+    plugin.initialize();
+
+    ipc::PacketRingBuffer ring;
+    plugin.set_ring_buffer(&ring);
+    plugin.set_connected(true);
+
+    std::vector<uint8_t> mgr_buf(0x200, 0);
+    void* mgr = mgr_buf.data();
+
+    // Queue a request, but the "original engine call" never changes the lock
+    // (e.g. this ReceiveActionEffect belongs to another actor).
+    plugin.on_use_action_location(mgr, 0, 700, 0, nullptr, 0, /*result=*/1);
+    plugin.on_pre_receive_action_effect(); // snapshots old_lock = 0.0
+
+    game::ActionEffectHeader hdr{};
+    hdr.action_id = 700;
+    hdr.source_sequence = 0;
+    plugin.on_receive_action_effect(0, nullptr, &hdr, nullptr, nullptr);
+
+    std::vector<uint8_t> item;
+    TEST_ASSERT_FALSE(ring.pop(item));
+}
+
+TEST_CASE(Mitigator, LatencyPluginEmitsTelemetryAndAppliesWriteBack) {
+    LatencyPlugin plugin;
+    plugin.initialize();
+
+    ipc::PacketRingBuffer ring;
+    plugin.set_ring_buffer(&ring);
+    plugin.set_connected(true);
+
+    std::vector<uint8_t> mgr_buf(0x200, 0);
+    void* mgr = mgr_buf.data();
+
+    plugin.on_use_action_location(mgr, 0, 500, 0, nullptr, 0, /*result=*/1);
+    plugin.on_pre_receive_action_effect(); // snapshots old_lock = 0.0
+
+    // Sleep past the default target_ping_ms (15ms) so the measured RTT produces
+    // a nonzero mitigation, exercising the write-back path.
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+
+    // Simulate the original engine function writing the server's lock value.
+    const float server_lock_seconds = 0.6f;
+    std::memcpy(mgr_buf.data() + game::offsets::ACTION_MANAGER_ANIMATION_LOCK, &server_lock_seconds, sizeof(float));
+
+    game::ActionEffectHeader hdr{};
+    hdr.action_id = 500;
+    hdr.source_sequence = 0;
+    plugin.on_receive_action_effect(0, nullptr, &hdr, nullptr, nullptr);
+
+    std::vector<uint8_t> item;
+    TEST_ASSERT_TRUE(ring.pop(item));
+
+    auto header = ipc::deserialize_header(item);
+    TEST_ASSERT_TRUE(header.has_value());
+    TEST_ASSERT(header->plugin_id == static_cast<uint16_t>(PluginId::LatencyMitigator));
+    TEST_ASSERT(header->message_type == static_cast<uint16_t>(MessageType::MitigatorTelemetry));
+    TEST_ASSERT_EQ(header->payload_size, static_cast<uint32_t>(sizeof(ipc::MitigatorTelemetryPayload)));
+
+    ipc::MitigatorTelemetryPayload payload{};
+    std::memcpy(&payload, item.data() + sizeof(ipc::PacketHeader), sizeof(payload));
+    TEST_ASSERT_EQ(payload.action_id, 500u);
+    TEST_ASSERT_TRUE(payload.delay_reduced_ms > 0.0f);
+    TEST_ASSERT(payload.applied == 1);
+
+    float post_lock = 0.0f;
+    std::memcpy(&post_lock, mgr_buf.data() + game::offsets::ACTION_MANAGER_ANIMATION_LOCK, sizeof(float));
+    TEST_ASSERT_TRUE(post_lock < server_lock_seconds);
 }

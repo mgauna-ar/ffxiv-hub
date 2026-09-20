@@ -63,6 +63,8 @@ enum class CommandId : uint32_t {
     SetMinLock          = 15,
     SetSpikeMultiplier  = 16,
     ToggleDryRun        = 17,
+    UpdateNetworkPing   = 18,
+    SetOverlayMode      = 19,
 };
 
 /// Overall game attachment & IPC connection state

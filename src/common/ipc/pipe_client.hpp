@@ -29,12 +29,16 @@ public:
     void disconnect();
     void start_worker_threads();
 
+    /// Alias shared with HookManager/ObjectReader/plugin producers so they can all
+    /// push directly onto this client's outbound buffer.
+    using RingBuffer = PacketRingBuffer;
+
     bool push_raw(const std::vector<uint8_t>& packet) noexcept;
     void set_command_handler(CommandHandler handler);
 
     [[nodiscard]] bool is_connected() const noexcept { return m_connected.load(); }
     [[nodiscard]] uint64_t dropped_packets() const noexcept { return m_ring_buffer.dropped_count(); }
-    [[nodiscard]] SpscRingBuffer<std::vector<uint8_t>, 4096>& ring_buffer() noexcept { return m_ring_buffer; }
+    [[nodiscard]] RingBuffer& ring_buffer() noexcept { return m_ring_buffer; }
 
 private:
     void reader_thread_func();
@@ -49,7 +53,7 @@ private:
     std::atomic<bool> m_running{false};
     std::thread m_reader_thread;
     std::thread m_writer_thread;
-    SpscRingBuffer<std::vector<uint8_t>, 4096> m_ring_buffer;
+    RingBuffer m_ring_buffer;
     CommandHandler m_command_handler;
 };
 

@@ -18,7 +18,7 @@ namespace hub::payload {
  */
 class HookManager {
 public:
-    using RingBuffer = ipc::SpscRingBuffer<std::vector<uint8_t>, 4096>;
+    using RingBuffer = ipc::PacketRingBuffer;
 
     static HookManager& instance() noexcept;
 
