@@ -11,6 +11,9 @@ PLUGIN_SRCS = $(wildcard plugins/latency_mitigator/src/*.cpp) \
 
 PAYLOAD_SRCS = $(wildcard src/payload/*.cpp)
 
+APP_SRCS = src/app/app_state.cpp \
+           $(wildcard src/app/ui/*.cpp)
+
 TEST_SRCS = $(wildcard tests/*.cpp)
 
 all: test
@@ -18,7 +21,7 @@ all: test
 test: hub_test_runner
 	./hub_test_runner
 
-hub_test_runner: $(COMMON_SRCS) $(PLUGIN_SRCS) $(PAYLOAD_SRCS) $(TEST_SRCS)
+hub_test_runner: $(COMMON_SRCS) $(PLUGIN_SRCS) $(PAYLOAD_SRCS) $(APP_SRCS) $(TEST_SRCS)
 	$(CXX) $(CXXFLAGS) $^ -o $@
 
 clean:

@@ -22,6 +22,8 @@ enum class MessageType : uint16_t {
     ShutdownSignal      = 0x0004,
     Command             = 0x0005,
     StatusNotification  = 0x0006,
+    Status              = StatusNotification,
+    OverlayGeometry     = 0x0007,
 
     // Latency Mitigator Messages (0x0100 - 0x01FF)
     MitigatorTelemetry  = 0x0101,
@@ -31,6 +33,7 @@ enum class MessageType : uint16_t {
 
     // Combat Meter Messages (0x0200 - 0x02FF)
     CombatActionEffect  = 0x0201,
+    CombatAction        = CombatActionEffect,
     CombatStatusTick    = 0x0202,
     CombatEncounterEvent= 0x0203,
     CombatActorInfo     = 0x0204,
@@ -50,6 +53,16 @@ enum class CommandId : uint32_t {
     ReloadConfig        = 5,
     ResetEncounter      = 6,
     SetDryRun           = 7,
+    LockOverlay         = 8,
+    ClickThrough        = 9,
+    AutoHide            = 10,
+    FilterPartyOnly     = 11,
+    SetOpacity          = 12,
+    SetScale            = 13,
+    SetTargetPing       = 14,
+    SetMinLock          = 15,
+    SetSpikeMultiplier  = 16,
+    ToggleDryRun        = 17,
 };
 
 /// Overall game attachment & IPC connection state

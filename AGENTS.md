@@ -68,7 +68,7 @@ This document defines the architectural patterns, engineering principles, memory
 | **DLL Injector** | `src/common/os/injector.hpp`<br>`src/common/os/injector.cpp` | Injects `hub_payload.dll` into the game process via `CreateRemoteThread` + `LoadLibraryW` |
 | **Single Instance Guard** | `src/common/os/single_instance.hpp`<br>`src/common/os/single_instance.cpp` | Named Win32 mutex (`Local\FFXIVHubSingleInstanceMutex`) and registered window wake-up message |
 | **Auto-Start Registry** | `src/common/os/auto_start.hpp`<br>`src/common/os/auto_start.cpp` | Windows logon auto-start registration (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`) |
-| **System Tray Manager** | `src/common/os/tray_manager.hpp`<br>`src/common/os/tray_manager.cpp` | Shell NotifyIcon, continuous connection tooltip, native balloon notifications, and rich context menu |
+| **System Tray Manager** | `src/common/os/tray_manager.hpp`<br>`src/common/os/tray_manager.cpp` | Shell NotifyIcon, connection tooltip, native notifications, and 100% plugin-agnostic lifecycle context menu |
 | **Latency Mitigator Plugin** | `plugins/latency_mitigator/` | Algorithmic RTT tracking (EMA + median spike filter), sequence matching, cast tracking, animation lock mitigation |
 | **Combat Meter Types** | `plugins/combat_meter/include/meter/types.hpp` | Dawntrail 7.x jobs, roles, hit severities, effect types, stats structs, and config |
 | **Action Decoder** | `plugins/combat_meter/include/meter/action_decoder.hpp`<br>`plugins/combat_meter/src/action_decoder.cpp` | Pure binary decoder unpacking `ActionEffectHeader` and 8 `ActionEffectEntry` records into combat packets |
@@ -86,9 +86,12 @@ This document defines the architectural patterns, engineering principles, memory
 | **MinHook Library** | `src/third_party/minhook/` | Embedded lightweight x86/x64 in-memory detour hooking library |
 | **Dear ImGui Library** | `src/third_party/imgui/` | Embedded immediate-mode graphical UI library with Win32 and DirectX 11 backends |
 | **Payload DLL Entry** | `src/payload/dllmain.cpp` | Injected DLL lifecycle, background orchestration, and persistent resident state |
-| **Desktop App State** | `src/app/app_state.hpp`<br>`src/app/app_state.cpp` | Desktop application state machine, connection status, plugin configuration store, and telemetry router |
-| **Desktop Theme & UI** | `src/app/ui/theme.hpp`<br>`src/app/ui/sidebar.hpp` | Modern slate dark theme, TrueType font loading, responsive navigation sidebar |
-| **Desktop Views** | `src/app/ui/view_*.hpp` | Dashboard overview, Combat Meter analytics inspector, Latency Mitigator ImPlot graph & feed, Settings view |
+| **Desktop App State** | `src/app/app_state.hpp`<br>`src/app/app_state.cpp` | Desktop application state machine, game supervisor, plugin configuration store, and telemetry router |
+| **Desktop Theme & UI** | `src/app/ui/theme.hpp`<br>`src/app/ui/sidebar.hpp` | Modern slate dark theme, TrueType font loading, job color tokens, and responsive navigation sidebar |
+| **Dashboard View** | `src/app/ui/view_dashboard.hpp`<br>`src/app/ui/view_dashboard.cpp` | Plugin-agnostic system overview, game process monitor, IPC server card, dynamic loaded plugins table, log actions |
+| **Combat Meter View** | `src/app/ui/view_combat.hpp`<br>`src/app/ui/view_combat.cpp` | Damage table with job-colored progress bars, healing stats, pull history, action drilldown, and overlay settings |
+| **Latency Mitigator View** | `src/app/ui/view_latency.hpp`<br>`src/app/ui/view_latency.cpp` | Real-time RTT curve, jitter, server monitor card, rolling action feed, and HUD settings |
+| **Settings View** | `src/app/ui/view_settings.hpp`<br>`src/app/ui/view_settings.cpp` | System preferences, Windows auto-start toggle, config directory management, and live log reader |
 | **Desktop App Entry** | `src/app/main.cpp` | Windows GUI subsystem (`wWinMain` / `/SUBSYSTEM:WINDOWS`), ImGui DX11/Win32 desktop window, tray message pump |
 | **Test Framework** | `tests/test_framework.hpp`<br>`tests/test_main.cpp` | Header-only cross-platform test runner executable runnable on macOS, Linux, and Windows |
 
@@ -140,6 +143,10 @@ When modifying detours, hooks, or timing/analytics math, the following invariant
 - **Process Teardown Safety**: Background threads must never touch DirectX COM objects or call `MH_Uninitialize()` during OS process exit. `RtlDllShutdownInProgress()` is checked to detect termination.
 - **MRT Pipeline Protection**: Render overlay functions must preserve and restore all 8 OM render target slots and the depth-stencil view.
 - **SEH Memory Protection**: All game pointer dereferences must be guarded with `__try / __except` in leaf functions without local C++ objects requiring stack unwinding (avoiding MSVC C2712).
+
+### 6. Decoupled Desktop Manager & Plugin-Agnostic Tray/Dashboard
+- **Plugin-Agnostic System Tray**: The System Tray manager (`TrayManager`) must remain **100% decoupled and agnostic of specific plugins**. It must never contain plugin-specific actions, toggles, or metrics. Its responsibilities are strictly confined to the Hub application lifecycle: Show/Hide Main Window, Run at Startup, Open Logs/Config, and Exit.
+- **Decoupled Dashboard View**: The overview Dashboard (`ViewDashboard`) must remain **100% decoupled and plugin-agnostic**. It must never display hardcoded plugin metrics (such as DPS, HPS, or ping cards). It renders only generic FFXIV process detection status, IPC Named Pipe server state, a dynamic loaded plugins list queried from the `PluginRegistry` metadata, and Hub utility actions. All plugin-specific metrics, graphs, tables, and overlay controls belong exclusively inside their respective views (`ViewCombat`, `ViewLatency`).
 
 ---
 

@@ -86,9 +86,11 @@ flowchart TD
 - **Process Teardown Safety**: Graceful shutdown detection via `RtlDllShutdownInProgress` and non-destructive passthroughs to coexist seamlessly with ReShade and OBS.
 
 ### 🖥️ Desktop Manager & System Tray
-- **Sidebar Navigation**: Instant switching between Dashboard, Combat Meter, Latency Mitigator, and System Settings.
-- **ImPlot Real-Time Graphs**: High-performance telemetry plots of ping, jitter, and animation locks.
-- **System Tray Integration**: Lives unobtrusively in the Windows notification area with real-time status tooltips and context menu controls.
+- **Decoupled Architecture**: Strictly separates generic Hub lifecycle management from individual plugin diagnostics.
+- **Sidebar Navigation**: Instant switching between Overview Dashboard, Combat Meter inspector, Latency Mitigator feed, and System Settings.
+- **Plugin-Agnostic System Tray**: Lives unobtrusively in the Windows notification area with real-time status tooltip and context menu strictly managing Hub lifecycle (Show/Hide, Auto-Start, Config/Logs, Exit) without plugin clutter.
+- **Dynamic Dashboard**: Displays FFXIV game process detection status, Named Pipe IPC server health, dynamically loaded plugins queried from `PluginRegistry` metadata, and Hub utility actions.
+- **Dedicated Analytical Views**: Full-featured Combat Meter inspector (damage tables with job progress bars, healing breakdowns, pull history, action drilldowns) and Latency Mitigator inspector (real-time RTT curves, jitter cards, server monitor, rolling action feeds).
 - **Debounced Geometry Persistence**: Overlay positions, dimensions, opacities, and scales automatically persist to `%APPDATA%/ffxiv-hub/config.json`.
 
 ---

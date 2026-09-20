@@ -1,0 +1,261 @@
+#include "app/app_state.hpp"
+#include "common/os/process_finder.hpp"
+#include "common/os/injector.hpp"
+#include "common/os/logger.hpp"
+#include <algorithm>
+
+namespace hub::app {
+
+AppState::AppState() {
+    m_plugins.push_back({
+        PluginId::CombatMeter,
+        "Combat Meter",
+        "1.0.0",
+        "High-precision real-time DPS/HPS analytics and pull drilldowns",
+        true,
+        DesktopView::CombatMeter
+    });
+
+    m_plugins.push_back({
+        PluginId::LatencyMitigator,
+        "Latency Mitigator",
+        "1.0.0",
+        "Client-side animation lock compensation & slide-cast preservation",
+        true,
+        DesktopView::LatencyMitigator
+    });
+
+    register_ipc_callbacks();
+}
+
+AppState::~AppState() {
+    shutdown();
+}
+
+bool AppState::initialize() {
+    config::ConfigManager::instance().load();
+    m_pipe_server.start();
+    return true;
+}
+
+void AppState::shutdown() {
+    m_pipe_server.stop();
+    config::ConfigManager::instance().save();
+}
+
+void AppState::register_ipc_callbacks() {
+    m_pipe_server.set_combat_action_callback([this](const ipc::CombatActionPayload& act) {
+        std::lock_guard<std::mutex> lock(m_combat_mutex);
+        m_engine.process_action(act);
+    });
+
+    m_pipe_server.set_combat_tick_callback([this](const ipc::CombatStatusTickPayload& tick) {
+        std::lock_guard<std::mutex> lock(m_combat_mutex);
+        m_engine.process_status_tick(tick);
+    });
+
+    m_pipe_server.set_combat_actor_info_callback([this](const ipc::CombatActorInfoPayload& actor) {
+        std::lock_guard<std::mutex> lock(m_combat_mutex);
+        m_engine.process_actor_info(actor);
+    });
+
+    m_pipe_server.set_combat_party_sync_callback([this](const ipc::CombatPartySyncPayload& party) {
+        std::lock_guard<std::mutex> lock(m_combat_mutex);
+        m_engine.process_party_sync(party);
+    });
+
+    m_pipe_server.set_combat_control_callback([this](const ipc::CombatControlPayload& ctrl) {
+        std::lock_guard<std::mutex> lock(m_combat_mutex);
+        m_engine.process_encounter_control(ctrl);
+    });
+
+    m_pipe_server.set_mitigator_telemetry_callback([this](const ipc::MitigatorTelemetryPayload& telem) {
+        std::lock_guard<std::mutex> lock(m_telemetry_mutex);
+        m_telemetry_history.push_back(telem);
+        if (m_telemetry_history.size() > 500) {
+            m_telemetry_history.pop_front();
+        }
+
+        m_mitigator_metrics.latest_measured_rtt_ms = telem.measured_rtt_ms;
+        m_mitigator_metrics.latest_smoothed_rtt_ms = telem.smoothed_rtt_ms;
+        m_mitigator_metrics.latest_jitter_ms = telem.jitter_ms;
+        m_mitigator_metrics.total_delay_reduced_ms += telem.delay_reduced_ms;
+        m_mitigator_metrics.total_actions_mitigated += 1;
+        if (telem.spike_filtered) {
+            m_mitigator_metrics.spike_filtered_count += 1;
+        }
+        if (telem.clamped_floor) {
+            m_mitigator_metrics.floor_clamp_count += 1;
+        }
+    });
+}
+
+void AppState::update() {
+    check_game_process();
+    {
+        std::lock_guard<std::mutex> lock(m_combat_mutex);
+        m_engine.update();
+    }
+}
+
+void AppState::check_game_process() {
+    const auto now = std::chrono::steady_clock::now();
+    if (std::chrono::duration_cast<std::chrono::milliseconds>(now - m_last_process_check).count() < 1000) {
+        return;
+    }
+    m_last_process_check = now;
+
+    auto proc = os::ProcessFinder::find_process();
+    const uint32_t pid = proc ? proc->pid : 0;
+    m_game_pid.store(pid);
+
+    if (pid == 0) {
+        m_connection_state.store(ConnectionState::WaitingForGame);
+        return;
+    }
+
+    if (m_pipe_server.is_connected()) {
+        m_connection_state.store(ConnectionState::Connected);
+        return;
+    }
+
+    // Process is running, but not connected yet
+    auto current_state = m_connection_state.load();
+    if (current_state == ConnectionState::WaitingForGame) {
+        m_connection_state.store(ConnectionState::Injecting);
+        os::Logger::info("FFXIV detected (PID: " + std::to_string(pid) + "). Injecting hub_payload.dll...");
+
+        os::DllInjector injector;
+        bool ok = injector.inject(*proc, "hub_payload.dll");
+        if (ok) {
+            m_connection_state.store(ConnectionState::InjectedWaitingPipe);
+            os::Logger::info("hub_payload.dll injected successfully. Awaiting IPC handshake...");
+        } else {
+            m_connection_state.store(ConnectionState::WaitingForGame);
+            os::Logger::warn("Failed to inject hub_payload.dll: " + injector.last_error());
+        }
+    }
+}
+
+bool AppState::is_connected() const noexcept {
+    return m_pipe_server.is_connected();
+}
+
+std::string AppState::connection_status_string() const {
+    switch (m_connection_state.load()) {
+        case ConnectionState::WaitingForGame:
+            return "Searching for FFXIV...";
+        case ConnectionState::Injecting:
+            return "Injecting Payload...";
+        case ConnectionState::InjectedWaitingPipe:
+            return "Connecting Pipe...";
+        case ConnectionState::Connected:
+            return "Connected (PID: " + std::to_string(m_game_pid.load()) + ")";
+    }
+    return "Unknown";
+}
+
+// Combat Meter Integration
+meter::EncounterSummary AppState::get_live_summary() {
+    std::lock_guard<std::mutex> lock(m_combat_mutex);
+    return m_engine.current_summary();
+}
+
+std::vector<meter::EncounterSummary> AppState::get_pull_history() {
+    std::lock_guard<std::mutex> lock(m_combat_mutex);
+    return m_engine.pull_history();
+}
+
+void AppState::reset_encounter() {
+    {
+        std::lock_guard<std::mutex> lock(m_combat_mutex);
+        m_engine.reset_current();
+    }
+    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::ResetEncounter);
+}
+
+void AppState::clear_pull_history() {
+    std::lock_guard<std::mutex> lock(m_combat_mutex);
+    m_engine.clear_history();
+}
+
+void AppState::send_combat_overlay_visible(bool visible) {
+    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::ToggleOverlay, visible ? 1 : 0);
+}
+
+void AppState::send_combat_overlay_locked(bool locked) {
+    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::LockOverlay, locked ? 1 : 0);
+}
+
+void AppState::send_combat_overlay_click_through(bool ct) {
+    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::ClickThrough, ct ? 1 : 0);
+}
+
+void AppState::send_combat_overlay_auto_hide(bool auto_hide) {
+    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::AutoHide, auto_hide ? 1 : 0);
+}
+
+void AppState::send_combat_overlay_opacity(float opacity) {
+    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::SetOpacity, 0, opacity);
+}
+
+void AppState::send_combat_overlay_scale(float scale) {
+    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::SetScale, 0, scale);
+}
+
+void AppState::send_combat_overlay_party_only(bool party_only) {
+    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::FilterPartyOnly, party_only ? 1 : 0);
+}
+
+// Latency Mitigator Integration
+AppState::MitigatorMetrics AppState::get_mitigator_metrics() {
+    std::lock_guard<std::mutex> lock(m_telemetry_mutex);
+    return m_mitigator_metrics;
+}
+
+std::vector<ipc::MitigatorTelemetryPayload> AppState::get_recent_telemetry(size_t max_count) {
+    std::lock_guard<std::mutex> lock(m_telemetry_mutex);
+    std::vector<ipc::MitigatorTelemetryPayload> result;
+    const size_t count = std::min(max_count, m_telemetry_history.size());
+    result.reserve(count);
+
+    auto start_it = m_telemetry_history.end() - count;
+    for (auto it = start_it; it != m_telemetry_history.end(); ++it) {
+        result.push_back(*it);
+    }
+    return result;
+}
+
+void AppState::send_mitigator_target_ping(float target_ping_ms) {
+    m_pipe_server.send_command(PluginId::LatencyMitigator, CommandId::SetTargetPing, 0, target_ping_ms);
+}
+
+void AppState::send_mitigator_min_lock(float min_lock_ms) {
+    m_pipe_server.send_command(PluginId::LatencyMitigator, CommandId::SetMinLock, 0, min_lock_ms);
+}
+
+void AppState::send_mitigator_spike_multiplier(float mult) {
+    m_pipe_server.send_command(PluginId::LatencyMitigator, CommandId::SetSpikeMultiplier, 0, mult);
+}
+
+void AppState::send_mitigator_dry_run(bool dry_run) {
+    m_pipe_server.send_command(PluginId::LatencyMitigator, CommandId::ToggleDryRun, dry_run ? 1 : 0);
+}
+
+void AppState::send_mitigator_hud_visible(bool visible) {
+    m_pipe_server.send_command(PluginId::LatencyMitigator, CommandId::ToggleOverlay, visible ? 1 : 0);
+}
+
+void AppState::send_mitigator_hud_locked(bool locked) {
+    m_pipe_server.send_command(PluginId::LatencyMitigator, CommandId::LockOverlay, locked ? 1 : 0);
+}
+
+void AppState::send_mitigator_hud_opacity(float opacity) {
+    m_pipe_server.send_command(PluginId::LatencyMitigator, CommandId::SetOpacity, 0, opacity);
+}
+
+void AppState::send_mitigator_hud_scale(float scale) {
+    m_pipe_server.send_command(PluginId::LatencyMitigator, CommandId::SetScale, 0, scale);
+}
+
+} // namespace hub::app

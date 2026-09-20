@@ -55,6 +55,8 @@ file(GLOB COMMON_SOURCES
     src/payload/object_reader.cpp
     plugins/latency_mitigator/src/*.cpp
     plugins/combat_meter/src/*.cpp
+    src/app/app_state.cpp
+    src/app/ui/*.cpp
 )
 
 add_library(hub_common STATIC ${COMMON_SOURCES})
@@ -141,5 +143,36 @@ if(WIN32 OR CYGWIN OR MSYS OR MINGW)
         imgui
         d3d11
         dxgi
+    )
+
+    # 4. Desktop Manager Executable (ffxiv-hub.exe)
+    add_executable(ffxiv-hub WIN32
+        src/app/main.cpp
+        src/app/resources/app.rc
+    )
+
+    target_include_directories(ffxiv-hub PRIVATE
+        include
+        src
+        plugins
+        plugins/latency_mitigator/include
+        plugins/combat_meter/include
+        src/third_party/imgui
+        src/third_party/imgui/backends
+    )
+
+    target_link_libraries(ffxiv-hub PRIVATE
+        hub_common
+        imgui
+        d3d11
+        dxgi
+        comctl32
+        dwmapi
+        uxtheme
+    )
+
+    set_target_properties(ffxiv-hub PROPERTIES
+        OUTPUT_NAME "ffxiv-hub"
+        WIN32_EXECUTABLE TRUE
     )
 endif()
