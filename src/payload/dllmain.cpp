@@ -198,7 +198,21 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
         }
     }
 
-    // Graceful teardown when explicit unload is requested
+    // If the game process itself is exiting (detected via RtlDllShutdownInProgress
+    // in Dx11Hook::is_shutting_down(), as opposed to g_shutdown_requested, which
+    // only means an explicit unload-while-game-keeps-running was requested), do
+    // NOT touch DirectX COM objects, MinHook trampolines, background threads, or
+    // disk I/O from this thread - the OS is already tearing the process down and
+    // any of that here risks a crash on exit. Just stop; the OS reclaims
+    // everything. This mirrors the original ffxiv-combat-meter/ffxiv-latency-
+    // mitigator payloads, which had this exact guard - the unified payload had
+    // dropped it and unconditionally ran full teardown (including a config file
+    // save) on every loop exit, which is the likely cause of crashes on game close.
+    if (hub::payload::Dx11Hook::is_shutting_down()) {
+        return 0;
+    }
+
+    // Graceful teardown when explicit unload is requested while the game keeps running
     hub::os::Logger::info("Payload shutting down.");
     {
         auto& config_mgr = hub::config::ConfigManager::instance();
