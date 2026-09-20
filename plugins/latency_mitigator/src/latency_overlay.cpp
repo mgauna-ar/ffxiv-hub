@@ -63,7 +63,20 @@ void LatencyOverlay::render() {
         flags |= ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoMove;
     }
 
-    ImGui::SetNextWindowPos(ImVec2(m_pos_x, m_pos_y), ImGuiCond_FirstUseEver);
+    const ImGuiIO& restore_io = ImGui::GetIO();
+    if (consume_geometry_restore()) {
+        if (has_saved_position()) {
+            float target_x = m_pos_x;
+            float target_y = m_pos_y;
+            if (restore_io.DisplaySize.x > 100.0f && restore_io.DisplaySize.y > 100.0f) {
+                target_x = std::clamp(target_x, 10.0f, std::max(10.0f, restore_io.DisplaySize.x - 60.0f));
+                target_y = std::clamp(target_y, 10.0f, std::max(10.0f, restore_io.DisplaySize.y - 30.0f));
+            }
+            ImGui::SetNextWindowPos(ImVec2(target_x, target_y), ImGuiCond_Always);
+        } else {
+            ImGui::SetNextWindowPos(ImVec2(30.0f, 30.0f), ImGuiCond_FirstUseEver);
+        }
+    }
 
     // Color styling based on network ping / RTT and spike state
     // Scale: Green < 180ms, Teal/Mint <= 260ms, Amber <= 340ms, Red > 340ms

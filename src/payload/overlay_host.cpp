@@ -150,6 +150,7 @@ bool OverlayHost::initialize(void* hwnd, void* d3d_device, void* d3d_context) {
         ImGui::DestroyContext();
         return false;
     }
+    m_hwnd = hwnd;
 
     if (!ImGui_ImplDX11_Init(
             reinterpret_cast<ID3D11Device*>(d3d_device),
@@ -171,6 +172,7 @@ void OverlayHost::shutdown() {
     ImGui::DestroyContext();
 
     m_initialized = false;
+    m_hwnd = nullptr;
     m_font_regular = nullptr;
     m_font_bold    = nullptr;
     m_font_medium  = nullptr;
@@ -237,11 +239,24 @@ bool OverlayHost::is_point_inside_ui(int screen_x, int screen_y) const {
     ImGuiContext* g = ImGui::GetCurrentContext();
     if (!g) return false;
 
-    ImVec2 pt(static_cast<float>(screen_x), static_cast<float>(screen_y));
+    // ImGui window rects are in client space; the caller reports screen space.
+    POINT p{screen_x, screen_y};
+    if (m_hwnd && !ScreenToClient(static_cast<HWND>(m_hwnd), &p)) return false;
+    const ImVec2 pt(static_cast<float>(p.x), static_cast<float>(p.y));
+
+    // Grip padding: a point just outside the frame still belongs to the resize
+    // handle, so treating it as game input makes edges impossible to grab.
+    constexpr float RESIZE_GRIP_PADDING = 4.0f;
+
     for (int i = 0; i < g->Windows.Size; ++i) {
         ImGuiWindow* w = g->Windows[i];
         if (!w || !w->Active || w->Hidden) continue;
-        if (w->Rect().Contains(pt)) {
+        // A click-through overlay takes no input, so it must not claim the point.
+        if (w->Flags & ImGuiWindowFlags_NoInputs) continue;
+
+        ImRect r = w->Rect();
+        r.Expand(RESIZE_GRIP_PADDING);
+        if (r.Contains(pt)) {
             return true;
         }
     }
@@ -283,13 +298,15 @@ OverlayHost& OverlayHost::instance() noexcept {
 void OverlayHost::setup_style(float) {}
 void OverlayHost::setup_fonts() {}
 
-bool OverlayHost::initialize(void*, void*, void*) {
+bool OverlayHost::initialize(void* hwnd, void*, void*) {
+    m_hwnd = hwnd;
     m_initialized = true;
     return true;
 }
 
 void OverlayHost::shutdown() {
     m_initialized = false;
+    m_hwnd = nullptr;
 }
 
 void OverlayHost::render_frame() {

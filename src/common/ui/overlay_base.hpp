@@ -24,6 +24,19 @@ public:
         m_pos_y = rect.y;
         m_width = rect.width;
         m_height = rect.height;
+        m_needs_geometry_restore.store(true);
+    }
+
+    /// True once after geometry is set from outside the render loop, so the next
+    /// frame can re-apply it with ImGuiCond_Always. Config loads and repositions
+    /// arrive after the first frame, which FirstUseEver would discard.
+    [[nodiscard]] bool consume_geometry_restore() noexcept {
+        return m_needs_geometry_restore.exchange(false);
+    }
+
+    /// Negative means never positioned: use the overlay's own default placement.
+    [[nodiscard]] bool has_saved_position() const noexcept {
+        return m_pos_x >= 0.0f && m_pos_y >= 0.0f;
     }
 
     void set_locked(bool locked) noexcept { m_locked.store(locked); }
@@ -44,6 +57,7 @@ protected:
     std::atomic<bool> m_click_through{false};
     std::atomic<float> m_opacity{0.85f};
     std::atomic<float> m_scale{1.0f};
+    std::atomic<bool> m_needs_geometry_restore{true};
 
     float m_pos_x{0.0f};
     float m_pos_y{0.0f};

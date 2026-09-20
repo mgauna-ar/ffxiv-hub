@@ -3,6 +3,42 @@
 #include <algorithm>
 #include <cstdio>
 
+namespace hub::meter {
+
+std::vector<const CombatantStats*> CombatOverlay::sorted_combatants(
+    const EncounterSummary& summary, bool party_only, bool by_healing, bool hide_inactive
+) {
+    std::vector<const CombatantStats*> list;
+    list.reserve(summary.combatants.size());
+
+    for (const auto& c : summary.combatants) {
+        if (c.is_pet) continue;  // Merged into the owner's totals.
+        if (party_only && !c.is_friendly()) continue;
+        if (c.total_damage == 0 && c.total_healing == 0 && c.damage_taken == 0) continue;
+        if (hide_inactive) {
+            const uint64_t contribution = by_healing ? c.effective_healing : c.total_damage;
+            if (contribution == 0) continue;
+        }
+        list.push_back(&c);
+    }
+
+    if (by_healing) {
+        std::sort(list.begin(), list.end(), [](const CombatantStats* a, const CombatantStats* b) {
+            if (a->hps != b->hps) return a->hps > b->hps;
+            return a->effective_healing > b->effective_healing;
+        });
+    } else {
+        std::sort(list.begin(), list.end(), [](const CombatantStats* a, const CombatantStats* b) {
+            if (a->dps != b->dps) return a->dps > b->dps;
+            return a->total_damage > b->total_damage;
+        });
+    }
+
+    return list;
+}
+
+} // namespace hub::meter
+
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -66,16 +102,77 @@ void pop_header_font() {
     }
 }
 
+void format_number(char* buf, size_t n, uint64_t val) {
+    if (val >= 1'000'000'000) {
+        std::snprintf(buf, n, "%.2fB", static_cast<double>(val) / 1'000'000'000.0);
+    } else if (val >= 1'000'000) {
+        std::snprintf(buf, n, "%.2fM", static_cast<double>(val) / 1'000'000.0);
+    } else if (val >= 1'000) {
+        std::snprintf(buf, n, "%.1fk", static_cast<double>(val) / 1'000.0);
+    } else {
+        std::snprintf(buf, n, "%llu", static_cast<unsigned long long>(val));
+    }
+}
+
+void format_rate(char* buf, size_t n, double val) {
+    if (val >= 1'000'000.0) {
+        std::snprintf(buf, n, "%.2fM", val / 1'000'000.0);
+    } else if (val >= 1'000.0) {
+        std::snprintf(buf, n, "%.1fk", val / 1'000.0);
+    } else {
+        std::snprintf(buf, n, "%.1f", val);
+    }
+}
+
+void text_number(uint64_t val) {
+    char buf[32];
+    format_number(buf, sizeof(buf), val);
+    ImGui::TextUnformatted(buf);
+}
+
+void text_rate(double val) {
+    char buf[32];
+    format_rate(buf, sizeof(buf), val);
+    ImGui::TextUnformatted(buf);
+}
+
+/// Centres the current line's text within a row taller than one line.
+void center_in_row(float row_h) {
+    const float slack = row_h - ImGui::GetTextLineHeight();
+    if (slack > 1.0f) {
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + slack * 0.5f);
+    }
+}
+
+const char* end_reason_label(EncounterEndReason reason) {
+    switch (reason) {
+        case EncounterEndReason::Wipe: return "Wipe";
+        case EncounterEndReason::Inactivity: return "Timeout";
+        case EncounterEndReason::ZoneChange: return "Zone";
+        case EncounterEndReason::Manual: return "Clear";
+        default: return "--";
+    }
+}
+
+ImVec4 end_reason_color(EncounterEndReason reason) {
+    switch (reason) {
+        case EncounterEndReason::Wipe: return ImVec4(0.95f, 0.30f, 0.30f, 1.0f);
+        case EncounterEndReason::Inactivity: return ImVec4(0.85f, 0.70f, 0.25f, 1.0f);
+        case EncounterEndReason::Manual: return ImVec4(0.25f, 0.80f, 0.45f, 1.0f);
+        default: return ImVec4(0.60f, 0.65f, 0.75f, 1.0f);
+    }
+}
+
 } // namespace
 
 float CombatOverlay::row_height() const {
     // Rows track the rendered text so they stay proportionate as scale changes.
-    return std::max(24.0f, ImGui::GetTextLineHeightWithSpacing() + 6.0f);
+    return std::clamp(ImGui::GetTextLineHeightWithSpacing() + 6.0f, 24.0f, 34.0f);
 }
 
 CombatOverlay::CombatOverlay(EncounterEngine* engine)
     : m_engine(engine) {
-    set_geometry(Rect{50.0f, 100.0f, 420.0f, 220.0f});
+    set_geometry(Rect{-1.0f, -1.0f, 800.0f, 480.0f});
 }
 
 CombatOverlay::~CombatOverlay() = default;
@@ -109,88 +206,144 @@ void CombatOverlay::render_row_progress_bar(float fraction, uint32_t color_u32) 
     ImGui::GetWindowDrawList()->AddRectFilled(row_min, row_max, color_u32, 0.0f);
 }
 
-void CombatOverlay::render_top_bar(const EncounterSummary& current) {
-    // 1. Navigation segmented buttons (Damage, Healing, History)
+void CombatOverlay::render_padlock(float size) {
+    const bool locked = m_locked.load();
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+
+    if (ImGui::InvisibleButton("##LockToggle", ImVec2(size, size))) {
+        m_locked.store(!locked);
+    }
+    const bool hovered = ImGui::IsItemHovered();
+    if (hovered) {
+        ImGui::SetTooltip("%s", locked ? "Locked (click to unlock)" : "Unlocked (click to lock)");
+    }
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImU32 col = hovered ? IM_COL32(235, 240, 250, 255) : IM_COL32(160, 170, 190, 255);
+
+    // Body sits on the lower half; the shackle arcs above it, tilted when open.
+    const float body_w = size * 0.62f;
+    const float body_h = size * 0.46f;
+    const ImVec2 body_min(origin.x + (size - body_w) * 0.5f, origin.y + size - body_h - size * 0.08f);
+    const ImVec2 body_max(body_min.x + body_w, body_min.y + body_h);
+    dl->AddRectFilled(body_min, body_max, col, size * 0.10f);
+
+    const float shackle_r = size * 0.22f;
+    const ImVec2 shackle_c(origin.x + size * 0.5f + (locked ? 0.0f : size * 0.16f),
+                           body_min.y - shackle_r * 0.35f);
+    dl->PathArcTo(shackle_c, shackle_r, IM_PI, IM_PI * 2.0f, 12);
+    dl->PathStroke(col, 0, std::max(1.0f, size * 0.10f));
+
+    // Both legs reach the body when closed; the trailing one stays short when open.
+    dl->AddLine(ImVec2(shackle_c.x - shackle_r, shackle_c.y),
+                ImVec2(shackle_c.x - shackle_r, body_min.y),
+                col, std::max(1.0f, size * 0.10f));
+    if (locked) {
+        dl->AddLine(ImVec2(shackle_c.x + shackle_r, shackle_c.y),
+                    ImVec2(shackle_c.x + shackle_r, body_min.y),
+                    col, std::max(1.0f, size * 0.10f));
+    }
+}
+
+void CombatOverlay::render_top_bar(const EncounterSummary& current, bool viewing_history) {
+    const float avail_w = ImGui::GetWindowWidth();
+    const bool compact = avail_w < 520.0f;
+    const bool roomy = avail_w >= 700.0f;
+
     bool is_damage = (m_active_tab == OverlayTab::Damage);
     bool is_healing = (m_active_tab == OverlayTab::Healing);
     bool is_history = (m_active_tab == OverlayTab::History);
 
-    if (is_damage) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.25f, 0.35f, 1.0f));
-    if (ImGui::SmallButton("DMG")) m_active_tab = OverlayTab::Damage;
+    const ImVec4 active_bg(0.20f, 0.25f, 0.35f, 1.0f);
+
+    if (is_damage) ImGui::PushStyleColor(ImGuiCol_Button, active_bg);
+    if (ImGui::SmallButton(compact ? "D" : "DMG")) m_active_tab = OverlayTab::Damage;
     if (is_damage) ImGui::PopStyleColor();
 
     ImGui::SameLine();
-    if (is_healing) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.25f, 0.35f, 1.0f));
-    if (ImGui::SmallButton("HEAL")) m_active_tab = OverlayTab::Healing;
+    if (is_healing) ImGui::PushStyleColor(ImGuiCol_Button, active_bg);
+    if (ImGui::SmallButton(compact ? "H" : "HEAL")) m_active_tab = OverlayTab::Healing;
     if (is_healing) ImGui::PopStyleColor();
 
     ImGui::SameLine();
-    if (is_history) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.25f, 0.35f, 1.0f));
-    if (ImGui::SmallButton("HIST")) m_active_tab = OverlayTab::History;
+    if (is_history) ImGui::PushStyleColor(ImGuiCol_Button, active_bg);
+    if (ImGui::SmallButton(compact ? "P" : "HIST")) m_active_tab = OverlayTab::History;
     if (is_history) ImGui::PopStyleColor();
+
+    // Status pill: which encounter the numbers below actually describe.
+    ImGui::SameLine();
+    if (viewing_history) {
+        ImGui::TextColored(ImVec4(0.55f, 0.70f, 0.95f, 1.0f), "Pull #%d", m_selected_history_pull + 1);
+    } else if (m_engine && m_engine->in_combat()) {
+        ImGui::TextColored(ImVec4(0.95f, 0.30f, 0.35f, 1.0f), "LIVE");
+    } else {
+        ImGui::TextColored(ImVec4(0.55f, 0.60f, 0.70f, 1.0f), "IDLE");
+    }
 
     ImGui::SameLine();
     ImGui::TextDisabled("|");
     ImGui::SameLine();
 
-    // 2. Metrics summary (Time, DPS/HPS)
     const uint32_t total_sec = static_cast<uint32_t>(current.duration_seconds);
-    const uint32_t mm = total_sec / 60;
-    const uint32_t ss = total_sec % 60;
+    ImGui::TextColored(ImVec4(0.80f, 0.85f, 0.95f, 1.0f), "%02u:%02u", total_sec / 60, total_sec % 60);
 
-    ImGui::TextColored(ImVec4(0.80f, 0.85f, 0.95f, 1.0f), "%02u:%02u", mm, ss);
     ImGui::SameLine();
-
+    char rate_buf[32];
     if (m_active_tab == OverlayTab::Healing) {
-        ImGui::TextColored(ImVec4(0.10f, 0.80f, 0.40f, 1.0f), "%.0f HPS", current.total_hps);
+        format_rate(rate_buf, sizeof(rate_buf), current.total_hps);
+        ImGui::TextColored(ImVec4(0.10f, 0.80f, 0.40f, 1.0f), "%s HPS", rate_buf);
     } else {
-        ImGui::TextColored(ImVec4(0.96f, 0.50f, 0.20f, 1.0f), "%.0f DPS", current.total_dps);
+        format_rate(rate_buf, sizeof(rate_buf), current.total_dps);
+        ImGui::TextColored(ImVec4(0.96f, 0.50f, 0.20f, 1.0f), "%s DPS", rate_buf);
     }
 
-    // 3. Right-anchored padlock toggle button
-    float lock_btn_size = 20.0f;
-    float avail = ImGui::GetContentRegionAvail().x;
-    if (avail > lock_btn_size) {
-        ImGui::SameLine(ImGui::GetWindowWidth() - lock_btn_size - 12.0f);
-        const char* lock_icon = m_locked.load() ? "[L]" : "[U]";
-        if (ImGui::SmallButton(lock_icon)) {
-            m_locked.store(!m_locked.load());
-        }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("%s", m_locked.load() ? "Locked (Click to Unlock)" : "Unlocked (Click to Lock)");
-        }
+    // Progressive disclosure: total damage next, zone name only when there is room.
+    if (!compact) {
+        ImGui::SameLine();
+        char dmg_buf[32];
+        const uint64_t total = (m_active_tab == OverlayTab::Healing)
+                                   ? current.total_effective_healing
+                                   : current.total_damage;
+        format_number(dmg_buf, sizeof(dmg_buf), total);
+        ImGui::TextColored(ImVec4(0.70f, 0.75f, 0.85f, 1.0f), "%s", dmg_buf);
+    }
+    if (roomy && !current.zone_name.empty()) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("| %s", current.zone_name.c_str());
+    }
+
+    const float lock_size = ImGui::GetTextLineHeight() + 2.0f;
+    if (ImGui::GetContentRegionAvail().x > lock_size + 12.0f) {
+        ImGui::SameLine(ImGui::GetWindowWidth() - lock_size - 12.0f);
+        render_padlock(lock_size);
     }
 }
 
 void CombatOverlay::render_damage_tab(const EncounterSummary& summary) {
-    auto players = summary.combatants;
-    if (m_party_only.load()) {
-        players.erase(
-            std::remove_if(players.begin(), players.end(), [](const CombatantStats& c) {
-                return !c.is_friendly();
-            }),
-            players.end()
-        );
-    }
+    const auto players = sorted_combatants(summary, m_party_only.load(), /*by_healing=*/false, m_hide_inactive.load());
+    const double top_dps = players.empty() ? 1.0 : std::max(players.front()->dps, 1.0);
 
-    std::sort(players.begin(), players.end(), [](const CombatantStats& a, const CombatantStats& b) {
-        return a.dps > b.dps;
-    });
-
-    const double top_dps = players.empty() ? 1.0 : std::max(players.front().dps, 1.0);
+    const bool col_share = m_show_col_share.load();
+    const bool col_crit = m_show_col_crit.load();
+    const bool col_dh = m_show_col_dh.load();
+    const bool col_cdh = m_show_col_cdh.load();
+    const int columns = 4 + (col_share ? 1 : 0) + (col_crit ? 1 : 0) + (col_dh ? 1 : 0) + (col_cdh ? 1 : 0);
 
     ImGuiTableFlags flags = ImGuiTableFlags_RowBg |
                             ImGuiTableFlags_BordersInnerV |
-                            ImGuiTableFlags_ScrollY;
+                            ImGuiTableFlags_ScrollY |
+                            ImGuiTableFlags_Resizable |
+                            ImGuiTableFlags_SizingStretchSame;
 
-    if (ImGui::BeginTable("##DmgTable", 7, flags, ImVec2(0, 0))) {
-        ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 18.0f);
+    if (ImGui::BeginTable("##DmgTable", columns, flags, ImVec2(0, 0))) {
+        ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 22.0f);
         ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("DPS", ImGuiTableColumnFlags_WidthFixed, 65.0f);
-        ImGui::TableSetupColumn("Damage", ImGuiTableColumnFlags_WidthFixed, 60.0f);
-        ImGui::TableSetupColumn("CRIT", ImGuiTableColumnFlags_WidthFixed, 42.0f);
-        ImGui::TableSetupColumn("DH", ImGuiTableColumnFlags_WidthFixed, 38.0f);
-        ImGui::TableSetupColumn("CDH", ImGuiTableColumnFlags_WidthFixed, 40.0f);
+        ImGui::TableSetupColumn("DPS", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+        ImGui::TableSetupColumn("Damage", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+        if (col_share) ImGui::TableSetupColumn("Share", ImGuiTableColumnFlags_WidthFixed, 56.0f);
+        if (col_crit) ImGui::TableSetupColumn("Crit", ImGuiTableColumnFlags_WidthFixed, 50.0f);
+        if (col_dh) ImGui::TableSetupColumn("DH", ImGuiTableColumnFlags_WidthFixed, 46.0f);
+        if (col_cdh) ImGui::TableSetupColumn("CDH", ImGuiTableColumnFlags_WidthFixed, 48.0f);
         ImGui::TableSetupScrollFreeze(0, 1);
 
         push_header_font();
@@ -199,51 +352,55 @@ void CombatOverlay::render_damage_tab(const EncounterSummary& summary) {
 
         const float row_h = row_height();
         int rank = 1;
-        for (const auto& player : players) {
+        for (const CombatantStats* player : players) {
             ImGui::TableNextRow(0, row_h);
+            int col = 0;
 
-            // Rank
-            ImGui::TableSetColumnIndex(0);
+            ImGui::TableSetColumnIndex(col++);
+            center_in_row(row_h);
             ImGui::TextDisabled("%d", rank++);
 
-            // Player Name + Job
-            ImGui::TableSetColumnIndex(1);
+            ImGui::TableSetColumnIndex(col++);
+            center_in_row(row_h);
             ImGui::TextColored(
-                ImColor(get_job_accent_color(player.job)),
+                ImColor(get_job_accent_color(player->job)),
                 "[%s] %s",
-                std::string(job_abbreviation(player.job)).c_str(),
-                player.name.c_str()
+                std::string(job_abbreviation(player->job)).c_str(),
+                player->name.c_str()
             );
 
-            // DPS
-            ImGui::TableSetColumnIndex(2);
-            ImGui::Text("%.1f", player.dps);
+            ImGui::TableSetColumnIndex(col++);
+            center_in_row(row_h);
+            text_rate(player->dps);
 
-            // Total Damage
-            ImGui::TableSetColumnIndex(3);
-            if (player.total_damage >= 1'000'000) {
-                ImGui::Text("%.2fM", player.total_damage / 1'000'000.0);
-            } else if (player.total_damage >= 1'000) {
-                ImGui::Text("%.1fk", player.total_damage / 1'000.0);
-            } else {
-                ImGui::Text("%llu", static_cast<unsigned long long>(player.total_damage));
+            ImGui::TableSetColumnIndex(col++);
+            center_in_row(row_h);
+            text_number(player->total_damage);
+
+            if (col_share) {
+                ImGui::TableSetColumnIndex(col++);
+                center_in_row(row_h);
+                ImGui::Text("%.1f%%", player->damage_share_pct);
+            }
+            if (col_crit) {
+                ImGui::TableSetColumnIndex(col++);
+                center_in_row(row_h);
+                ImGui::Text("%.1f%%", player->hits.crit_rate());
+            }
+            if (col_dh) {
+                ImGui::TableSetColumnIndex(col++);
+                center_in_row(row_h);
+                ImGui::Text("%.1f%%", player->hits.dh_rate());
+            }
+            if (col_cdh) {
+                ImGui::TableSetColumnIndex(col++);
+                center_in_row(row_h);
+                ImGui::Text("%.1f%%", player->hits.cdh_rate());
             }
 
-            // CRIT%
-            ImGui::TableSetColumnIndex(4);
-            ImGui::Text("%.1f%%", player.hits.crit_rate());
-
-            // DH%
-            ImGui::TableSetColumnIndex(5);
-            ImGui::Text("%.1f%%", player.hits.dh_rate());
-
-            // CDH%
-            ImGui::TableSetColumnIndex(6);
-            ImGui::Text("%.1f%%", player.hits.cdh_rate());
-
             render_row_progress_bar(
-                static_cast<float>(player.dps / top_dps),
-                get_role_color(player.job)
+                static_cast<float>(player->dps / top_dps),
+                get_role_color(player->job)
             );
         }
         ImGui::EndTable();
@@ -251,32 +408,26 @@ void CombatOverlay::render_damage_tab(const EncounterSummary& summary) {
 }
 
 void CombatOverlay::render_healing_tab(const EncounterSummary& summary) {
-    auto healers = summary.combatants;
-    if (m_party_only.load()) {
-        healers.erase(
-            std::remove_if(healers.begin(), healers.end(), [](const CombatantStats& c) {
-                return !c.is_friendly();
-            }),
-            healers.end()
-        );
-    }
+    const auto healers = sorted_combatants(summary, m_party_only.load(), /*by_healing=*/true, m_hide_inactive.load());
+    const double top_hps = healers.empty() ? 1.0 : std::max(healers.front()->hps, 1.0);
 
-    std::sort(healers.begin(), healers.end(), [](const CombatantStats& a, const CombatantStats& b) {
-        return a.hps > b.hps;
-    });
-
-    const double top_hps = healers.empty() ? 1.0 : std::max(healers.front().hps, 1.0);
+    const bool col_crit = m_show_col_crit.load();
+    const int columns = 6 + (col_crit ? 1 : 0);
 
     ImGuiTableFlags flags = ImGuiTableFlags_RowBg |
                             ImGuiTableFlags_BordersInnerV |
-                            ImGuiTableFlags_ScrollY;
+                            ImGuiTableFlags_ScrollY |
+                            ImGuiTableFlags_Resizable |
+                            ImGuiTableFlags_SizingStretchSame;
 
-    if (ImGui::BeginTable("##HealTable", 5, flags, ImVec2(0, 0))) {
-        ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 18.0f);
+    if (ImGui::BeginTable("##HealTable", columns, flags, ImVec2(0, 0))) {
+        ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 22.0f);
         ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("HPS", ImGuiTableColumnFlags_WidthFixed, 65.0f);
-        ImGui::TableSetupColumn("Heal", ImGuiTableColumnFlags_WidthFixed, 60.0f);
-        ImGui::TableSetupColumn("Overheal", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+        ImGui::TableSetupColumn("HPS", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+        ImGui::TableSetupColumn("Heal", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+        ImGui::TableSetupColumn("Overheal", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+        ImGui::TableSetupColumn("OH%", ImGuiTableColumnFlags_WidthFixed, 56.0f);
+        if (col_crit) ImGui::TableSetupColumn("Crit", ImGuiTableColumnFlags_WidthFixed, 50.0f);
         ImGui::TableSetupScrollFreeze(0, 1);
 
         push_header_font();
@@ -285,38 +436,58 @@ void CombatOverlay::render_healing_tab(const EncounterSummary& summary) {
 
         const float row_h = row_height();
         int rank = 1;
-        for (const auto& player : healers) {
+        for (const CombatantStats* player : healers) {
             ImGui::TableNextRow(0, row_h);
+            int col = 0;
 
-            ImGui::TableSetColumnIndex(0);
+            ImGui::TableSetColumnIndex(col++);
+            center_in_row(row_h);
             ImGui::TextDisabled("%d", rank++);
 
-            ImGui::TableSetColumnIndex(1);
+            ImGui::TableSetColumnIndex(col++);
+            center_in_row(row_h);
             ImGui::TextColored(
-                ImColor(get_job_accent_color(player.job)),
+                ImColor(get_job_accent_color(player->job)),
                 "[%s] %s",
-                std::string(job_abbreviation(player.job)).c_str(),
-                player.name.c_str()
+                std::string(job_abbreviation(player->job)).c_str(),
+                player->name.c_str()
             );
 
-            ImGui::TableSetColumnIndex(2);
-            ImGui::Text("%.1f", player.hps);
+            ImGui::TableSetColumnIndex(col++);
+            center_in_row(row_h);
+            text_rate(player->hps);
 
-            ImGui::TableSetColumnIndex(3);
-            if (player.effective_healing >= 1'000'000) {
-                ImGui::Text("%.2fM", player.effective_healing / 1'000'000.0);
-            } else if (player.effective_healing >= 1'000) {
-                ImGui::Text("%.1fk", player.effective_healing / 1'000.0);
+            ImGui::TableSetColumnIndex(col++);
+            center_in_row(row_h);
+            text_number(player->effective_healing);
+
+            // Raw overhealed amount, not just the ratio: the absolute number is
+            // what tells you how much of a cooldown was wasted.
+            ImGui::TableSetColumnIndex(col++);
+            center_in_row(row_h);
+            const uint64_t overheal = (player->total_healing > player->effective_healing)
+                                          ? player->total_healing - player->effective_healing
+                                          : 0;
+            text_number(overheal);
+
+            ImGui::TableSetColumnIndex(col++);
+            center_in_row(row_h);
+            const double oh_pct = player->overheal_pct();
+            if (oh_pct > 50.0) {
+                ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f), "%.1f%%", oh_pct);
             } else {
-                ImGui::Text("%llu", static_cast<unsigned long long>(player.effective_healing));
+                ImGui::Text("%.1f%%", oh_pct);
             }
 
-            ImGui::TableSetColumnIndex(4);
-            ImGui::Text("%.1f%%", player.overheal_pct());
+            if (col_crit) {
+                ImGui::TableSetColumnIndex(col++);
+                center_in_row(row_h);
+                ImGui::Text("%.1f%%", player->hits.crit_rate());
+            }
 
             render_row_progress_bar(
-                static_cast<float>(player.hps / top_hps),
-                get_role_color(player.job)
+                static_cast<float>(player->hps / top_hps),
+                get_role_color(player->job)
             );
         }
         ImGui::EndTable();
@@ -346,37 +517,73 @@ void CombatOverlay::render_history_tab() {
 
     ImGui::Separator();
 
-    // Pull Selector Combo
-    char preview[64];
-    if (m_selected_history_pull >= 0 && m_selected_history_pull < static_cast<int>(history.size())) {
-        const auto& p = history[m_selected_history_pull];
-        uint32_t s = static_cast<uint32_t>(p.duration_seconds);
-        std::snprintf(preview, sizeof(preview), "Pull #%d (%02u:%02u - %.0f DPS)",
-                      m_selected_history_pull + 1, s / 60, s % 60, p.total_dps);
-    } else {
-        std::snprintf(preview, sizeof(preview), "Select Pull (Latest: #%zu)", history.size());
-    }
+    ImGuiTableFlags flags = ImGuiTableFlags_RowBg |
+                            ImGuiTableFlags_BordersInnerV |
+                            ImGuiTableFlags_ScrollY |
+                            ImGuiTableFlags_Resizable |
+                            ImGuiTableFlags_SizingStretchSame;
 
-    if (ImGui::BeginCombo("##PullCombo", preview)) {
+    if (ImGui::BeginTable("##HistTable", 7, flags, ImVec2(0, 0))) {
+        ImGui::TableSetupColumn("Pull", ImGuiTableColumnFlags_WidthFixed, 44.0f);
+        ImGui::TableSetupColumn("Zone", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Duration", ImGuiTableColumnFlags_WidthFixed, 66.0f);
+        ImGui::TableSetupColumn("Raid DPS", ImGuiTableColumnFlags_WidthFixed, 74.0f);
+        ImGui::TableSetupColumn("Total Dmg", ImGuiTableColumnFlags_WidthFixed, 76.0f);
+        ImGui::TableSetupColumn("Result", ImGuiTableColumnFlags_WidthFixed, 62.0f);
+        ImGui::TableSetupColumn("##View", ImGuiTableColumnFlags_WidthFixed, 52.0f);
+        ImGui::TableSetupScrollFreeze(0, 1);
+
+        push_header_font();
+        ImGui::TableHeadersRow();
+        pop_header_font();
+
+        const float row_h = row_height();
         for (int i = static_cast<int>(history.size()) - 1; i >= 0; --i) {
             const auto& p = history[i];
-            uint32_t s = static_cast<uint32_t>(p.duration_seconds);
-            char item[64];
-            std::snprintf(item, sizeof(item), "Pull #%d (%02u:%02u - %.0f DPS)", i + 1, s / 60, s % 60, p.total_dps);
-            bool is_selected = (m_selected_history_pull == i);
-            if (ImGui::Selectable(item, is_selected)) {
-                m_selected_history_pull = i;
+            ImGui::PushID(i);
+            ImGui::TableNextRow(0, row_h);
+
+            ImGui::TableSetColumnIndex(0);
+            center_in_row(row_h);
+            const bool selected = (m_selected_history_pull == i);
+            if (selected) {
+                ImGui::TextColored(ImVec4(0.55f, 0.70f, 0.95f, 1.0f), "#%d", i + 1);
+            } else {
+                ImGui::Text("#%d", i + 1);
             }
-            if (is_selected) ImGui::SetItemDefaultFocus();
+
+            ImGui::TableSetColumnIndex(1);
+            center_in_row(row_h);
+            ImGui::TextUnformatted(p.zone_name.empty() ? "Unknown" : p.zone_name.c_str());
+
+            ImGui::TableSetColumnIndex(2);
+            center_in_row(row_h);
+            const uint32_t s = static_cast<uint32_t>(p.duration_seconds);
+            ImGui::Text("%02u:%02u", s / 60, s % 60);
+
+            ImGui::TableSetColumnIndex(3);
+            center_in_row(row_h);
+            text_rate(p.total_dps);
+
+            ImGui::TableSetColumnIndex(4);
+            center_in_row(row_h);
+            text_number(p.total_damage);
+
+            ImGui::TableSetColumnIndex(5);
+            center_in_row(row_h);
+            ImGui::TextColored(end_reason_color(p.end_reason), "%s", end_reason_label(p.end_reason));
+
+            ImGui::TableSetColumnIndex(6);
+            center_in_row(row_h);
+            if (ImGui::SmallButton("View")) {
+                m_selected_history_pull = i;
+                m_active_tab = OverlayTab::Damage;
+            }
+
+            ImGui::PopID();
         }
-        ImGui::EndCombo();
+        ImGui::EndTable();
     }
-
-    int idx = (m_selected_history_pull >= 0 && m_selected_history_pull < static_cast<int>(history.size()))
-                  ? m_selected_history_pull
-                  : static_cast<int>(history.size()) - 1;
-
-    render_damage_tab(history[idx]);
 }
 
 void CombatOverlay::render() {
@@ -396,8 +603,11 @@ void CombatOverlay::render() {
         flags |= ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize;
     }
 
-    ImGui::SetNextWindowPos(ImVec2(m_pos_x, m_pos_y), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(m_width, m_height), ImGuiCond_FirstUseEver);
+    const ImGuiCond geom_cond = consume_geometry_restore() ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
+    if (has_saved_position()) {
+        ImGui::SetNextWindowPos(ImVec2(m_pos_x, m_pos_y), geom_cond);
+    }
+    ImGui::SetNextWindowSize(ImVec2(m_width, m_height), geom_cond);
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 10.0f));
@@ -411,24 +621,39 @@ void CombatOverlay::render() {
 
     if (ImGui::Begin(overlay_id(), nullptr, flags)) {
         ImGui::SetWindowFontScale(scaled_font.residual);
-        ImVec2 cur_pos = ImGui::GetWindowPos();
-        ImVec2 cur_size = ImGui::GetWindowSize();
+        const ImVec2 cur_pos = ImGui::GetWindowPos();
+        const ImVec2 cur_size = ImGui::GetWindowSize();
         m_pos_x = cur_pos.x;
         m_pos_y = cur_pos.y;
         m_width = cur_size.x;
         m_height = cur_size.y;
 
-        EncounterSummary current = m_engine ? m_engine->current_summary() : EncounterSummary{};
+        static const std::vector<EncounterSummary> s_no_history;
+        const auto& history = m_engine ? m_engine->pull_history() : s_no_history;
+        const bool viewing_history =
+            m_selected_history_pull >= 0 &&
+            m_selected_history_pull < static_cast<int>(history.size());
 
-        render_top_bar(current);
+        if (m_engine && !viewing_history) {
+            const auto now = std::chrono::steady_clock::now();
+            const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_last_refresh);
+            if (age.count() >= static_cast<long long>(m_refresh_interval_ms.load())) {
+                m_cached_summary = m_engine->current_summary();
+                m_last_refresh = now;
+            }
+        }
+        const EncounterSummary& shown =
+            viewing_history ? history[m_selected_history_pull] : m_cached_summary;
+
+        render_top_bar(shown, viewing_history);
         ImGui::Separator();
 
         switch (m_active_tab) {
             case OverlayTab::Damage:
-                render_damage_tab(current);
+                render_damage_tab(shown);
                 break;
             case OverlayTab::Healing:
-                render_healing_tab(current);
+                render_healing_tab(shown);
                 break;
             case OverlayTab::History:
                 render_history_tab();
@@ -452,7 +677,7 @@ namespace hub::meter {
 
 CombatOverlay::CombatOverlay(EncounterEngine* engine)
     : m_engine(engine) {
-    set_geometry(Rect{50.0f, 100.0f, 420.0f, 220.0f});
+    set_geometry(Rect{-1.0f, -1.0f, 800.0f, 480.0f});
 }
 
 CombatOverlay::~CombatOverlay() = default;

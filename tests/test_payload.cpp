@@ -233,3 +233,111 @@ TEST_CASE(Payload, Dx11HookStateAndShutdown) {
         TEST_ASSERT(!dx11.is_installed());
     }
 }
+
+TEST_CASE(Payload, SortedCombatantsMergesPetsAndSkipsIdle) {
+    // The overlay used to sort summary.combatants inline, so pets showed as their
+    // own rows and actors with no activity padded the table.
+    meter::EncounterSummary summary;
+
+    meter::CombatantStats player;
+    player.entity_id = 1;
+    player.name = "Player";
+    player.is_party_member = true;
+    player.dps = 100.0;
+    player.total_damage = 1000;
+    summary.combatants.push_back(player);
+
+    meter::CombatantStats pet;
+    pet.entity_id = 2;
+    pet.name = "Pet";
+    pet.is_pet = true;
+    pet.dps = 500.0;
+    pet.total_damage = 5000;
+    summary.combatants.push_back(pet);
+
+    meter::CombatantStats idle;
+    idle.entity_id = 3;
+    idle.name = "Idle";
+    idle.is_party_member = true;
+    summary.combatants.push_back(idle);
+
+    const auto ranked = meter::CombatOverlay::sorted_combatants(summary, true, false);
+    TEST_ASSERT_EQ(ranked.size(), 1u);
+    TEST_ASSERT(ranked[0]->name == "Player");
+}
+
+TEST_CASE(Payload, SortedCombatantsBreaksDpsTiesOnTotal) {
+    meter::EncounterSummary summary;
+
+    meter::CombatantStats low;
+    low.entity_id = 1;
+    low.name = "Low";
+    low.is_party_member = true;
+    low.dps = 250.0;
+    low.total_damage = 2000;
+    summary.combatants.push_back(low);
+
+    meter::CombatantStats high;
+    high.entity_id = 2;
+    high.name = "High";
+    high.is_party_member = true;
+    high.dps = 250.0;
+    high.total_damage = 9000;
+    summary.combatants.push_back(high);
+
+    const auto ranked = meter::CombatOverlay::sorted_combatants(summary, true, false);
+    TEST_ASSERT_EQ(ranked.size(), 2u);
+    TEST_ASSERT(ranked[0]->name == "High");
+
+    // Healing view ranks on hps, so an equal-dps pair reorders by effective heal.
+    summary.combatants[0].hps = 400.0;
+    summary.combatants[0].effective_healing = 4000;
+    const auto healers = meter::CombatOverlay::sorted_combatants(summary, true, true);
+    TEST_ASSERT_EQ(healers.size(), 2u);
+    TEST_ASSERT(healers[0]->name == "Low");
+}
+
+TEST_CASE(Payload, GeometryRestoreLatchArmsOnExternalSet) {
+    // Config loads land after the first frame, which ImGuiCond_FirstUseEver drops.
+    meter::CombatOverlay overlay;
+
+    // Construction seeds geometry, so the latch starts armed for the first frame.
+    TEST_ASSERT(overlay.consume_geometry_restore());
+    TEST_ASSERT(!overlay.consume_geometry_restore());
+
+    overlay.set_geometry(Rect{300.0f, 400.0f, 800.0f, 480.0f});
+    TEST_ASSERT(overlay.consume_geometry_restore());
+    TEST_ASSERT(!overlay.consume_geometry_restore());
+
+    TEST_ASSERT(overlay.has_saved_position());
+    overlay.set_geometry(Rect{-1.0f, -1.0f, 800.0f, 480.0f});
+    TEST_ASSERT(!overlay.has_saved_position());
+}
+
+TEST_CASE(Payload, HideInactiveDropsZeroContributors) {
+    // Distinct from the always-on zero-stat skip: a tank who took damage but dealt
+    // none is a real combatant, just not one the damage ranking should list.
+    meter::EncounterSummary summary;
+
+    meter::CombatantStats dealer;
+    dealer.entity_id = 1;
+    dealer.name = "Dealer";
+    dealer.is_party_member = true;
+    dealer.dps = 100.0;
+    dealer.total_damage = 1000;
+    summary.combatants.push_back(dealer);
+
+    meter::CombatantStats tank;
+    tank.entity_id = 2;
+    tank.name = "Tank";
+    tank.is_party_member = true;
+    tank.damage_taken = 5000;
+    summary.combatants.push_back(tank);
+
+    const auto shown = meter::CombatOverlay::sorted_combatants(summary, true, false, false);
+    TEST_ASSERT_EQ(shown.size(), 2u);
+
+    const auto hidden = meter::CombatOverlay::sorted_combatants(summary, true, false, true);
+    TEST_ASSERT_EQ(hidden.size(), 1u);
+    TEST_ASSERT(hidden[0]->name == "Dealer");
+}

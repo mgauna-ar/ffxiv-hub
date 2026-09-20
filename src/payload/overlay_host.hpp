@@ -85,6 +85,7 @@ private:
     mutable std::mutex m_mutex;
     std::vector<std::shared_ptr<IOverlay>> m_overlays;
     bool m_initialized{false};
+    void* m_hwnd{nullptr};  ///< Needed to map screen points into ImGui's client space.
 
     ImFont* m_font_regular{nullptr};
     ImFont* m_font_bold{nullptr};
