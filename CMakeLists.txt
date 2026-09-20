@@ -5,6 +5,18 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Output directories: place runtime executables and DLLs together in bin/
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+
+foreach(OUTPUTCONFIG ${CMAKE_CONFIGURATION_TYPES})
+    string(TOUPPER ${OUTPUTCONFIG} OUTPUTCONFIG_UPPER)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${OUTPUTCONFIG_UPPER} "${CMAKE_BINARY_DIR}/bin/${OUTPUTCONFIG}")
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_${OUTPUTCONFIG_UPPER} "${CMAKE_BINARY_DIR}/bin/${OUTPUTCONFIG}")
+    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_${OUTPUTCONFIG_UPPER} "${CMAKE_BINARY_DIR}/lib/${OUTPUTCONFIG}")
+endforeach()
+
 # Global options
 option(BUILD_TESTS "Build unit test runner" ON)
 option(ENABLE_ASAN "Enable AddressSanitizer (Clang/GCC)" OFF)
@@ -175,4 +187,25 @@ if(WIN32 OR CYGWIN OR MSYS OR MINGW)
         OUTPUT_NAME "ffxiv-hub"
         WIN32_EXECUTABLE TRUE
     )
+
+    # 5. Installation Rules for Windows Distribution
+    install(TARGETS ffxiv-hub hub_payload
+        RUNTIME DESTINATION .
+        LIBRARY DESTINATION .
+    )
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/README.md" DESTINATION .)
 endif()
+
+# -----------------------------------------------------------------------------
+# Packaging Configuration (CPack)
+# -----------------------------------------------------------------------------
+set(CPACK_PACKAGE_NAME "ffxiv-hub")
+set(CPACK_PACKAGE_VENDOR "mgauna")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "FFXIV Hub - Unified Combat Meter and Latency Mitigator for Final Fantasy XIV")
+set(CPACK_PACKAGE_VERSION_MAJOR ${PROJECT_VERSION_MAJOR})
+set(CPACK_PACKAGE_VERSION_MINOR ${PROJECT_VERSION_MINOR})
+set(CPACK_PACKAGE_VERSION_PATCH ${PROJECT_VERSION_PATCH})
+set(CPACK_GENERATOR "ZIP")
+set(CPACK_PACKAGE_FILE_NAME "ffxiv-hub-windows-x64")
+include(CPack)
+

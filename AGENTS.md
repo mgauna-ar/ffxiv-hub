@@ -93,6 +93,7 @@ This document defines the architectural patterns, engineering principles, memory
 | **Latency Mitigator View** | `src/app/ui/view_latency.hpp`<br>`src/app/ui/view_latency.cpp` | Real-time RTT curve, jitter, server monitor card, rolling action feed, and HUD settings |
 | **Settings View** | `src/app/ui/view_settings.hpp`<br>`src/app/ui/view_settings.cpp` | System preferences, Windows auto-start toggle, config directory management, and live log reader |
 | **Desktop App Entry** | `src/app/main.cpp` | Windows GUI subsystem (`wWinMain` / `/SUBSYSTEM:WINDOWS`), ImGui DX11/Win32 desktop window, tray message pump |
+| **CI/CD & Packaging** | `.github/workflows/ci.yml`<br>`CMakeLists.txt` (CPack) | GitHub Actions Windows-First automated MSVC build, CTest validation, SHA256 hashing, artifact archiving, and automated tag releases |
 | **Test Framework** | `tests/test_framework.hpp`<br>`tests/test_main.cpp` | Header-only cross-platform test runner executable runnable on macOS, Linux, and Windows |
 
 ---
@@ -205,9 +206,24 @@ clang++ -std=c++20 -Wall -Wextra -Wpedantic -Werror \
   -o hub_test_runner && ./hub_test_runner
 ```
 
-### Windows MSVC Build
+### Windows MSVC Build & Packaging
 ```cmd
 cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -A x64
 cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
+Generate portable ZIP distribution via CPack:
+```cmd
+cd build
+cpack -G ZIP -C Release
+```
+Produces `ffxiv-hub-windows-x64.zip` containing `ffxiv-hub.exe`, `hub_payload.dll`, and `README.md`.
+
+### Continuous Integration (GitHub Actions)
+The workflow `.github/workflows/ci.yml` runs on `windows-latest` via MSVC 2022 and CMake:
+- Builds Release `/MT` binaries.
+- Executes full CTest test suite.
+- Generates `ffxiv-hub-windows-x64.zip` and calculates SHA256 checksum.
+- Uploads build artifacts on every push to `main`.
+- Publishes automated GitHub Releases on tags matching `v*.*.*`.
+

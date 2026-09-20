@@ -1,5 +1,10 @@
 # FFXIV Hub 🎮⚡
 
+[![CI & Release](https://github.com/mgauna-ar/ffxiv-hub/actions/workflows/ci.yml/badge.svg)](https://github.com/mgauna-ar/ffxiv-hub/actions/workflows/ci.yml)
+![Platform](https://img.shields.io/badge/platform-Windows%20x64-blue)
+![C++20](https://img.shields.io/badge/standard-C%2B%2B20-crimson)
+![License](https://img.shields.io/badge/license-MIT-green)
+
 **FFXIV Hub** is a modern, unified, zero-dependency desktop manager and in-game suite for **Final Fantasy XIV (Dawntrail 7.x)** written in 100% C++20.
 
 It combines high-precision combat analytics (**Combat Meter**) and client-side animation lock compensation (**Latency Mitigator**) into a single, unified architecture:
@@ -113,6 +118,18 @@ ctest --test-dir build -C Release --output-on-failure
 Build outputs:
 - `build/bin/Release/ffxiv-hub.exe`
 - `build/bin/Release/hub_payload.dll`
+
+### Packaging & Release Distribution
+To generate the portable release ZIP package locally:
+```cmd
+cd build
+cpack -G ZIP -C Release
+```
+Or via PowerShell:
+```powershell
+Compress-Archive -Path build/bin/Release/ffxiv-hub.exe, build/bin/Release/hub_payload.dll, README.md -DestinationPath ffxiv-hub-windows-x64.zip
+```
+The GitHub Actions CI/CD pipeline automatically compiles, tests, and publishes `ffxiv-hub-windows-x64.zip` with SHA256 checksums on all `v*.*.*` release tags and as workflow run artifacts on pushes to `main`.
 
 ---
 

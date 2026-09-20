@@ -3,6 +3,14 @@
 #include "common/os/injector.hpp"
 #include "common/os/logger.hpp"
 #include <algorithm>
+#include <filesystem>
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 namespace hub::app {
 
@@ -122,14 +130,34 @@ void AppState::check_game_process() {
     // Process is running, but not connected yet
     auto current_state = m_connection_state.load();
     if (current_state == ConnectionState::WaitingForGame) {
+        if (os::DllInjector::is_payload_already_loaded(*proc)) {
+            m_connection_state.store(ConnectionState::InjectedWaitingPipe);
+            os::Logger::info("hub_payload.dll is already resident in FFXIV (PID: " + std::to_string(pid) + "). Awaiting IPC handshake...");
+            return;
+        }
+
         m_connection_state.store(ConnectionState::Injecting);
         os::Logger::info("FFXIV detected (PID: " + std::to_string(pid) + "). Injecting hub_payload.dll...");
 
+        std::filesystem::path dll_path = "hub_payload.dll";
+#ifdef _WIN32
+        wchar_t exe_path_buf[MAX_PATH];
+        DWORD len = GetModuleFileNameW(nullptr, exe_path_buf, MAX_PATH);
+        if (len > 0 && len < MAX_PATH) {
+            std::filesystem::path exe_dir = std::filesystem::path(exe_path_buf).parent_path();
+            std::filesystem::path candidate = exe_dir / "hub_payload.dll";
+            std::error_code ec;
+            if (std::filesystem::exists(candidate, ec)) {
+                dll_path = candidate;
+            }
+        }
+#endif
+
         os::DllInjector injector;
-        bool ok = injector.inject(*proc, "hub_payload.dll");
+        bool ok = injector.inject(*proc, dll_path);
         if (ok) {
             m_connection_state.store(ConnectionState::InjectedWaitingPipe);
-            os::Logger::info("hub_payload.dll injected successfully. Awaiting IPC handshake...");
+            os::Logger::info("hub_payload.dll injected successfully from " + dll_path.string() + ". Awaiting IPC handshake...");
         } else {
             m_connection_state.store(ConnectionState::WaitingForGame);
             os::Logger::warn("Failed to inject hub_payload.dll: " + injector.last_error());
