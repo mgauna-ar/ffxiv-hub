@@ -442,6 +442,10 @@ void render_view_combat(AppState& app_state) {
             app_state.send_combat_reset_overlay_geometry();
         }
         ImGui::SameLine();
+        if (ImGui::Button("End Encounter", ImVec2(140.0f * ui_scale(), 28.0f * ui_scale()))) {
+            app_state.send_combat_end_encounter();
+        }
+        ImGui::SameLine();
         if (ImGui::Button("Reset Statistics", ImVec2(150.0f * ui_scale(), 28.0f * ui_scale()))) {
             app_state.send_combat_reset_stats();
             app_state.reset_encounter();

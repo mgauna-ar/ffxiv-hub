@@ -116,6 +116,7 @@ public:
     void send_combat_column_cdh(bool show);
     void send_combat_reset_stats();
     void send_combat_reset_overlay_geometry();
+    void send_combat_end_encounter();
 
     // ==========================================
     // Latency Mitigator Plugin Integration
@@ -152,10 +153,23 @@ public:
     /// own copy and overwrites hand edits on its next autosave.
     void send_reload_config();
 
+    /// Asks the payload to unhook and unload without killing the game.
+    void send_unhook_and_exit();
+
     /// Independent ICMP ping to the game server, measured from the desktop process
     /// (not the in-game hooks), so it's available immediately on login.
     [[nodiscard]] double network_ping_ms() const noexcept { return m_network_monitor.get_current_ping_ms(); }
     void send_network_ping(float ping_ms);
+
+    /// Hook state as last reported by the payload. "Connected" alone only means
+    /// the pipe came up, which is not the same as the game hooks being live.
+    [[nodiscard]] bool hooks_installed() const noexcept { return m_hooks_installed.load(); }
+    [[nodiscard]] std::string payload_status_message() const;
+
+    /// Last overlay geometry the payload reported, so the app can show where an
+    /// overlay actually sits after an in-game drag.
+    [[nodiscard]] std::optional<ipc::OverlayGeometryPayload> overlay_geometry(PluginId id) const;
+    void send_overlay_position(PluginId id, float x, float y);
 
 private:
     void register_ipc_callbacks();
@@ -167,6 +181,12 @@ private:
     std::atomic<ConnectionState> m_connection_state{ConnectionState::WaitingForGame};
     std::atomic<uint32_t> m_game_pid{0};
     std::atomic<bool> m_access_denied{false};
+    std::atomic<bool> m_hooks_installed{false};
+    std::atomic<uint64_t> m_last_heartbeat_ms{0};
+    mutable std::mutex m_status_mutex;
+    std::string m_payload_status_message;
+    std::optional<ipc::OverlayGeometryPayload> m_combat_geometry;
+    std::optional<ipc::OverlayGeometryPayload> m_latency_geometry;
     std::chrono::steady_clock::time_point m_last_process_check{};
 
     os::NetworkMonitor m_network_monitor;

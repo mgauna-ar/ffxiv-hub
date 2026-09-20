@@ -116,6 +116,17 @@ void render_view_settings(AppState& app_state) {
         ImGui::OpenPopup("##ConfirmResetDefaults");
     }
 
+    ImGui::SameLine();
+    // Previously the only way to unload the payload was killing the game.
+    ImGui::BeginDisabled(!app_state.is_connected());
+    if (ImGui::Button("Unload Payload From Game", ImVec2(210.0f * ui_scale(), 28.0f * ui_scale()))) {
+        app_state.send_unhook_and_exit();
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered() && !app_state.is_connected()) {
+        ImGui::SetTooltip("No payload is currently attached.");
+    }
+
     if (ImGui::BeginPopupModal("##ConfirmResetDefaults", nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
         ImGui::TextColored(ImVec4(0.95f, 0.96f, 0.98f, 1.0f), "Reset every setting to its default?");

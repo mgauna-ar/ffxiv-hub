@@ -1,5 +1,6 @@
 #include "app/ui/view_dashboard.hpp"
 #include "app/ui/theme.hpp"
+#include <string>
 #include "common/os/logger.hpp"
 
 #ifdef _WIN32
@@ -40,9 +41,20 @@ void render_view_dashboard(AppState& app_state) {
         if (app_state.is_access_denied()) {
             ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f), "State: Access Denied (Error 5)");
             ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.25f, 1.0f), "Please run FFXIV Hub as Administrator!");
+        } else if (!app_state.is_connected()) {
+            ImGui::Text("Payload State: Injected / Awaiting Handshake");
+        } else if (app_state.hooks_installed()) {
+            ImGui::TextColored(ImVec4(0.063f, 0.725f, 0.506f, 1.0f),
+                               "Payload State: Hooked & Active (hub_payload.dll)");
         } else {
-            ImGui::Text("Payload State: %s",
-                app_state.is_connected() ? "Hooked & Active (hub_payload.dll)" : "Injected / Awaiting Handshake");
+            // A live pipe with dead hooks looks identical to a healthy attach
+            // from the outside, and is the state worth surfacing loudly.
+            ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f),
+                               "Payload State: Connected, hooks NOT installed");
+            const std::string detail = app_state.payload_status_message();
+            if (!detail.empty()) {
+                ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.25f, 1.0f), "%s", detail.c_str());
+            }
         }
     } else {
         ImGui::TextColored(ImVec4(0.70f, 0.74f, 0.82f, 1.0f), "Process: Not detected");

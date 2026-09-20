@@ -91,7 +91,8 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
     latency_plugin->set_ring_buffer(&pipe_client->ring_buffer());
 
     hub::payload::CommandDispatchTargets dispatch_targets{
-        combat_plugin.get(), combat_overlay.get(), latency_plugin.get(), latency_overlay.get()
+        combat_plugin.get(), combat_overlay.get(), latency_plugin.get(), latency_overlay.get(),
+        &g_shutdown_requested
     };
     pipe_client->set_command_handler([&dispatch_targets](const hub::ipc::CommandPayload& cmd) {
         hub::payload::dispatch_command(dispatch_targets, cmd);
@@ -140,6 +141,10 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
     auto last_reconnect_attempt = std::chrono::steady_clock::now();
     auto last_config_save = std::chrono::steady_clock::now();
     auto last_meter_report = std::chrono::steady_clock::now();
+    auto last_heartbeat = std::chrono::steady_clock::now();
+    auto last_geometry_sync = std::chrono::steady_clock::now();
+    const auto payload_start = std::chrono::steady_clock::now();
+    uint32_t heartbeat_sequence = 0;
     size_t last_combatant_count = 0;
     bool prev_connected = pipe_client->is_connected();
     bool latency_overlay_prev_visible = latency_overlay->is_visible();
@@ -204,6 +209,64 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
                 last_combatant_count = summary.combatants.size();
             }
             last_meter_report = now;
+        }
+
+        // Heartbeat plus hook state, so the desktop app's "Connected" reflects
+        // whether the hooks are actually installed rather than only that the
+        // pipe came up.
+        if (connected &&
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - last_heartbeat).count() > 1000) {
+            hub::ipc::HeartbeatPayload hb{};
+            hb.timestamp_ms = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count());
+            hb.sequence = ++heartbeat_sequence;
+            hb.uptime_seconds = static_cast<uint32_t>(
+                std::chrono::duration_cast<std::chrono::seconds>(now - payload_start).count());
+            auto hb_packet = hub::ipc::serialize_typed_packet(
+                hub::PluginId::Core, hub::MessageType::Heartbeat, hb.sequence, hb);
+            pipe_client->ring_buffer().push(hb_packet.data(), hb_packet.size());
+
+            hub::ipc::StatusPayload status{};
+            status.game_pid = static_cast<uint32_t>(GetCurrentProcessId());
+            status.active_plugins_mask =
+                (combat_plugin ? static_cast<uint32_t>(hub::PluginId::CombatMeter) : 0u) |
+                (latency_plugin ? static_cast<uint32_t>(hub::PluginId::LatencyMitigator) : 0u);
+            const std::string msg = hook_mgr.is_installed()
+                ? std::string("Hooks installed (") + hook_mgr.last_error() + ")"
+                : std::string("Hooks NOT installed: ") + hook_mgr.last_error();
+            std::snprintf(status.status_message, sizeof(status.status_message), "%s", msg.c_str());
+            auto status_packet = hub::ipc::serialize_typed_packet(
+                hub::PluginId::Core, hub::MessageType::Status, hb.sequence, status);
+            pipe_client->ring_buffer().push(status_packet.data(), status_packet.size());
+
+            last_heartbeat = now;
+        }
+
+        // Overlay geometry, so the desktop app can show where an overlay actually
+        // sits after the player drags it in-game.
+        if (connected &&
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - last_geometry_sync).count() > 1000) {
+            auto push_geometry = [&](hub::PluginId id, const hub::ui::OverlayBase& overlay) {
+                const auto geom = overlay.get_geometry();
+                hub::ipc::OverlayGeometryPayload g{};
+                g.plugin_id = static_cast<uint16_t>(id);
+                g.visible = overlay.is_visible() ? 1 : 0;
+                g.locked = overlay.is_locked() ? 1 : 0;
+                g.click_through = overlay.click_through() ? 1 : 0;
+                g.pos_x = geom.x;
+                g.pos_y = geom.y;
+                g.width = geom.width;
+                g.height = geom.height;
+                g.opacity = overlay.opacity();
+                g.scale = overlay.scale();
+                auto packet = hub::ipc::serialize_typed_packet(
+                    id, hub::MessageType::OverlayGeometry, heartbeat_sequence, g);
+                pipe_client->ring_buffer().push(packet.data(), packet.size());
+            };
+            push_geometry(hub::PluginId::CombatMeter, *combat_overlay);
+            push_geometry(hub::PluginId::LatencyMitigator, *latency_overlay);
+            last_geometry_sync = now;
         }
 
         // Persist live overlay/plugin state (position, lock, opacity, ...) to

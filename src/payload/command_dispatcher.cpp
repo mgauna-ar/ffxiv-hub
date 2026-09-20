@@ -45,9 +45,23 @@ void dispatch_combat_meter(const CommandDispatchTargets& t, const ipc::CommandPa
                 t.combat_plugin->engine().clear_history();
             }
             break;
+        case CommandId::EndEncounter:
+            // Archives the pull instead of discarding it, unlike ResetEncounter.
+            if (t.combat_plugin) {
+                t.combat_plugin->engine().end_encounter(meter::EncounterEndReason::Manual);
+            }
+            break;
         case CommandId::ResetOverlayGeometry:
             if (t.combat_overlay) {
                 t.combat_overlay->set_geometry(Rect{-1.0f, -1.0f, 800.0f, 480.0f});
+            }
+            break;
+        case CommandId::SetOverlayPosition:
+            if (t.combat_overlay) {
+                Rect geom = t.combat_overlay->get_geometry();
+                geom.x = cmd.param_float;
+                geom.y = cmd.param_float2;
+                t.combat_overlay->set_geometry(geom);
             }
             break;
         case CommandId::SetShowBars:
@@ -140,6 +154,14 @@ void dispatch_latency_mitigator(const CommandDispatchTargets& t, const ipc::Comm
                 t.latency_overlay->set_geometry(Rect{30.0f, 30.0f, 120.0f, 32.0f});
             }
             break;
+        case CommandId::SetOverlayPosition:
+            if (t.latency_overlay) {
+                Rect geom = t.latency_overlay->get_geometry();
+                geom.x = cmd.param_float;
+                geom.y = cmd.param_float2;
+                t.latency_overlay->set_geometry(geom);
+            }
+            break;
         case CommandId::ReloadConfig:
             if (t.latency_plugin) {
                 config::ConfigManager::instance().load();
@@ -163,6 +185,12 @@ void dispatch_command(const CommandDispatchTargets& targets, const ipc::CommandP
             dispatch_latency_mitigator(targets, cmd);
             break;
         case PluginId::Core:
+            if (static_cast<CommandId>(cmd.command_id) == CommandId::UnhookAndExit) {
+                if (targets.shutdown_requested) {
+                    targets.shutdown_requested->store(true);
+                }
+                break;
+            }
             if (static_cast<CommandId>(cmd.command_id) == CommandId::ReloadConfig) {
                 config::ConfigManager::instance().load();
                 if (targets.combat_plugin) {

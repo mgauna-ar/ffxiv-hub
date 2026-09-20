@@ -76,6 +76,9 @@ enum class CommandId : uint32_t {
     SetColumnCrit       = 28,
     SetColumnDh         = 29,
     SetColumnCdh        = 30,
+    EndEncounter        = 31,
+    SetOverlayPosition  = 32,
+    UnhookAndExit       = 33,
 };
 
 /// Overall game attachment & IPC connection state

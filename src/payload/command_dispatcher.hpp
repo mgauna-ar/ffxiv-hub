@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common/ipc/protocol.hpp"
+#include <atomic>
 
 namespace hub::meter {
 class CombatPlugin;
@@ -21,6 +22,10 @@ struct CommandDispatchTargets {
     hub::meter::CombatOverlay* combat_overlay{nullptr};
     hub::mitigator::LatencyPlugin* latency_plugin{nullptr};
     hub::mitigator::LatencyOverlay* latency_overlay{nullptr};
+
+    /// Set by UnhookAndExit to ask the payload thread to unload. Until this
+    /// existed the only way to unload was killing the game.
+    std::atomic<bool>* shutdown_requested{nullptr};
 };
 
 /// Routes an incoming CommandPayload (received from the desktop app over the

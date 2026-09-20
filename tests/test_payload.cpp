@@ -8,6 +8,8 @@
 #include "meter/encounter_engine.hpp"
 #include "mitigator/latency_plugin.hpp"
 #include "payload/command_dispatcher.hpp"
+#include "meter/combat_plugin.hpp"
+#include <atomic>
 #include "hub/game_definitions.hpp"
 
 using namespace hub;
@@ -415,4 +417,64 @@ TEST_CASE(Payload, ResetOverlayGeometryRearmsRestoreLatch) {
     // A reset must re-arm the latch, or the new geometry is never applied.
     TEST_ASSERT(overlay.consume_geometry_restore());
     TEST_ASSERT(!overlay.has_saved_position());
+}
+
+TEST_CASE(Payload, UnhookAndExitSignalsShutdown) {
+    // The ShutdownSignal slot existed unused; the only way to unload was killing
+    // the game.
+    std::atomic<bool> shutdown{false};
+    payload::CommandDispatchTargets targets;
+    targets.shutdown_requested = &shutdown;
+
+    ipc::CommandPayload cmd{};
+    cmd.target_plugin_id = static_cast<uint32_t>(PluginId::Core);
+    cmd.command_id = static_cast<uint32_t>(CommandId::UnhookAndExit);
+    payload::dispatch_command(targets, cmd);
+    TEST_ASSERT(shutdown.load());
+
+    // A null flag must stay a safe no-op, as during early startup.
+    payload::CommandDispatchTargets empty;
+    payload::dispatch_command(empty, cmd);
+}
+
+TEST_CASE(Payload, SetOverlayPositionMovesWithoutResizing) {
+    meter::CombatOverlay overlay;
+    overlay.set_geometry(Rect{10.0f, 20.0f, 640.0f, 400.0f});
+
+    payload::CommandDispatchTargets targets;
+    targets.combat_overlay = &overlay;
+
+    ipc::CommandPayload cmd{};
+    cmd.target_plugin_id = static_cast<uint32_t>(PluginId::CombatMeter);
+    cmd.command_id = static_cast<uint32_t>(CommandId::SetOverlayPosition);
+    cmd.param_float = 300.0f;
+    cmd.param_float2 = 150.0f;
+    payload::dispatch_command(targets, cmd);
+
+    const Rect moved = overlay.get_geometry();
+    TEST_ASSERT_NEAR(moved.x, 300.0f, 0.01f);
+    TEST_ASSERT_NEAR(moved.y, 150.0f, 0.01f);
+    TEST_ASSERT_NEAR(moved.width, 640.0f, 0.01f);
+    TEST_ASSERT_NEAR(moved.height, 400.0f, 0.01f);
+    TEST_ASSERT(overlay.consume_geometry_restore());
+}
+
+TEST_CASE(Payload, EndEncounterArchivesRatherThanDiscards) {
+    meter::CombatPlugin plugin;
+    plugin.initialize();
+
+    payload::CommandDispatchTargets targets;
+    targets.combat_plugin = &plugin;
+
+    plugin.engine().start_encounter();
+    const size_t history_before = plugin.engine().pull_history().size();
+
+    ipc::CommandPayload cmd{};
+    cmd.target_plugin_id = static_cast<uint32_t>(PluginId::CombatMeter);
+    cmd.command_id = static_cast<uint32_t>(CommandId::EndEncounter);
+    payload::dispatch_command(targets, cmd);
+
+    TEST_ASSERT(!plugin.engine().in_combat());
+    // ResetEncounter throws the pull away; EndEncounter has to keep it.
+    TEST_ASSERT(plugin.engine().pull_history().size() > history_before);
 }

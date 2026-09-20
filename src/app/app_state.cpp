@@ -82,6 +82,27 @@ void AppState::register_ipc_callbacks() {
         m_engine.process_encounter_control(ctrl);
     });
 
+    m_pipe_server.set_status_callback([this](const ipc::StatusPayload& status) {
+        m_hooks_installed.store(std::string_view(status.status_message).find("NOT installed") == std::string_view::npos);
+        std::lock_guard<std::mutex> lock(m_status_mutex);
+        m_payload_status_message.assign(
+            status.status_message,
+            strnlen(status.status_message, sizeof(status.status_message)));
+    });
+
+    m_pipe_server.set_heartbeat_callback([this](const ipc::HeartbeatPayload& hb) {
+        m_last_heartbeat_ms.store(hb.timestamp_ms);
+    });
+
+    m_pipe_server.set_overlay_geometry_callback([this](const ipc::OverlayGeometryPayload& geom) {
+        std::lock_guard<std::mutex> lock(m_status_mutex);
+        if (static_cast<PluginId>(geom.plugin_id) == PluginId::CombatMeter) {
+            m_combat_geometry = geom;
+        } else if (static_cast<PluginId>(geom.plugin_id) == PluginId::LatencyMitigator) {
+            m_latency_geometry = geom;
+        }
+    });
+
     m_pipe_server.set_mitigator_telemetry_callback([this](const ipc::MitigatorTelemetryPayload& telem) {
         std::lock_guard<std::mutex> lock(m_telemetry_mutex);
         m_telemetry_history.push_back(telem);
@@ -254,9 +275,30 @@ std::string AppState::connection_status_string() const {
         case ConnectionState::InjectedWaitingPipe:
             return "Connecting Pipe...";
         case ConnectionState::Connected:
+            // The pipe being up says nothing about whether the detours took.
+            if (!m_hooks_installed.load()) {
+                return "Connected, hooks not installed (PID: " +
+                       std::to_string(m_game_pid.load()) + ")";
+            }
             return "Connected (PID: " + std::to_string(m_game_pid.load()) + ")";
     }
     return "Unknown";
+}
+
+std::string AppState::payload_status_message() const {
+    std::lock_guard<std::mutex> lock(m_status_mutex);
+    return m_payload_status_message;
+}
+
+std::optional<ipc::OverlayGeometryPayload> AppState::overlay_geometry(PluginId id) const {
+    std::lock_guard<std::mutex> lock(m_status_mutex);
+    if (id == PluginId::CombatMeter) return m_combat_geometry;
+    if (id == PluginId::LatencyMitigator) return m_latency_geometry;
+    return std::nullopt;
+}
+
+void AppState::send_overlay_position(PluginId id, float x, float y) {
+    m_pipe_server.send_command(id, CommandId::SetOverlayPosition, 0, x, y);
 }
 
 // Combat Meter Integration
@@ -384,6 +426,14 @@ void AppState::send_mitigator_reset_overlay_geometry() {
 
 void AppState::send_reload_config() {
     m_pipe_server.send_command(PluginId::Core, CommandId::ReloadConfig, 0);
+}
+
+void AppState::send_unhook_and_exit() {
+    m_pipe_server.send_command(PluginId::Core, CommandId::UnhookAndExit, 0);
+}
+
+void AppState::send_combat_end_encounter() {
+    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::EndEncounter, 0);
 }
 
 void AppState::send_combat_show_bars(bool show) {
