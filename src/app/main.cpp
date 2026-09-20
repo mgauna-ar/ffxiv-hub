@@ -171,14 +171,32 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     hub::os::TrayManager tray_manager;
     tray_manager.initialize(single_instance.activation_message_id());
 
-    // Register Desktop Window Class
+    // Register Desktop Window Class with application icon (ID 101)
+    HICON hIcon = LoadIconW(hInstance, MAKEINTRESOURCEW(101));
+    HICON hIconSm = static_cast<HICON>(LoadImageW(
+        hInstance,
+        MAKEINTRESOURCEW(101),
+        IMAGE_ICON,
+        GetSystemMetrics(SM_CXSMICON),
+        GetSystemMetrics(SM_CYSMICON),
+        LR_DEFAULTCOLOR
+    ));
+    if (!hIconSm) {
+        hIconSm = hIcon;
+    }
+    if (!hIcon) {
+        hIcon = LoadIconW(nullptr, MAKEINTRESOURCEW(32512));
+        hIconSm = hIcon;
+    }
+
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(WNDCLASSEXW);
     wc.style = CS_CLASSDC;
     wc.lpfnWndProc = MainWndProc;
     wc.hInstance = hInstance;
     wc.lpszClassName = L"FFXIVHubDesktopWindow";
-    wc.hIcon = LoadIconW(nullptr, MAKEINTRESOURCEW(32512));
+    wc.hIcon = hIcon;
+    wc.hIconSm = hIconSm;
     wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
     RegisterClassExW(&wc);
 
@@ -196,6 +214,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
         UnregisterClassW(L"FFXIVHubDesktopWindow", hInstance);
         return 1;
     }
+
+    SendMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(hIcon));
+    SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(hIconSm));
 
     // Configure Tray Callbacks
     tray_manager.set_on_show_window([hwnd]() {

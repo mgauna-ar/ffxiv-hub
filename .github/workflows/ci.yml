@@ -43,14 +43,13 @@ jobs:
           Compress-Archive -Path dist/* -DestinationPath ffxiv-hub-windows-x64.zip -Force
           $hash = (Get-FileHash -Algorithm SHA256 ffxiv-hub-windows-x64.zip).Hash
           "$hash  ffxiv-hub-windows-x64.zip" | Out-File -Encoding utf8 ffxiv-hub-windows-x64.zip.sha256
+          Copy-Item ffxiv-hub-windows-x64.zip.sha256 dist/
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v7
         with:
           name: ffxiv-hub-windows-x64
-          path: |
-            ffxiv-hub-windows-x64.zip
-            ffxiv-hub-windows-x64.zip.sha256
+          path: dist/*
           if-no-files-found: error
           retention-days: 14
 

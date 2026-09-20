@@ -54,7 +54,23 @@ bool TrayManager::initialize(uint32_t activation_msg_id) {
     }
 
     m_hwnd = hwnd;
-    m_icon = LoadIconW(nullptr, MAKEINTRESOURCEW(32512));
+
+    // Load crisp DPI-aware icon if available from application resources (ID 101)
+    HICON hIcon = static_cast<HICON>(LoadImageW(
+        hInst,
+        MAKEINTRESOURCEW(101),
+        IMAGE_ICON,
+        GetSystemMetrics(SM_CXSMICON),
+        GetSystemMetrics(SM_CYSMICON),
+        LR_DEFAULTCOLOR
+    ));
+    if (!hIcon) {
+        hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(101));
+    }
+    if (!hIcon) {
+        hIcon = LoadIconW(nullptr, MAKEINTRESOURCEW(32512));
+    }
+    m_icon = hIcon;
 
     NOTIFYICONDATAW nid{};
     nid.cbSize = sizeof(NOTIFYICONDATAW);
@@ -90,6 +106,7 @@ void TrayManager::shutdown() {
     }
 
     UnregisterClassW(TRAY_WINDOW_CLASS, GetModuleHandleW(nullptr));
+    m_icon = nullptr;
 #endif
 
     m_initialized = false;
