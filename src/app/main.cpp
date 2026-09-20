@@ -148,9 +148,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     hub::os::Logger::info("Starting FFXIV Hub Desktop Manager v1.0.0...");
 
     hub::os::SingleInstance single_instance("Local\\FFXIVHubSingleInstanceMutex");
-    if (single_instance.is_another_instance_running()) {
+    if (!single_instance.try_acquire()) {
         hub::os::Logger::info("Another instance is already running. Waking up existing instance and exiting.");
-        single_instance.notify_other_instance();
+        single_instance.notify_existing_instance();
         return 0;
     }
 
@@ -170,8 +170,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     wc.lpfnWndProc = MainWndProc;
     wc.hInstance = hInstance;
     wc.lpszClassName = L"FFXIVHubDesktopWindow";
-    wc.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
-    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    wc.hIcon = LoadIconW(nullptr, MAKEINTRESOURCEW(32512));
+    wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
     RegisterClassExW(&wc);
 
     HWND hwnd = CreateWindowExW(

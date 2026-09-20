@@ -93,8 +93,8 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
 
         // Update latency overlay with smoothed RTT
         latency_overlay->update_rtt(
-            latency_plugin->mitigator().smoothed_rtt_ms(),
-            latency_plugin->mitigator().sample_count() > 0
+            latency_plugin->mitigator().get_rtt_tracker().get_smoothed_rtt_ms(),
+            latency_plugin->mitigator().get_rtt_tracker().sample_count() > 0
         );
     }
 
