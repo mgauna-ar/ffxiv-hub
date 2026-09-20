@@ -38,18 +38,25 @@ include_directories(
     include
     src
     plugins
+    plugins/latency_mitigator/include
 )
 
-# Common Library (Core infrastructure, IPC, Config, Scanning, OS Utilities)
+# Common Library & Plugins
 file(GLOB COMMON_SOURCES
     src/common/*.cpp
     src/common/ipc/*.cpp
     src/common/config/*.cpp
     src/common/os/*.cpp
+    plugins/latency_mitigator/src/*.cpp
 )
 
 add_library(hub_common STATIC ${COMMON_SOURCES})
-target_include_directories(hub_common PUBLIC include src plugins)
+target_include_directories(hub_common PUBLIC
+    include
+    src
+    plugins
+    plugins/latency_mitigator/include
+)
 
 # Unit Tests Target (cross-platform runnable on macOS, Linux, Windows)
 if(BUILD_TESTS)
