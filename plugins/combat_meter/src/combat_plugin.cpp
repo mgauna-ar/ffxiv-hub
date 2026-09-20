@@ -115,8 +115,18 @@ void CombatPlugin::deserialize_config(const config::JsonValue& in) {
         m_overlay->set_opacity(m_config.window_opacity);
         m_overlay->set_scale(m_config.ui_scale);
         m_overlay->set_party_only(m_config.party_only);
+        m_overlay->set_show_progress_bars(m_config.show_bars);
+        m_overlay->set_hide_inactive(m_config.hide_inactive);
+        m_overlay->set_refresh_interval_ms(m_config.refresh_interval_ms);
+        m_overlay->set_show_col_share(m_config.show_col_share);
+        m_overlay->set_show_col_crit(m_config.show_col_crit);
+        m_overlay->set_show_col_dh(m_config.show_col_dh);
+        m_overlay->set_show_col_cdh(m_config.show_col_cdh);
         if (in.contains("click_through")) m_overlay->set_click_through(in["click_through"].as_bool(m_overlay->click_through()));
         if (in.contains("auto_hide")) m_overlay->set_auto_hide(in["auto_hide"].as_bool(m_overlay->auto_hide()));
+        // Clamped at render time against the live viewport instead of here: the
+        // payload has no screen metrics, and a fixed assumption would drag a
+        // correctly-placed overlay inward on anything wider.
         m_overlay->set_geometry(hub::Rect{
             static_cast<float>(m_config.window_x),
             static_cast<float>(m_config.window_y),

@@ -1,5 +1,6 @@
 #include "app/ui/view_latency.hpp"
 #include "app/ui/theme.hpp"
+#include "app/ui/config_binding.hpp"
 #include <algorithm>
 #include <iomanip>
 #include <sstream>
@@ -18,6 +19,8 @@
 namespace hub::app::ui {
 
 #ifdef HAVE_IMGUI
+
+namespace { constexpr const char* MITI = "latency_mitigator"; }
 namespace {
 
 void render_rtt_graph(const std::vector<ipc::MitigatorTelemetryPayload>& samples, float target_ping) {
@@ -164,8 +167,8 @@ void render_view_latency(AppState& app_state) {
 
     // Real-Time RTT Graph
     ImGui::TextColored(ImVec4(0.95f, 0.96f, 0.98f, 1.0f), "Round-Trip Time History (Last 120 Samples)");
-    static float target_ping = 15.0f;
-    render_rtt_graph(telemetry, target_ping);
+    const float target_ping_line = cfg_float(MITI, "target_ping_ms", 15.0f);
+    render_rtt_graph(telemetry, target_ping_line);
 
     ImGui::Spacing();
     ImGui::Spacing();
@@ -226,22 +229,27 @@ void render_view_latency(AppState& app_state) {
     ImGui::Separator();
     ImGui::Spacing();
 
+    float target_ping = cfg_float(MITI, "target_ping_ms", 15.0f);
     if (ImGui::SliderFloat("Target Ping (ms)", &target_ping, 10.0f, 40.0f, "%.1f ms")) {
+        cfg_store(MITI, "target_ping_ms", target_ping);
         app_state.send_mitigator_target_ping(target_ping);
     }
 
-    static float min_lock = 25.0f;
+    float min_lock = cfg_float(MITI, "min_animation_lock_ms", 25.0f);
     if (ImGui::SliderFloat("Safety Floor (ms)", &min_lock, 25.0f, 100.0f, "%.1f ms")) {
+        cfg_store(MITI, "min_animation_lock_ms", min_lock);
         app_state.send_mitigator_min_lock(min_lock);
     }
 
-    static float spike_mult = 2.5f;
+    float spike_mult = cfg_float(MITI, "spike_multiplier", 2.5f);
     if (ImGui::SliderFloat("Spike Multiplier", &spike_mult, 2.0f, 4.0f, "%.1fx")) {
+        cfg_store(MITI, "spike_multiplier", spike_mult);
         app_state.send_mitigator_spike_multiplier(spike_mult);
     }
 
-    static bool dry_run = false;
+    bool dry_run = cfg_bool(MITI, "dry_run", false);
     if (ImGui::Checkbox("Dry-Run Mode (Observe only, zero memory edits)", &dry_run)) {
+        cfg_store(MITI, "dry_run", dry_run);
         app_state.send_mitigator_dry_run(dry_run);
     }
 
@@ -249,34 +257,40 @@ void render_view_latency(AppState& app_state) {
     ImGui::Separator();
     ImGui::Spacing();
 
-    static bool hud_visible = true;
+    bool hud_visible = cfg_bool(MITI, "overlay_visible", true);
     if (ImGui::Checkbox("Show Micro Ping HUD In-Game", &hud_visible)) {
+        cfg_store(MITI, "overlay_visible", hud_visible);
         app_state.send_mitigator_hud_visible(hud_visible);
     }
 
-    static bool hud_locked = false;
+    bool hud_locked = cfg_bool(MITI, "overlay_locked", false);
     if (ImGui::Checkbox("Lock Micro Ping HUD Position", &hud_locked)) {
+        cfg_store(MITI, "overlay_locked", hud_locked);
         app_state.send_mitigator_hud_locked(hud_locked);
     }
 
-    static float hud_opacity = 0.90f;
+    float hud_opacity = cfg_float(MITI, "overlay_opacity", 0.90f);
     if (ImGui::SliderFloat("HUD Opacity", &hud_opacity, 0.1f, 1.0f, "%.2f")) {
+        cfg_store(MITI, "overlay_opacity", hud_opacity);
         app_state.send_mitigator_hud_opacity(hud_opacity);
     }
 
-    static float hud_scale = 1.0f;
+    float hud_scale = cfg_float(MITI, "overlay_scale", 1.0f);
     if (ImGui::SliderFloat("HUD Scale", &hud_scale, 0.5f, 3.0f, "%.2fx")) {
+        cfg_store(MITI, "overlay_scale", hud_scale);
         app_state.send_mitigator_hud_scale(hud_scale);
     }
 
-    static bool hud_click_through = false;
+    bool hud_click_through = cfg_bool(MITI, "click_through", false);
     if (ImGui::Checkbox("Click-Through HUD", &hud_click_through)) {
+        cfg_store(MITI, "click_through", hud_click_through);
         app_state.send_mitigator_hud_click_through(hud_click_through);
     }
 
-    static int hud_mode = 0;
+    int hud_mode = cfg_int(MITI, "overlay_mode", 0);
     static const char* hud_mode_names[] = { "Compact Inline", "Two Row", "Ping Only" };
     if (ImGui::Combo("HUD Layout", &hud_mode, hud_mode_names, 3)) {
+        cfg_store(MITI, "overlay_mode", hud_mode);
         app_state.send_mitigator_hud_display_mode(static_cast<uint32_t>(hud_mode));
     }
 

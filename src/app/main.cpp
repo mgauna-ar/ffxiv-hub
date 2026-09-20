@@ -9,6 +9,7 @@
 #include "common/os/process_finder.hpp"
 #include "common/os/single_instance.hpp"
 #include "common/os/tray_manager.hpp"
+#include "common/config/config_manager.hpp"
 #include <iostream>
 #include <string>
 
@@ -36,6 +37,14 @@ ID3D11DeviceContext* g_pd3dDeviceContext = nullptr;
 IDXGISwapChain* g_pSwapChain = nullptr;
 ID3D11RenderTargetView* g_mainRenderTargetView = nullptr;
 bool g_window_minimized = false;
+
+/// Read per close rather than cached: the setting can be toggled while running,
+/// and closing is rare enough that the lookup cost does not matter.
+bool close_to_tray_enabled() {
+    auto& root = hub::config::ConfigManager::instance().root();
+    if (!root.contains("hub") || !root["hub"].is_object()) return true;
+    return root["hub"]["minimize_to_tray"].as_bool(true);
+}
 bool g_running = true;
 
 void CreateRenderTarget() {
@@ -154,9 +163,13 @@ LRESULT WINAPI MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
             break;
         case WM_CLOSE:
-            ShowWindow(hWnd, SW_HIDE);
-            g_window_minimized = true;
-            return 0; // Close to tray
+            if (close_to_tray_enabled()) {
+                ShowWindow(hWnd, SW_HIDE);
+                g_window_minimized = true;
+                return 0;
+            }
+            PostQuitMessage(0);
+            return 0;
         case WM_DESTROY:
             PostQuitMessage(0);
             return 0;

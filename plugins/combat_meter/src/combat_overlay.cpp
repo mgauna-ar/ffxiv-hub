@@ -605,7 +605,16 @@ void CombatOverlay::render() {
 
     const ImGuiCond geom_cond = consume_geometry_restore() ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
     if (has_saved_position()) {
-        ImGui::SetNextWindowPos(ImVec2(m_pos_x, m_pos_y), geom_cond);
+        // Keep a title-bar-sized grab handle on screen so a window saved on a
+        // since-unplugged monitor can still be dragged back.
+        float x = m_pos_x;
+        float y = m_pos_y;
+        const ImVec2 display = ImGui::GetIO().DisplaySize;
+        if (display.x > 100.0f && display.y > 100.0f) {
+            x = std::clamp(x, -m_width + 120.0f, display.x - 120.0f);
+            y = std::clamp(y, 0.0f, display.y - 40.0f);
+        }
+        ImGui::SetNextWindowPos(ImVec2(x, y), geom_cond);
     }
     ImGui::SetNextWindowSize(ImVec2(m_width, m_height), geom_cond);
 

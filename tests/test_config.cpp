@@ -1,6 +1,8 @@
 #include "test_framework.hpp"
 #include "common/config/json.hpp"
 #include "common/config/config_manager.hpp"
+#include "app/ui/config_binding.hpp"
+#include <filesystem>
 
 using namespace hub::config;
 
@@ -87,4 +89,37 @@ TEST_CASE(Config, ClampGeometryToScreen) {
     hub::Rect r3{100.0f, -500.0f, 400.0f, 300.0f};
     auto c3 = ConfigManager::clamp_geometry_to_screen(r3, 1920.0f, 1080.0f);
     TEST_ASSERT_NEAR(c3.y, 0.0f, 0.01f);
+}
+
+TEST_CASE(Config, BindingHelpersRoundTripAndPersist) {
+    // Desktop controls used to be function-local statics seeded with literals, so
+    // they reset every restart and showed values unrelated to the loaded config.
+    auto& cfg = hub::config::ConfigManager::instance();
+    const auto tmp = std::filesystem::temp_directory_path() / "hub_binding_test.json";
+    std::filesystem::remove(tmp);
+    cfg.set_custom_path_for_testing(tmp);
+
+    using namespace hub::app::ui;
+
+    // Absent keys fall back rather than inventing a value.
+    TEST_ASSERT(cfg_bool("no_such_section", "nope", true));
+    TEST_ASSERT_NEAR(cfg_float("hub", "no_such_key", 4.25f), 4.25f, 0.001f);
+
+    cfg_store("latency_mitigator", "target_ping_ms", 22.5f);
+    TEST_ASSERT_NEAR(cfg_float("latency_mitigator", "target_ping_ms", 15.0f), 22.5f, 0.001f);
+
+    cfg_store("hub", "minimize_to_tray", false);
+    TEST_ASSERT(!cfg_bool("hub", "minimize_to_tray", true));
+
+    cfg_store("combat_meter", "refresh_interval_ms", 250);
+    TEST_ASSERT_EQ(cfg_int("combat_meter", "refresh_interval_ms", 500), 250);
+
+    // A store writes through immediately, so a kill from the tray cannot lose it.
+    TEST_ASSERT(std::filesystem::exists(tmp));
+    TEST_ASSERT(cfg.load());
+    TEST_ASSERT_NEAR(cfg_float("latency_mitigator", "target_ping_ms", 15.0f), 22.5f, 0.001f);
+    TEST_ASSERT(!cfg_bool("hub", "minimize_to_tray", true));
+
+    std::filesystem::remove(tmp);
+    cfg.set_custom_path_for_testing({});
 }

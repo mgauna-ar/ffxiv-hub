@@ -35,11 +35,12 @@ ConfigManager::ConfigManager() {
         {"max_animation_lock_ms", JsonValue(2500.0f)},
         {"spike_multiplier", JsonValue(2.5f)},
         {"overlay_visible", JsonValue(true)},
-        {"hud_x", JsonValue(50.0f)},
-        {"hud_y", JsonValue(50.0f)},
-        {"hud_opacity", JsonValue(0.90f)},
-        {"hud_scale", JsonValue(1.0f)},
-        {"hud_locked", JsonValue(false)}
+        {"overlay_x", JsonValue(50.0f)},
+        {"overlay_y", JsonValue(50.0f)},
+        {"overlay_opacity", JsonValue(0.90f)},
+        {"overlay_scale", JsonValue(1.0f)},
+        {"overlay_locked", JsonValue(false)},
+        {"overlay_mode", JsonValue(0)}
     };
 }
 

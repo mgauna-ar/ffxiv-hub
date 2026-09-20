@@ -1,5 +1,6 @@
 #include "app/ui/view_settings.hpp"
 #include "app/ui/theme.hpp"
+#include "app/ui/config_binding.hpp"
 #include "common/os/auto_start.hpp"
 #include "common/os/logger.hpp"
 #include <fstream>
@@ -19,6 +20,8 @@ namespace hub::app::ui {
 
 #ifdef HAVE_IMGUI
 namespace {
+
+constexpr const char* HUB = "hub";
 
 std::vector<std::string> read_recent_log_lines(size_t max_lines = 50) {
     std::vector<std::string> lines;
@@ -63,16 +66,23 @@ void render_view_settings(AppState& app_state) {
     ImGui::TextColored(ImVec4(0.231f, 0.510f, 0.965f, 1.0f), "System & Windows Integration");
     ImGui::Spacing();
 
+    // The registry is the real source of truth here, so config follows it rather
+    // than the other way round.
     bool auto_start = os::AutoStart::is_enabled();
     if (ImGui::Checkbox("Start FFXIV Hub automatically when Windows starts", &auto_start)) {
         os::AutoStart::set_enabled(auto_start);
+        cfg_store(HUB, "start_with_windows", auto_start);
     }
 
-    static bool minimize_to_tray = true;
-    ImGui::Checkbox("Minimize to System Tray when closing the application window", &minimize_to_tray);
+    bool minimize_to_tray = cfg_bool(HUB, "minimize_to_tray", true);
+    if (ImGui::Checkbox("Minimize to System Tray when closing the application window", &minimize_to_tray)) {
+        cfg_store(HUB, "minimize_to_tray", minimize_to_tray);
+    }
 
-    static bool balloon_notifs = true;
-    ImGui::Checkbox("Enable Windows notification area alerts on game connect", &balloon_notifs);
+    bool balloon_notifs = cfg_bool(HUB, "show_notifications", true);
+    if (ImGui::Checkbox("Enable Windows notification area alerts on game connect", &balloon_notifs)) {
+        cfg_store(HUB, "show_notifications", balloon_notifs);
+    }
 
     ImGui::Spacing();
     ImGui::Separator();
