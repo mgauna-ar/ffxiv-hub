@@ -16,16 +16,19 @@ namespace hub::app::ui {
 
 void render_view_dashboard(AppState& app_state) {
 #ifdef HAVE_IMGUI
+    ImGui::PushFont(bold_font());
     ImGui::TextColored(ImVec4(0.95f, 0.96f, 0.98f, 1.0f), "System Dashboard");
+    ImGui::PopFont();
     ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "Central telemetry and runtime supervision for Final Fantasy XIV");
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
 
-    const float panel_width = (ImGui::GetContentRegionAvail().x - 16.0f) * 0.5f;
+    const float panel_width = (ImGui::GetContentRegionAvail().x - 16.0f * ui_scale()) * 0.5f;
+    const float card_height = 160.0f * ui_scale();
 
     // Row 1: Left = Game Status, Right = Hub Server Status
-    ImGui::BeginChild("##GameStatusCard", ImVec2(panel_width, 160.0f), true);
+    ImGui::BeginChild("##GameStatusCard", ImVec2(panel_width, card_height), true);
     ImGui::TextColored(ImVec4(0.231f, 0.510f, 0.965f, 1.0f), "FINAL FANTASY XIV (x64 DX11)");
     ImGui::Separator();
     ImGui::Spacing();
@@ -49,7 +52,7 @@ void render_view_dashboard(AppState& app_state) {
 
     ImGui::SameLine();
 
-    ImGui::BeginChild("##HubServerCard", ImVec2(panel_width, 160.0f), true);
+    ImGui::BeginChild("##HubServerCard", ImVec2(panel_width, card_height), true);
     ImGui::TextColored(ImVec4(0.063f, 0.725f, 0.506f, 1.0f), "HUB IPC SERVER");
     ImGui::Separator();
     ImGui::Spacing();
@@ -69,10 +72,10 @@ void render_view_dashboard(AppState& app_state) {
     ImGui::Spacing();
 
     if (ImGui::BeginTable("##PluginsTable", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn("Plugin", ImGuiTableColumnFlags_WidthFixed, 180.0f);
-        ImGui::TableSetupColumn("Version", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+        ImGui::TableSetupColumn("Plugin", ImGuiTableColumnFlags_WidthFixed, 180.0f * ui_scale());
+        ImGui::TableSetupColumn("Version", ImGuiTableColumnFlags_WidthFixed, 80.0f * ui_scale());
         ImGui::TableSetupColumn("Description", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 140.0f);
+        ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 140.0f * ui_scale());
         ImGui::TableHeadersRow();
 
         for (const auto& plugin : app_state.registered_plugins()) {
@@ -93,7 +96,7 @@ void render_view_dashboard(AppState& app_state) {
             // Action: Navigate to plugin view
             ImGui::TableSetColumnIndex(3);
             std::string btn_label = "Open View ##" + std::to_string(static_cast<uint16_t>(plugin.id));
-            if (ImGui::Button(btn_label.c_str(), ImVec2(130.0f, 24.0f))) {
+            if (ImGui::Button(btn_label.c_str(), ImVec2(130.0f * ui_scale(), 24.0f * ui_scale()))) {
                 app_state.set_current_view(plugin.view);
             }
         }
@@ -108,15 +111,16 @@ void render_view_dashboard(AppState& app_state) {
     ImGui::TextColored(ImVec4(0.95f, 0.96f, 0.98f, 1.0f), "Hub Actions");
     ImGui::Spacing();
 
-    if (ImGui::Button("Open Logs Folder", ImVec2(160.0f, 32.0f))) {
+    const ImVec2 action_button_size(160.0f * ui_scale(), 32.0f * ui_scale());
+    if (ImGui::Button("Open Logs Folder", action_button_size)) {
         os::Logger::open_config_folder();
     }
     ImGui::SameLine();
-    if (ImGui::Button("View Log File", ImVec2(160.0f, 32.0f))) {
+    if (ImGui::Button("View Log File", action_button_size)) {
         os::Logger::open_log_file();
     }
     ImGui::SameLine();
-    if (ImGui::Button("Check FFXIV Process", ImVec2(160.0f, 32.0f))) {
+    if (ImGui::Button("Check FFXIV Process", action_button_size)) {
         app_state.update();
     }
 #else

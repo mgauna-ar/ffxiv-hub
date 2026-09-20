@@ -21,7 +21,7 @@ namespace hub::app::ui {
 namespace {
 
 void render_rtt_graph(const std::vector<ipc::MitigatorTelemetryPayload>& samples, float target_ping) {
-    ImVec2 canvas_size(ImGui::GetContentRegionAvail().x, 180.0f);
+    ImVec2 canvas_size(ImGui::GetContentRegionAvail().x, 180.0f * ui_scale());
     ImVec2 p_min = ImGui::GetCursorScreenPos();
     ImVec2 p_max = ImVec2(p_min.x + canvas_size.x, p_min.y + canvas_size.y);
 
@@ -109,17 +109,19 @@ void render_view_latency(AppState& app_state) {
     auto metrics = app_state.get_mitigator_metrics();
     auto telemetry = app_state.get_recent_telemetry(120);
 
+    ImGui::PushFont(bold_font());
     ImGui::TextColored(ImVec4(0.95f, 0.96f, 0.98f, 1.0f), "Latency Mitigator Telemetry");
+    ImGui::PopFont();
     ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "Real-time animation lock compensation & slide-cast preservation");
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
 
     // Metric Cards Row
-    const float card_w = (ImGui::GetContentRegionAvail().x - 30.0f) / 4.0f;
+    const float card_w = (ImGui::GetContentRegionAvail().x - 30.0f * ui_scale()) / 4.0f;
 
     // Card 1: Smoothed Ping
-    ImGui::BeginChild("##PingCard", ImVec2(card_w, 75.0f), true);
+    ImGui::BeginChild("##PingCard", ImVec2(card_w, 75.0f * ui_scale()), true);
     ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "SMOOTHED RTT");
     ImGui::TextColored(ImVec4(0.231f, 0.510f, 0.965f, 1.0f), "%.1f ms", metrics.latest_smoothed_rtt_ms);
     const double net_ping = app_state.network_ping_ms();
@@ -133,7 +135,7 @@ void render_view_latency(AppState& app_state) {
     ImGui::SameLine();
 
     // Card 2: Jitter
-    ImGui::BeginChild("##JitterCard", ImVec2(card_w, 75.0f), true);
+    ImGui::BeginChild("##JitterCard", ImVec2(card_w, 75.0f * ui_scale()), true);
     ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "JITTER");
     ImGui::TextColored(ImVec4(0.063f, 0.725f, 0.506f, 1.0f), "± %.1f ms", metrics.latest_jitter_ms);
     ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "Variance indicator");
@@ -142,7 +144,7 @@ void render_view_latency(AppState& app_state) {
     ImGui::SameLine();
 
     // Card 3: Delay Reduced
-    ImGui::BeginChild("##ReducedCard", ImVec2(card_w, 75.0f), true);
+    ImGui::BeginChild("##ReducedCard", ImVec2(card_w, 75.0f * ui_scale()), true);
     ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "LATENCY SAVED");
     ImGui::TextColored(ImVec4(0.95f, 0.78f, 0.25f, 1.0f), "%.2f s", metrics.total_delay_reduced_ms / 1000.0f);
     ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "%llu actions", static_cast<unsigned long long>(metrics.total_actions_mitigated));
@@ -151,7 +153,7 @@ void render_view_latency(AppState& app_state) {
     ImGui::SameLine();
 
     // Card 4: Anti-Cheat Filters
-    ImGui::BeginChild("##SafetyCard", ImVec2(card_w, 75.0f), true);
+    ImGui::BeginChild("##SafetyCard", ImVec2(card_w, 75.0f * ui_scale()), true);
     ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "SAFETY FILTERS");
     ImGui::TextColored(ImVec4(0.98f, 0.45f, 0.09f, 1.0f), "%llu Spikes", static_cast<unsigned long long>(metrics.spike_filtered_count));
     ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "%llu Floors (25ms)", static_cast<unsigned long long>(metrics.floor_clamp_count));
@@ -169,19 +171,19 @@ void render_view_latency(AppState& app_state) {
     ImGui::Spacing();
 
     // Bottom Half: Left = Action Feed, Right = Settings Panel
-    const float half_w = (ImGui::GetContentRegionAvail().x - 16.0f) * 0.5f;
+    const float half_w = (ImGui::GetContentRegionAvail().x - 16.0f * ui_scale()) * 0.5f;
 
     // Left: Live Action Feed Table
-    ImGui::BeginChild("##ActionFeedPanel", ImVec2(half_w, 240.0f), true);
+    ImGui::BeginChild("##ActionFeedPanel", ImVec2(half_w, 240.0f * ui_scale()), true);
     ImGui::TextColored(ImVec4(0.95f, 0.96f, 0.98f, 1.0f), "Recent Action Telemetry Feed");
     ImGui::Separator();
     ImGui::Spacing();
 
     if (ImGui::BeginTable("##RecentActionsTable", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY)) {
-        ImGui::TableSetupColumn("Action ID", ImGuiTableColumnFlags_WidthFixed, 70.0f);
-        ImGui::TableSetupColumn("Seq", ImGuiTableColumnFlags_WidthFixed, 45.0f);
-        ImGui::TableSetupColumn("RTT", ImGuiTableColumnFlags_WidthFixed, 60.0f);
-        ImGui::TableSetupColumn("Reduced", ImGuiTableColumnFlags_WidthFixed, 65.0f);
+        ImGui::TableSetupColumn("Action ID", ImGuiTableColumnFlags_WidthFixed, 70.0f * ui_scale());
+        ImGui::TableSetupColumn("Seq", ImGuiTableColumnFlags_WidthFixed, 45.0f * ui_scale());
+        ImGui::TableSetupColumn("RTT", ImGuiTableColumnFlags_WidthFixed, 60.0f * ui_scale());
+        ImGui::TableSetupColumn("Reduced", ImGuiTableColumnFlags_WidthFixed, 65.0f * ui_scale());
         ImGui::TableSetupColumn("Flags", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableHeadersRow();
 
@@ -219,7 +221,7 @@ void render_view_latency(AppState& app_state) {
     ImGui::SameLine();
 
     // Right: Configuration & HUD Controls Panel
-    ImGui::BeginChild("##MitigatorConfigPanel", ImVec2(half_w, 240.0f), true);
+    ImGui::BeginChild("##MitigatorConfigPanel", ImVec2(half_w, 240.0f * ui_scale()), true);
     ImGui::TextColored(ImVec4(0.95f, 0.96f, 0.98f, 1.0f), "Algorithm & In-Game HUD Controls");
     ImGui::Separator();
     ImGui::Spacing();

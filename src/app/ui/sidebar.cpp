@@ -30,7 +30,7 @@ bool render_nav_item(const char* icon_label, bool is_selected) {
     }
 
     const float width = ImGui::GetContentRegionAvail().x;
-    bool clicked = ImGui::Button(icon_label, ImVec2(width, 38.0f));
+    bool clicked = ImGui::Button(icon_label, ImVec2(width, 38.0f * ui_scale()));
 
     ImGui::PopStyleColor(4);
 
@@ -50,7 +50,7 @@ bool render_nav_item(const char* icon_label, bool is_selected) {
 
 void render_sidebar(AppState& app_state) {
 #ifdef HAVE_IMGUI
-    const float sidebar_width = 220.0f;
+    const float sidebar_width = 220.0f * ui_scale();
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 0.0f);
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.063f, 0.078f, 0.110f, 1.0f)); // Darker sidebar
 
@@ -59,7 +59,9 @@ void render_sidebar(AppState& app_state) {
     // Branding Header
     ImGui::Spacing();
     ImGui::Indent(12.0f);
+    ImGui::PushFont(bold_font());
     ImGui::TextColored(ImVec4(0.95f, 0.96f, 0.98f, 1.0f), "FFXIV HUB");
+    ImGui::PopFont();
     ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "Dawntrail 7.x • v1.0.0");
     ImGui::Unindent(12.0f);
     ImGui::Spacing();
@@ -86,7 +88,7 @@ void render_sidebar(AppState& app_state) {
     }
 
     // Bottom Connection Status Pill
-    const float footer_height = 50.0f;
+    const float footer_height = 50.0f * ui_scale();
     const float avail_y = ImGui::GetContentRegionAvail().y;
     if (avail_y > footer_height) {
         ImGui::Dummy(ImVec2(0.0f, avail_y - footer_height));

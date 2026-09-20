@@ -51,7 +51,9 @@ std::vector<std::string> read_recent_log_lines(size_t max_lines = 50) {
 
 void render_view_settings(AppState& app_state) {
 #ifdef HAVE_IMGUI
+    ImGui::PushFont(bold_font());
     ImGui::TextColored(ImVec4(0.95f, 0.96f, 0.98f, 1.0f), "FFXIV Hub Settings");
+    ImGui::PopFont();
     ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "Desktop manager options, system integration, and diagnostic logs");
     ImGui::Spacing();
     ImGui::Separator();
@@ -83,15 +85,15 @@ void render_view_settings(AppState& app_state) {
     ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "%s", "Config file: %APPDATA%/ffxiv-hub/config.json");
     ImGui::Spacing();
 
-    if (ImGui::Button("Save Configuration Now", ImVec2(180.0f, 28.0f))) {
+    if (ImGui::Button("Save Configuration Now", ImVec2(180.0f * ui_scale(), 28.0f * ui_scale()))) {
         app_state.config_manager().save();
     }
     ImGui::SameLine();
-    if (ImGui::Button("Reload From Disk", ImVec2(160.0f, 28.0f))) {
+    if (ImGui::Button("Reload From Disk", ImVec2(160.0f * ui_scale(), 28.0f * ui_scale()))) {
         app_state.config_manager().load();
     }
     ImGui::SameLine();
-    if (ImGui::Button("Open Config Directory", ImVec2(180.0f, 28.0f))) {
+    if (ImGui::Button("Open Config Directory", ImVec2(180.0f * ui_scale(), 28.0f * ui_scale()))) {
         os::Logger::open_config_folder();
     }
 
@@ -104,17 +106,17 @@ void render_view_settings(AppState& app_state) {
     ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "Showing the most recent entries from hub.log");
     ImGui::Spacing();
 
-    if (ImGui::Button("Open Log File in Editor", ImVec2(180.0f, 26.0f))) {
+    if (ImGui::Button("Open Log File in Editor", ImVec2(180.0f * ui_scale(), 26.0f * ui_scale()))) {
         os::Logger::open_log_file();
     }
     ImGui::SameLine();
-    if (ImGui::Button("Open Logs Folder", ImVec2(160.0f, 26.0f))) {
+    if (ImGui::Button("Open Logs Folder", ImVec2(160.0f * ui_scale(), 26.0f * ui_scale()))) {
         os::Logger::open_config_folder();
     }
 
     ImGui::Spacing();
 
-    ImGui::BeginChild("##LogViewerChild", ImVec2(0.0f, 220.0f), true, ImGuiWindowFlags_HorizontalScrollbar);
+    ImGui::BeginChild("##LogViewerChild", ImVec2(0.0f * ui_scale(), 220.0f * ui_scale()), true, ImGuiWindowFlags_HorizontalScrollbar);
     auto log_lines = read_recent_log_lines(60);
     if (log_lines.empty()) {
         ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "No log entries found yet in hub.log");

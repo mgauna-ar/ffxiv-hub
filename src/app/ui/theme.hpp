@@ -5,6 +5,9 @@
 #include <cstdint>
 #include <string>
 
+// Forward declaration to avoid pulling imgui.h into every translation unit that includes this header.
+struct ImFont;
+
 namespace hub::app::ui {
 
 namespace colors {
@@ -28,6 +31,19 @@ namespace colors {
 
 /// Applies sleek Slate Dark styling to Dear ImGui context
 void apply_slate_theme();
+
+/// Sets the DPI scale factor (1.0 == 96 DPI) used to size fonts and hardcoded layout constants.
+/// Must be called once at startup, before any UI is rendered.
+void set_ui_scale(float scale);
+
+/// Returns the DPI scale factor set via set_ui_scale(), or 1.0 if never set.
+[[nodiscard]] float ui_scale();
+
+/// Sets the bold ImFont* used for headers and branding text. Called once at startup.
+void set_bold_font(ImFont* font);
+
+/// Returns the bold ImFont* set via set_bold_font(), or nullptr if never set.
+[[nodiscard]] ImFont* bold_font();
 
 /// Returns IM_COL32 formatted color for FFXIV Job
 [[nodiscard]] uint32_t get_job_color_u32(meter::Job job, float alpha = 1.0f);

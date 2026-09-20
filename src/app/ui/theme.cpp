@@ -16,6 +16,27 @@
 
 namespace hub::app::ui {
 
+namespace {
+float g_ui_scale = 1.0f;
+ImFont* g_bold_font = nullptr;
+} // namespace
+
+void set_ui_scale(float scale) {
+    g_ui_scale = scale;
+}
+
+float ui_scale() {
+    return g_ui_scale;
+}
+
+void set_bold_font(ImFont* font) {
+    g_bold_font = font;
+}
+
+ImFont* bold_font() {
+    return g_bold_font;
+}
+
 void apply_slate_theme() {
 #ifdef HAVE_IMGUI
     ImGuiStyle& style = ImGui::GetStyle();

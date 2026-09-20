@@ -55,10 +55,10 @@ void render_view_combat(AppState& app_state) {
     }
 
     // Top Bar: Encounter Selector, Duration, DPS/HPS, State Pill, Reset
-    ImGui::BeginChild("##CombatTopBar", ImVec2(0.0f, 62.0f), true);
+    ImGui::BeginChild("##CombatTopBar", ImVec2(0.0f * ui_scale(), 62.0f * ui_scale()), true);
 
     // Pull Selector Combobox
-    ImGui::SetNextItemWidth(160.0f);
+    ImGui::SetNextItemWidth(160.0f * ui_scale());
     std::string current_pull_name = is_live ? "Live Encounter" : ("Pull #" + std::to_string(s_selected_pull_idx + 1));
     if (ImGui::BeginCombo("##PullSelector", current_pull_name.c_str())) {
         if (ImGui::Selectable("Live Encounter", is_live)) {
@@ -120,8 +120,8 @@ void render_view_combat(AppState& app_state) {
     ImGui::TextColored(state_col, "[%s]", state_str);
 
     // Reset button on right
-    ImGui::SameLine(ImGui::GetWindowWidth() - 150.0f);
-    if (ImGui::Button("Reset Encounter", ImVec2(135.0f, 26.0f))) {
+    ImGui::SameLine(ImGui::GetWindowWidth() - 150.0f * ui_scale());
+    if (ImGui::Button("Reset Encounter", ImVec2(135.0f * ui_scale(), 26.0f * ui_scale()))) {
         app_state.reset_encounter();
         s_selected_pull_idx = -1;
         s_selected_drilldown_entity = 0;
@@ -131,13 +131,13 @@ void render_view_combat(AppState& app_state) {
     ImGui::Spacing();
 
     // Subtabs: Damage, Healing, Pull History, Overlay Settings
-    if (ImGui::Button("Damage", ImVec2(100.0f, 30.0f))) s_active_subtab = CombatSubTab::Damage;
+    if (ImGui::Button("Damage", ImVec2(100.0f * ui_scale(), 30.0f * ui_scale()))) s_active_subtab = CombatSubTab::Damage;
     ImGui::SameLine();
-    if (ImGui::Button("Healing", ImVec2(100.0f, 30.0f))) s_active_subtab = CombatSubTab::Healing;
+    if (ImGui::Button("Healing", ImVec2(100.0f * ui_scale(), 30.0f * ui_scale()))) s_active_subtab = CombatSubTab::Healing;
     ImGui::SameLine();
-    if (ImGui::Button("History", ImVec2(100.0f, 30.0f))) s_active_subtab = CombatSubTab::History;
+    if (ImGui::Button("History", ImVec2(100.0f * ui_scale(), 30.0f * ui_scale()))) s_active_subtab = CombatSubTab::History;
     ImGui::SameLine();
-    if (ImGui::Button("Overlay Settings", ImVec2(140.0f, 30.0f))) s_active_subtab = CombatSubTab::OverlaySettings;
+    if (ImGui::Button("Overlay Settings", ImVec2(140.0f * ui_scale(), 30.0f * ui_scale()))) s_active_subtab = CombatSubTab::OverlaySettings;
 
     ImGui::Spacing();
     ImGui::Separator();
@@ -153,15 +153,15 @@ void render_view_combat(AppState& app_state) {
         double top_dps = combatants.empty() ? 1.0 : std::max(combatants.front().dps, 1.0);
 
         if (ImGui::BeginTable("##DamageRankingTable", 9, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
-            ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 30.0f);
-            ImGui::TableSetupColumn("Job", ImGuiTableColumnFlags_WidthFixed, 50.0f);
+            ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 30.0f * ui_scale());
+            ImGui::TableSetupColumn("Job", ImGuiTableColumnFlags_WidthFixed, 50.0f * ui_scale());
             ImGui::TableSetupColumn("Combatant", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("DPS", ImGuiTableColumnFlags_WidthFixed, 90.0f);
-            ImGui::TableSetupColumn("Damage", ImGuiTableColumnFlags_WidthFixed, 90.0f);
-            ImGui::TableSetupColumn("Share", ImGuiTableColumnFlags_WidthFixed, 65.0f);
-            ImGui::TableSetupColumn("Crit %", ImGuiTableColumnFlags_WidthFixed, 65.0f);
-            ImGui::TableSetupColumn("DH %", ImGuiTableColumnFlags_WidthFixed, 65.0f);
-            ImGui::TableSetupColumn("CDH %", ImGuiTableColumnFlags_WidthFixed, 65.0f);
+            ImGui::TableSetupColumn("DPS", ImGuiTableColumnFlags_WidthFixed, 90.0f * ui_scale());
+            ImGui::TableSetupColumn("Damage", ImGuiTableColumnFlags_WidthFixed, 90.0f * ui_scale());
+            ImGui::TableSetupColumn("Share", ImGuiTableColumnFlags_WidthFixed, 65.0f * ui_scale());
+            ImGui::TableSetupColumn("Crit %", ImGuiTableColumnFlags_WidthFixed, 65.0f * ui_scale());
+            ImGui::TableSetupColumn("DH %", ImGuiTableColumnFlags_WidthFixed, 65.0f * ui_scale());
+            ImGui::TableSetupColumn("CDH %", ImGuiTableColumnFlags_WidthFixed, 65.0f * ui_scale());
             ImGui::TableHeadersRow();
 
             int rank = 1;
@@ -218,13 +218,13 @@ void render_view_combat(AppState& app_state) {
         double top_hps = combatants.empty() ? 1.0 : std::max(combatants.front().hps, 1.0);
 
         if (ImGui::BeginTable("##HealingRankingTable", 7, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
-            ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 30.0f);
-            ImGui::TableSetupColumn("Job", ImGuiTableColumnFlags_WidthFixed, 50.0f);
+            ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 30.0f * ui_scale());
+            ImGui::TableSetupColumn("Job", ImGuiTableColumnFlags_WidthFixed, 50.0f * ui_scale());
             ImGui::TableSetupColumn("Combatant", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("HPS", ImGuiTableColumnFlags_WidthFixed, 90.0f);
-            ImGui::TableSetupColumn("Total Heal", ImGuiTableColumnFlags_WidthFixed, 100.0f);
-            ImGui::TableSetupColumn("Effective Heal", ImGuiTableColumnFlags_WidthFixed, 110.0f);
-            ImGui::TableSetupColumn("Overheal %", ImGuiTableColumnFlags_WidthFixed, 90.0f);
+            ImGui::TableSetupColumn("HPS", ImGuiTableColumnFlags_WidthFixed, 90.0f * ui_scale());
+            ImGui::TableSetupColumn("Total Heal", ImGuiTableColumnFlags_WidthFixed, 100.0f * ui_scale());
+            ImGui::TableSetupColumn("Effective Heal", ImGuiTableColumnFlags_WidthFixed, 110.0f * ui_scale());
+            ImGui::TableSetupColumn("Overheal %", ImGuiTableColumnFlags_WidthFixed, 90.0f * ui_scale());
             ImGui::TableHeadersRow();
 
             int rank = 1;
@@ -268,8 +268,8 @@ void render_view_combat(AppState& app_state) {
         }
     } else if (s_active_subtab == CombatSubTab::History) {
         ImGui::TextColored(ImVec4(0.95f, 0.96f, 0.98f, 1.0f), "Pull History Archive (%zu recorded)", pull_history.size());
-        ImGui::SameLine(ImGui::GetWindowWidth() - 160.0f);
-        if (ImGui::Button("Clear History", ImVec2(140.0f, 26.0f))) {
+        ImGui::SameLine(ImGui::GetWindowWidth() - 160.0f * ui_scale());
+        if (ImGui::Button("Clear History", ImVec2(140.0f * ui_scale(), 26.0f * ui_scale()))) {
             app_state.clear_pull_history();
             s_selected_pull_idx = -1;
         }
@@ -277,11 +277,11 @@ void render_view_combat(AppState& app_state) {
         ImGui::Spacing();
 
         if (ImGui::BeginTable("##PullHistoryTable", 6, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
-            ImGui::TableSetupColumn("Pull", ImGuiTableColumnFlags_WidthFixed, 60.0f);
-            ImGui::TableSetupColumn("Duration", ImGuiTableColumnFlags_WidthFixed, 90.0f);
-            ImGui::TableSetupColumn("Raid DPS", ImGuiTableColumnFlags_WidthFixed, 100.0f);
-            ImGui::TableSetupColumn("Total Damage", ImGuiTableColumnFlags_WidthFixed, 110.0f);
-            ImGui::TableSetupColumn("Outcome", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+            ImGui::TableSetupColumn("Pull", ImGuiTableColumnFlags_WidthFixed, 60.0f * ui_scale());
+            ImGui::TableSetupColumn("Duration", ImGuiTableColumnFlags_WidthFixed, 90.0f * ui_scale());
+            ImGui::TableSetupColumn("Raid DPS", ImGuiTableColumnFlags_WidthFixed, 100.0f * ui_scale());
+            ImGui::TableSetupColumn("Total Damage", ImGuiTableColumnFlags_WidthFixed, 110.0f * ui_scale());
+            ImGui::TableSetupColumn("Outcome", ImGuiTableColumnFlags_WidthFixed, 80.0f * ui_scale());
             ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableHeadersRow();
 
@@ -312,7 +312,7 @@ void render_view_combat(AppState& app_state) {
 
                 ImGui::TableSetColumnIndex(5);
                 std::string inspect_btn = "Inspect Pull ##" + std::to_string(i);
-                if (ImGui::Button(inspect_btn.c_str(), ImVec2(100.0f, 22.0f))) {
+                if (ImGui::Button(inspect_btn.c_str(), ImVec2(100.0f * ui_scale(), 22.0f * ui_scale()))) {
                     s_selected_pull_idx = static_cast<int>(i);
                     s_active_subtab = CombatSubTab::Damage;
                 }
@@ -380,8 +380,8 @@ void render_view_combat(AppState& app_state) {
 
             ImGui::TextColored(ImVec4(0.231f, 0.510f, 0.965f, 1.0f), "Ability Breakdown: %s (%s)",
                 selected_c->name.c_str(), meter::to_string(selected_c->job).data());
-            ImGui::SameLine(ImGui::GetWindowWidth() - 140.0f);
-            if (ImGui::Button("Close Breakdown", ImVec2(120.0f, 24.0f))) {
+            ImGui::SameLine(ImGui::GetWindowWidth() - 140.0f * ui_scale());
+            if (ImGui::Button("Close Breakdown", ImVec2(120.0f * ui_scale(), 24.0f * ui_scale()))) {
                 s_selected_drilldown_entity = 0;
             }
 
@@ -397,12 +397,12 @@ void render_view_combat(AppState& app_state) {
 
             if (ImGui::BeginTable("##DrilldownTable", 7, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
                 ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("Casts", ImGuiTableColumnFlags_WidthFixed, 60.0f);
-                ImGui::TableSetupColumn("Total Dmg", ImGuiTableColumnFlags_WidthFixed, 90.0f);
-                ImGui::TableSetupColumn("Min", ImGuiTableColumnFlags_WidthFixed, 75.0f);
-                ImGui::TableSetupColumn("Avg", ImGuiTableColumnFlags_WidthFixed, 75.0f);
-                ImGui::TableSetupColumn("Max", ImGuiTableColumnFlags_WidthFixed, 75.0f);
-                ImGui::TableSetupColumn("Crit %", ImGuiTableColumnFlags_WidthFixed, 65.0f);
+                ImGui::TableSetupColumn("Casts", ImGuiTableColumnFlags_WidthFixed, 60.0f * ui_scale());
+                ImGui::TableSetupColumn("Total Dmg", ImGuiTableColumnFlags_WidthFixed, 90.0f * ui_scale());
+                ImGui::TableSetupColumn("Min", ImGuiTableColumnFlags_WidthFixed, 75.0f * ui_scale());
+                ImGui::TableSetupColumn("Avg", ImGuiTableColumnFlags_WidthFixed, 75.0f * ui_scale());
+                ImGui::TableSetupColumn("Max", ImGuiTableColumnFlags_WidthFixed, 75.0f * ui_scale());
+                ImGui::TableSetupColumn("Crit %", ImGuiTableColumnFlags_WidthFixed, 65.0f * ui_scale());
                 ImGui::TableHeadersRow();
 
                 for (const auto& act : actions) {

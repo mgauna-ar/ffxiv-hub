@@ -10,6 +10,7 @@
 #include "common/os/single_instance.hpp"
 #include "common/os/tray_manager.hpp"
 #include <iostream>
+#include <string>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -18,6 +19,7 @@
 #include <windows.h>
 #include <d3d11.h>
 #include <dxgi.h>
+#include <dwmapi.h>
 
 #if __has_include("third_party/imgui/imgui.h")
 #include "third_party/imgui/imgui.h"
@@ -103,6 +105,28 @@ void CleanupDeviceD3D() {
     if (g_pd3dDevice) { g_pd3dDevice->Release(); g_pd3dDevice = nullptr; }
 }
 
+#ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
+#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
+#endif
+
+// Undocumented uxtheme.dll ordinal used by Windows Terminal, VS Code, and Chromium to opt a
+// process into dark-themed native controls (menus, scrollbars) on Windows 10 1809+/11.
+// Resolved dynamically and never treated as a hard dependency: if the export is missing or the
+// call fails, native menus simply keep the default light styling.
+void EnableDarkModeForNativeMenus() {
+    enum class PreferredAppMode { Default, AllowDark, ForceDark, ForceLight, Max };
+    using SetPreferredAppModeFn = PreferredAppMode(WINAPI*)(PreferredAppMode);
+
+    HMODULE ux_theme = LoadLibraryExW(L"uxtheme.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (!ux_theme) return;
+
+    auto set_preferred_app_mode = reinterpret_cast<SetPreferredAppModeFn>(
+        GetProcAddress(ux_theme, MAKEINTRESOURCEA(135)));
+    if (set_preferred_app_mode) {
+        set_preferred_app_mode(PreferredAppMode::AllowDark);
+    }
+}
+
 LRESULT WINAPI MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 #ifdef HAVE_IMGUI
     if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam)) {
@@ -147,6 +171,10 @@ LRESULT WINAPI MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     hub::os::Logger::init();
     hub::os::Logger::info("Starting FFXIV Hub Desktop Manager v1.0.0...");
+
+    // Best-effort: opt this process into dark-themed native menus/controls before any window
+    // or menu is created.
+    EnableDarkModeForNativeMenus();
 
     // Enable SeDebugPrivilege and SeSecurityPrivilege for game process attachment
     if (hub::os::ProcessFinder::enable_debug_privilege()) {
@@ -215,6 +243,16 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
         return 1;
     }
 
+    // Read the window's actual monitor DPI (the manifest opts into Per-Monitor V2 awareness)
+    // so the font and hardcoded layout constants can be sized to match, instead of rendering
+    // at a fixed 96-DPI pixel size on today's scaled displays.
+    const float dpi_scale = static_cast<float>(GetDpiForWindow(hwnd)) / 96.0f;
+
+    // Best-effort: make the native titlebar match the app's dark theme instead of the default
+    // light chrome. No-ops silently on pre-1809 Windows.
+    BOOL use_dark_titlebar = TRUE;
+    DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &use_dark_titlebar, sizeof(use_dark_titlebar));
+
     SendMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(hIcon));
     SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(hIconSm));
 
@@ -236,7 +274,23 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
+    // Load the system's Segoe UI font at a real, DPI-scaled pixel size in place of ImGui's
+    // built-in bitmap font (which renders at a fixed, tiny size regardless of display scale).
+    char windows_dir[MAX_PATH]{};
+    GetWindowsDirectoryA(windows_dir, MAX_PATH);
+    const std::string regular_font_path = std::string(windows_dir) + "\\Fonts\\segoeui.ttf";
+    const std::string bold_font_path = std::string(windows_dir) + "\\Fonts\\segoeuib.ttf";
+    const float base_font_size = 16.0f * dpi_scale;
+
+    if (!io.Fonts->AddFontFromFileTTF(regular_font_path.c_str(), base_font_size)) {
+        hub::os::Logger::warn("Segoe UI not found; falling back to ImGui's built-in font.");
+        io.Fonts->AddFontDefault();
+    }
+    hub::app::ui::set_bold_font(io.Fonts->AddFontFromFileTTF(bold_font_path.c_str(), base_font_size));
+
+    hub::app::ui::set_ui_scale(dpi_scale);
     hub::app::ui::apply_slate_theme();
+    ImGui::GetStyle().ScaleAllSizes(dpi_scale);
 
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
