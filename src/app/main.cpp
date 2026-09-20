@@ -273,6 +273,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.IniFilename = nullptr; // Window layout managed independently via JSON config (ConfigManager), not imgui.ini
 
     // Load the system's Segoe UI font at a real, DPI-scaled pixel size in place of ImGui's
     // built-in bitmap font (which renders at a fixed, tiny size regardless of display scale).

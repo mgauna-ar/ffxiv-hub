@@ -7,6 +7,8 @@
 
 namespace hub::meter {
 
+class CombatOverlay;
+
 class CombatPlugin : public IPlugin, public IConfigurable, public IHookConsumer {
 public:
     CombatPlugin();
@@ -44,11 +46,16 @@ public:
     /// Sets the outbound packet sink used to stream combat data to the desktop app.
     void set_ring_buffer(ipc::PacketRingBuffer* ring_buffer) noexcept { m_ring_buffer = ring_buffer; }
 
+    /// Non-owning pointer to the in-game overlay this plugin drives via config load/commands.
+    void set_overlay(CombatOverlay* overlay) noexcept { m_overlay = overlay; }
+    [[nodiscard]] CombatOverlay* overlay() const noexcept { return m_overlay; }
+
 private:
     EncounterEngine m_engine;
     CombatConfig m_config;
     bool m_initialized{false};
     ipc::PacketRingBuffer* m_ring_buffer{nullptr};
+    CombatOverlay* m_overlay{nullptr};
     uint32_t m_sequence{0};
 };
 

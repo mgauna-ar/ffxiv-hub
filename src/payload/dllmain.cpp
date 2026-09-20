@@ -72,6 +72,7 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
     auto combat_overlay = std::make_shared<hub::meter::CombatOverlay>(&combat_plugin->engine());
 
     latency_plugin->set_overlay(latency_overlay.get());
+    combat_plugin->set_overlay(combat_overlay.get());
 
     hub::payload::OverlayHost::instance().register_overlay(latency_overlay);
     hub::payload::OverlayHost::instance().register_overlay(combat_overlay);
@@ -131,6 +132,7 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
     // 8. Background orchestration loop
     auto last_party_sync = std::chrono::steady_clock::now();
     auto last_reconnect_attempt = std::chrono::steady_clock::now();
+    auto last_config_save = std::chrono::steady_clock::now();
     bool prev_connected = pipe_client->is_connected();
     bool latency_overlay_prev_visible = latency_overlay->is_visible();
     latency_plugin->set_connected(prev_connected);
@@ -180,10 +182,30 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
             latency_plugin->mitigator().get_rtt_tracker().get_smoothed_rtt_ms(),
             latency_plugin->mitigator().get_rtt_tracker().sample_count() > 0
         );
+
+        // Persist live overlay/plugin state (position, lock, opacity, ...) to
+        // config.json every few seconds. This is the only place that writes the
+        // config back out, so in-game changes (dragging an overlay, the padlock
+        // icon, desktop app commands) survive a restart. Throttled since it hits
+        // disk and the game process can be killed outright on exit rather than
+        // reaching the graceful teardown path below.
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_config_save).count() > 5000) {
+            auto& config_mgr = hub::config::ConfigManager::instance();
+            combat_plugin->serialize_config(config_mgr.root()["combat_meter"]);
+            latency_plugin->serialize_config(config_mgr.root()["latency_mitigator"]);
+            config_mgr.save();
+            last_config_save = now;
+        }
     }
 
     // Graceful teardown when explicit unload is requested
     hub::os::Logger::info("Payload shutting down.");
+    {
+        auto& config_mgr = hub::config::ConfigManager::instance();
+        combat_plugin->serialize_config(config_mgr.root()["combat_meter"]);
+        latency_plugin->serialize_config(config_mgr.root()["latency_mitigator"]);
+        config_mgr.save();
+    }
     hook_mgr.uninstall();
     hub::payload::Dx11Hook::instance().uninstall();
     pipe_client->disconnect();
