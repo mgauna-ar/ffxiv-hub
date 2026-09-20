@@ -60,7 +60,8 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
     }
     hub::os::Logger::info("Game window found. Initializing plugins and hooks...");
 
-    // 2. Initialize plugins and overlays
+    // 2. Initialize plugins and overlays. Pure C++ construction, no game memory
+    //    touched yet.
     auto latency_plugin = std::make_shared<hub::mitigator::LatencyPlugin>();
     latency_plugin->initialize();
 
@@ -75,9 +76,20 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
     hub::payload::OverlayHost::instance().register_overlay(latency_overlay);
     hub::payload::OverlayHost::instance().register_overlay(combat_overlay);
 
-    // 3. Initialize the outbound IPC client. Its own internal ring buffer is the
-    //    single sink every producer (hook consumers, ObjectReader) pushes onto -
-    //    its writer thread drains it straight onto the named pipe.
+    // 3. Bootstrap plugin config from disk now that overlays are wired, so
+    //    persisted desktop settings apply in-game without waiting for a live command.
+    hub::config::ConfigManager::instance().load();
+    combat_plugin->deserialize_config(hub::config::ConfigManager::instance().root()["combat_meter"]);
+    latency_plugin->deserialize_config(hub::config::ConfigManager::instance().root()["latency_mitigator"]);
+
+    // 4. Initialize the outbound IPC client and connect to the desktop app's named
+    //    pipe BEFORE touching any game memory (sigscan/MinHook detours below).
+    //    Both original standalone apps this was merged from connected first, then
+    //    installed hooks - matching that order here matters: if hook/sigscan
+    //    installation hangs or crashes on a game patch this payload hasn't been
+    //    updated for, the pipe is already up and the desktop app shows "Connected"
+    //    instead of hanging at "Awaiting IPC handshake" with zero information
+    //    about why.
     auto pipe_client = std::make_unique<hub::ipc::PipeClient>();
     combat_plugin->set_ring_buffer(&pipe_client->ring_buffer());
     latency_plugin->set_ring_buffer(&pipe_client->ring_buffer());
@@ -89,40 +101,34 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
         hub::payload::dispatch_command(dispatch_targets, cmd);
     });
 
-    // 4. Initialize HookManager and attach consumers
+    hub::os::Logger::info("Connecting to desktop app pipe (" + std::string(hub::ipc::DEFAULT_PIPE_NAME) + ")...");
+    const bool connected_initially = pipe_client->connect(10000);
+    hub::os::Logger::info(std::string("Initial pipe connect -> ") + (connected_initially ? "connected" : "not connected yet, will keep retrying"));
+
+    // 5. Initialize HookManager and attach consumers
     auto& hook_mgr = hub::payload::HookManager::instance();
     hook_mgr.set_latency_consumer(latency_plugin.get());
     hook_mgr.set_meter_consumer(combat_plugin.get());
     hook_mgr.set_ring_buffer(&pipe_client->ring_buffer());
 
+    hub::os::Logger::info("Installing game hooks...");
     const bool hooks_installed = hook_mgr.install();
     hub::os::Logger::info(
         "HookManager::install() -> " + std::string(hooks_installed ? "ok" : "FAILED") +
         " (" + std::to_string(hook_mgr.active_hook_count()) + "/3 hooks active)"
     );
 
-    // 5. Initialize ObjectReader
+    // 6. Initialize ObjectReader
     auto object_reader = std::make_unique<hub::payload::ObjectReader>(&pipe_client->ring_buffer());
     const bool object_reader_ok = object_reader->initialize();
     hub::os::Logger::info(std::string("ObjectReader::initialize() -> ") + (object_reader_ok ? "ok" : "FAILED"));
 
-    // 6. Install DirectX 11 Hook (Present & ResizeBuffers)
+    // 7. Install DirectX 11 Hook (Present & ResizeBuffers)
     const bool dx11_ok = hub::payload::Dx11Hook::instance().install();
     hub::os::Logger::info(std::string("Dx11Hook::install() -> ") + (dx11_ok ? "ok" : "FAILED"));
+    hub::os::Logger::info("Payload initialization complete, entering orchestration loop.");
 
-    // 7. Bootstrap plugin config from disk now that ring buffers/overlays are wired,
-    //    so persisted desktop settings apply in-game without waiting for a live command.
-    hub::config::ConfigManager::instance().load();
-    combat_plugin->deserialize_config(hub::config::ConfigManager::instance().root()["combat_meter"]);
-    latency_plugin->deserialize_config(hub::config::ConfigManager::instance().root()["latency_mitigator"]);
-
-    // 8. Connect to the desktop app's named pipe. If the app hasn't started its
-    //    server yet, keep retrying from the orchestration loop below.
-    hub::os::Logger::info("Connecting to desktop app pipe (" + std::string(hub::ipc::DEFAULT_PIPE_NAME) + ")...");
-    const bool connected_initially = pipe_client->connect(5000);
-    hub::os::Logger::info(std::string("Initial pipe connect -> ") + (connected_initially ? "connected" : "not connected yet, will keep retrying"));
-
-    // 9. Background orchestration loop
+    // 8. Background orchestration loop
     auto last_party_sync = std::chrono::steady_clock::now();
     auto last_reconnect_attempt = std::chrono::steady_clock::now();
     bool prev_connected = pipe_client->is_connected();
