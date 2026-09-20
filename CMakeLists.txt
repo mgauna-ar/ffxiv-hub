@@ -193,6 +193,10 @@ if(WIN32 OR CYGWIN OR MSYS OR MINGW)
         WIN32_EXECUTABLE TRUE
     )
 
+    if(MSVC)
+        target_link_options(ffxiv-hub PRIVATE "/MANIFEST:NO")
+    endif()
+
     if(BUILD_TESTS)
         target_link_libraries(hub_test_runner PRIVATE minhook imgui d3d11 dxgi comctl32 dwmapi uxtheme)
     endif()
