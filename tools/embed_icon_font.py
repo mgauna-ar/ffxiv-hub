@@ -80,31 +80,6 @@ ICONS = [
     ("DOWNLOAD",    "download"),
     ("SEARCH",      "search"),
     ("SPARKLE",     "sparkles"),
-
-    # Job glyphs for the combat meter's combatant rows (see src/common/ui/job_style.cpp).
-    # Several jobs reuse a macro above: SHIELD (PLD), SWORDS (SAM), HEART (WHM),
-    # SKULL (RPR), CROSSHAIR (MCH), BOLT (Limit Break).
-    ("AXE",         "axe"),
-    ("SWORD",       "sword"),
-    ("ECLIPSE",     "eclipse"),
-    ("BOOK",        "book-open"),
-    ("STAR",        "star"),
-    ("CROSS",       "cross"),
-    ("HAND",        "hand"),
-    ("ARROW_UP",    "arrow-big-up"),
-    ("MASK",        "venetian-mask"),
-    ("WORM",        "worm"),
-    ("PAW",         "paw-print"),
-    ("MUSIC",       "music-4"),
-    ("FEATHER",     "feather"),
-    ("FLAME",       "flame"),
-    ("GEM",         "gem"),
-    ("WAND",        "wand-sparkles"),
-    ("DROPLET",     "droplet"),
-    ("BRUSH",       "paintbrush"),
-    ("CIRCLE_DOT",  "circle-dot"),
-    ("HAMMER",      "hammer"),
-    ("PICKAXE",     "pickaxe"),
 ]
 
 css = io.open(CSS, encoding="utf-8").read()

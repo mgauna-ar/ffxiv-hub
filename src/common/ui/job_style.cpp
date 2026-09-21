@@ -1,5 +1,4 @@
 #include "common/ui/job_style.hpp"
-#include "common/ui/icons.hpp"
 
 namespace hub::common::ui {
 
@@ -51,57 +50,57 @@ constexpr uint32_t LB_GOLD     = rgb(0xF5, 0xB9, 0x42);
 
 CombatantStyle combatant_style(game::Job job, bool is_limit_break) noexcept {
     if (is_limit_break) {
-        return CombatantStyle{ICON_BOLT, LB_GOLD, "LB"};
+        return CombatantStyle{LB_GOLD, "LB"};
     }
 
     const std::string_view label = game::job_abbreviation(job);
 
     switch (job) {
-        // Tanks. A base class shares its job's glyph and color.
-        case game::Job::GLA: case game::Job::PLD: return {ICON_SHIELD, PLD_BLUE, label};
-        case game::Job::MRD: case game::Job::WAR: return {ICON_AXE, WAR_RED, label};
-        case game::Job::DRK:                      return {ICON_ECLIPSE, DRK_MAGENTA, label};
-        case game::Job::GNB:                      return {ICON_SWORD, GNB_OLIVE, label};
+        // Tanks. A base class shares its job's color.
+        case game::Job::GLA: case game::Job::PLD: return {PLD_BLUE, label};
+        case game::Job::MRD: case game::Job::WAR: return {WAR_RED, label};
+        case game::Job::DRK:                      return {DRK_MAGENTA, label};
+        case game::Job::GNB:                      return {GNB_OLIVE, label};
 
         // Healers.
-        case game::Job::CNJ: case game::Job::WHM: return {ICON_HEART, WHM_CREAM, label};
-        case game::Job::SCH:                      return {ICON_BOOK, SCH_VIOLET, label};
-        case game::Job::AST:                      return {ICON_STAR, AST_YELLOW, label};
-        case game::Job::SGE:                      return {ICON_CROSS, SGE_CYAN, label};
+        case game::Job::CNJ: case game::Job::WHM: return {WHM_CREAM, label};
+        case game::Job::SCH:                      return {SCH_VIOLET, label};
+        case game::Job::AST:                      return {AST_YELLOW, label};
+        case game::Job::SGE:                      return {SGE_CYAN, label};
 
         // Melee.
-        case game::Job::PGL: case game::Job::MNK: return {ICON_HAND, MNK_AMBER, label};
-        case game::Job::LNC: case game::Job::DRG: return {ICON_ARROW_UP, DRG_BLUE, label};
-        case game::Job::ROG: case game::Job::NIN: return {ICON_MASK, NIN_ROSE, label};
-        case game::Job::SAM:                      return {ICON_SWORDS, SAM_SAND, label};
-        case game::Job::RPR:                      return {ICON_SKULL, RPR_MAUVE, label};
-        case game::Job::VPR:                      return {ICON_WORM, VPR_GREEN, label};
-        case game::Job::BST:                      return {ICON_PAW, BST_TAN, label};
+        case game::Job::PGL: case game::Job::MNK: return {MNK_AMBER, label};
+        case game::Job::LNC: case game::Job::DRG: return {DRG_BLUE, label};
+        case game::Job::ROG: case game::Job::NIN: return {NIN_ROSE, label};
+        case game::Job::SAM:                      return {SAM_SAND, label};
+        case game::Job::RPR:                      return {RPR_MAUVE, label};
+        case game::Job::VPR:                      return {VPR_GREEN, label};
+        case game::Job::BST:                      return {BST_TAN, label};
 
         // Physical ranged.
-        case game::Job::ARC: case game::Job::BRD: return {ICON_MUSIC, BRD_STEEL, label};
-        case game::Job::MCH:                      return {ICON_CROSSHAIR, MCH_TEAL, label};
-        case game::Job::DNC:                      return {ICON_FEATHER, DNC_PINK, label};
+        case game::Job::ARC: case game::Job::BRD: return {BRD_STEEL, label};
+        case game::Job::MCH:                      return {MCH_TEAL, label};
+        case game::Job::DNC:                      return {DNC_PINK, label};
 
         // Casters.
-        case game::Job::THM: case game::Job::BLM: return {ICON_FLAME, BLM_PURPLE, label};
-        case game::Job::ACN: case game::Job::SMN: return {ICON_GEM, SMN_JADE, label};
-        case game::Job::RDM:                      return {ICON_WAND, RDM_CORAL, label};
-        case game::Job::BLU:                      return {ICON_DROPLET, BLU_AZURE, label};
-        case game::Job::PCT:                      return {ICON_BRUSH, PCT_BLUSH, label};
+        case game::Job::THM: case game::Job::BLM: return {BLM_PURPLE, label};
+        case game::Job::ACN: case game::Job::SMN: return {SMN_JADE, label};
+        case game::Job::RDM:                      return {RDM_CORAL, label};
+        case game::Job::BLU:                      return {BLU_AZURE, label};
+        case game::Job::PCT:                      return {PCT_BLUSH, label};
 
         // Crafters and gatherers only surface here through a stray party sync.
         case game::Job::CRP: case game::Job::BSM: case game::Job::ARM:
         case game::Job::GSM: case game::Job::LTW: case game::Job::WVR:
         case game::Job::ALC: case game::Job::CUL:
-            return {ICON_HAMMER, CRAFT_BROWN, label};
+            return {CRAFT_BROWN, label};
         case game::Job::MIN: case game::Job::BTN: case game::Job::FSH:
-            return {ICON_PICKAXE, GATHER_LEAF, label};
+            return {GATHER_LEAF, label};
 
         // Monsters and actors whose job never arrived: "--" rather than "???".
         case game::Job::None:
         default:
-            return {ICON_CIRCLE_DOT, NEUTRAL, "--"};
+            return {NEUTRAL, "--"};
     }
 }
 

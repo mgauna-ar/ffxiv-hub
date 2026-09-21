@@ -265,19 +265,19 @@ TEST_CASE(UITheme, FormattersAndColorMapping) {
 TEST_CASE(UITheme, CombatantStyleCoversEveryJob) {
     using common::ui::combatant_style;
 
-    // Every job the game can report gets a glyph and a label that is not "???".
+    // Every job the game can report fills the Job column with its abbreviation,
+    // never the generated "???" fallback.
     for (uint32_t id = 1; id <= static_cast<uint32_t>(meter::Job::BST); ++id) {
         const auto style = combatant_style(static_cast<meter::Job>(id));
-        TEST_ASSERT(style.icon != nullptr && style.icon[0] != '\0');
         TEST_ASSERT(style.label != "???");
         TEST_ASSERT_EQ(style.label, hub::game::job_abbreviation(static_cast<meter::Job>(id)));
-        TEST_ASSERT_EQ(style.rgb >> 24, 0u); // alpha is the caller's business
+        TEST_ASSERT_EQ(style.label.size(), 3u); // the column is sized for three
+        TEST_ASSERT_EQ(style.rgb >> 24, 0u);    // alpha is the caller's business
     }
 
     // An actor whose job never arrived reads as a dash, never "???".
     const auto unknown = combatant_style(meter::Job::None);
     TEST_ASSERT_EQ(unknown.label, "--");
-    TEST_ASSERT(unknown.icon != nullptr);
 
     // Limit Break overrides whatever job it is asked about.
     const auto lb = combatant_style(meter::Job::None, /*is_limit_break=*/true);
@@ -285,9 +285,10 @@ TEST_CASE(UITheme, CombatantStyleCoversEveryJob) {
     TEST_ASSERT(lb.rgb != unknown.rgb);
     TEST_ASSERT_EQ(lb.rgb, combatant_style(meter::Job::WHM, /*is_limit_break=*/true).rgb);
 
-    // Distinct glyphs where it matters: the four casters must not collide.
-    TEST_ASSERT(combatant_style(meter::Job::BLM).icon != combatant_style(meter::Job::SMN).icon);
-    TEST_ASSERT(combatant_style(meter::Job::RDM).icon != combatant_style(meter::Job::PCT).icon);
+    // Jobs sharing a role still have to be told apart by color alone.
+    TEST_ASSERT(combatant_style(meter::Job::BLM).rgb != combatant_style(meter::Job::SMN).rgb);
+    TEST_ASSERT(combatant_style(meter::Job::RDM).rgb != combatant_style(meter::Job::PCT).rgb);
+    TEST_ASSERT(combatant_style(meter::Job::WHM).rgb != combatant_style(meter::Job::AST).rgb);
 }
 
 TEST_CASE(AppState, PullHistoryIndexMatchesFullSummaries) {

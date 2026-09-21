@@ -173,12 +173,14 @@ void render_top_bar(AppState& app_state, const meter::EncounterSummary& summary,
     end_card();
 }
 
-/// Name cell shared by the damage and healing tables: a job badge, then a
-/// row-spanning selectable that drives the drilldown panel.
-void combatant_name_cell(const meter::CombatantStats& c, const char* id_prefix) {
+/// Job cell shared by the damage and healing tables.
+void combatant_job_cell(const meter::CombatantStats& c) {
     job_badge(c.job, c.actor_type == meter::ActorType::LimitBreak);
-    ImGui::SameLine(0.0f, m(8.0f));
+}
 
+/// Name cell shared by the damage and healing tables: a row-spanning selectable
+/// that drives the drilldown panel.
+void combatant_name_cell(const meter::CombatantStats& c, const char* id_prefix) {
     const std::string sel_label = c.name + "##" + id_prefix + std::to_string(c.entity_id);
     const bool selected = (s_selected_drilldown_entity == c.entity_id);
     if (ImGui::Selectable(sel_label.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns)) {
@@ -203,9 +205,10 @@ void render_damage_table(const meter::EncounterSummary& summary, float height) {
     }
 
     const double top_dps = std::max(combatants.front()->dps, 1.0);
-    if (!ImGui::BeginTable("##DamageRankingTable", 8, kTableFlags, ImVec2(0.0f, height))) return;
+    if (!ImGui::BeginTable("##DamageRankingTable", 9, kTableFlags, ImVec2(0.0f, height))) return;
 
     ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, m(30.0f));
+    ImGui::TableSetupColumn("Job", ImGuiTableColumnFlags_WidthFixed, m(52.0f));
     ImGui::TableSetupColumn("Combatant", ImGuiTableColumnFlags_WidthStretch);
     ImGui::TableSetupColumn("DPS", ImGuiTableColumnFlags_WidthFixed, m(90.0f));
     ImGui::TableSetupColumn("Damage", ImGuiTableColumnFlags_WidthFixed, m(90.0f));
@@ -228,26 +231,29 @@ void render_damage_table(const meter::EncounterSummary& summary, float height) {
         text_colored_u32(colors::TextDim, "%d", rank++);
 
         ImGui::TableSetColumnIndex(1);
-        combatant_name_cell(c, "D");
+        combatant_job_cell(c);
 
         ImGui::TableSetColumnIndex(2);
+        combatant_name_cell(c, "D");
+
+        ImGui::TableSetColumnIndex(3);
         ImGui::PushFont(bold_font());
         text_colored_u32(get_job_color_u32(c.job), "%s", format_dps(c.dps).c_str());
         ImGui::PopFont();
 
-        ImGui::TableSetColumnIndex(3);
+        ImGui::TableSetColumnIndex(4);
         text_colored_u32(colors::TextBody, "%s", format_damage(c.total_damage).c_str());
 
-        ImGui::TableSetColumnIndex(4);
+        ImGui::TableSetColumnIndex(5);
         text_colored_u32(colors::TextMuted, "%s", format_percentage(c.damage_share_pct).c_str());
 
-        ImGui::TableSetColumnIndex(5);
+        ImGui::TableSetColumnIndex(6);
         text_colored_u32(colors::TextMuted, "%s", format_percentage(c.hits.crit_rate()).c_str());
 
-        ImGui::TableSetColumnIndex(6);
+        ImGui::TableSetColumnIndex(7);
         text_colored_u32(colors::TextMuted, "%s", format_percentage(c.hits.dh_rate()).c_str());
 
-        ImGui::TableSetColumnIndex(7);
+        ImGui::TableSetColumnIndex(8);
         text_colored_u32(colors::TextMuted, "%s", format_percentage(c.hits.cdh_rate()).c_str());
     }
 
@@ -270,9 +276,10 @@ void render_healing_table(const meter::EncounterSummary& summary, float height) 
     }
 
     const double top_hps = std::max(combatants.front()->hps, 1.0);
-    if (!ImGui::BeginTable("##HealingRankingTable", 6, kTableFlags, ImVec2(0.0f, height))) return;
+    if (!ImGui::BeginTable("##HealingRankingTable", 7, kTableFlags, ImVec2(0.0f, height))) return;
 
     ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, m(30.0f));
+    ImGui::TableSetupColumn("Job", ImGuiTableColumnFlags_WidthFixed, m(52.0f));
     ImGui::TableSetupColumn("Combatant", ImGuiTableColumnFlags_WidthStretch);
     ImGui::TableSetupColumn("HPS", ImGuiTableColumnFlags_WidthFixed, m(90.0f));
     ImGui::TableSetupColumn("Total heal", ImGuiTableColumnFlags_WidthFixed, m(100.0f));
@@ -293,20 +300,23 @@ void render_healing_table(const meter::EncounterSummary& summary, float height) 
         text_colored_u32(colors::TextDim, "%d", rank++);
 
         ImGui::TableSetColumnIndex(1);
-        combatant_name_cell(c, "H");
+        combatant_job_cell(c);
 
         ImGui::TableSetColumnIndex(2);
+        combatant_name_cell(c, "H");
+
+        ImGui::TableSetColumnIndex(3);
         ImGui::PushFont(bold_font());
         text_colored_u32(colors::SuccessLight, "%s", format_dps(c.hps).c_str());
         ImGui::PopFont();
 
-        ImGui::TableSetColumnIndex(3);
+        ImGui::TableSetColumnIndex(4);
         text_colored_u32(colors::TextBody, "%s", format_damage(c.total_healing).c_str());
 
-        ImGui::TableSetColumnIndex(4);
+        ImGui::TableSetColumnIndex(5);
         text_colored_u32(colors::TextBody, "%s", format_damage(c.effective_healing).c_str());
 
-        ImGui::TableSetColumnIndex(5);
+        ImGui::TableSetColumnIndex(6);
         text_colored_u32(colors::TextMuted, "%s", format_percentage(c.overheal_pct()).c_str());
     }
 

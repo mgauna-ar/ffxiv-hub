@@ -76,10 +76,11 @@ inline hub::common::ui::CombatantStyle combatant_style(const CombatantStats& c) 
     return hub::common::ui::combatant_style(c.job, c.actor_type == ActorType::LimitBreak);
 }
 
-/// The glyph and the color carry the job, so the name cell drops the [ABV]
-/// prefix and puts the full job name in a tooltip instead.
-void render_name_cell(const CombatantStats& c, const hub::common::ui::CombatantStyle& style) {
-    ImGui::TextColored(ImColor(style_color(style, 255)), "%s  %s", style.icon, c.name.c_str());
+/// The Job column: three letters in the job's color, with the full job name on
+/// hover since the abbreviation is all the width allows.
+void render_job_cell(const CombatantStats& c, const hub::common::ui::CombatantStyle& style) {
+    ImGui::TextColored(ImColor(style_color(style, 255)), "%.*s",
+                       static_cast<int>(style.label.size()), style.label.data());
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("%s", c.actor_type == ActorType::LimitBreak
                                     ? "Limit Break"
@@ -227,7 +228,7 @@ void CombatOverlay::render_damage_table(const EncounterSummary& summary) {
     const bool col_crit = m_show_col_crit.load();
     const bool col_dh = m_show_col_dh.load();
     const bool col_cdh = m_show_col_cdh.load();
-    const int columns = 4 + (col_share ? 1 : 0) + (col_crit ? 1 : 0) + (col_dh ? 1 : 0) + (col_cdh ? 1 : 0);
+    const int columns = 5 + (col_share ? 1 : 0) + (col_crit ? 1 : 0) + (col_dh ? 1 : 0) + (col_cdh ? 1 : 0);
 
     ImGuiTableFlags flags = ImGuiTableFlags_RowBg |
                             ImGuiTableFlags_BordersInnerV |
@@ -237,6 +238,7 @@ void CombatOverlay::render_damage_table(const EncounterSummary& summary) {
 
     if (ImGui::BeginTable("##DmgTable", columns, flags, ImVec2(0, 0))) {
         ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 22.0f);
+        ImGui::TableSetupColumn("Job", ImGuiTableColumnFlags_WidthFixed, 36.0f);
         ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupColumn("DPS", ImGuiTableColumnFlags_WidthFixed, 70.0f);
         ImGui::TableSetupColumn("Damage", ImGuiTableColumnFlags_WidthFixed, 70.0f);
@@ -264,7 +266,11 @@ void CombatOverlay::render_damage_table(const EncounterSummary& summary) {
 
             ImGui::TableSetColumnIndex(col++);
             center_in_row(row_h);
-            render_name_cell(*player, style);
+            render_job_cell(*player, style);
+
+            ImGui::TableSetColumnIndex(col++);
+            center_in_row(row_h);
+            ImGui::TextUnformatted(player->name.c_str());
 
             ImGui::TableSetColumnIndex(col++);
             center_in_row(row_h);
@@ -309,7 +315,7 @@ void CombatOverlay::render_healing_table(const EncounterSummary& summary) {
     const double top_hps = healers.empty() ? 1.0 : std::max(healers.front()->hps, 1.0);
 
     const bool col_crit = m_show_col_crit.load();
-    const int columns = 6 + (col_crit ? 1 : 0);
+    const int columns = 7 + (col_crit ? 1 : 0);
 
     ImGuiTableFlags flags = ImGuiTableFlags_RowBg |
                             ImGuiTableFlags_BordersInnerV |
@@ -319,6 +325,7 @@ void CombatOverlay::render_healing_table(const EncounterSummary& summary) {
 
     if (ImGui::BeginTable("##HealTable", columns, flags, ImVec2(0, 0))) {
         ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 22.0f);
+        ImGui::TableSetupColumn("Job", ImGuiTableColumnFlags_WidthFixed, 36.0f);
         ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupColumn("HPS", ImGuiTableColumnFlags_WidthFixed, 70.0f);
         ImGui::TableSetupColumn("Heal", ImGuiTableColumnFlags_WidthFixed, 70.0f);
@@ -345,7 +352,11 @@ void CombatOverlay::render_healing_table(const EncounterSummary& summary) {
 
             ImGui::TableSetColumnIndex(col++);
             center_in_row(row_h);
-            render_name_cell(*player, style);
+            render_job_cell(*player, style);
+
+            ImGui::TableSetColumnIndex(col++);
+            center_in_row(row_h);
+            ImGui::TextUnformatted(player->name.c_str());
 
             ImGui::TableSetColumnIndex(col++);
             center_in_row(row_h);

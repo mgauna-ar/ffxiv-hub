@@ -281,12 +281,12 @@ void stat_tile(const char* id, float width, const char* icon, const char* label,
 void job_badge(game::Job job, bool is_limit_break) {
     const auto style = common::ui::combatant_style(job, is_limit_break);
     const uint32_t color = colors::with_alpha(style.rgb, 1.0f);
-    char text[24]{};
-    std::snprintf(text, sizeof(text), "%s %.*s", style.icon,
+    char text[8]{};
+    std::snprintf(text, sizeof(text), "%.*s",
                   static_cast<int>(style.label.size()), style.label.data());
 
     const ImVec2 size = ImGui::CalcTextSize(text);
-    const float width = m(56.0f);
+    const float width = m(40.0f);
     const float height = size.y + m(2.0f);
     const ImVec2 p = ImGui::GetCursorScreenPos();
 

@@ -7,12 +7,10 @@
 
 namespace hub::common::ui {
 
-/// How a combatant row presents its job: the glyph in front of the name, the
-/// accent color, and the short label. Shared by the desktop app's combat view
-/// and the in-game overlay so both tables read the same.
+/// How a combatant row presents its job: the accent color and the short label
+/// that fills the Job column. Shared by the desktop app's combat view and the
+/// in-game overlay so both tables read the same.
 struct CombatantStyle {
-    /// ICON_* glyph from common/ui/icons.hpp. Never null.
-    const char* icon;
     /// IM_COL32 channel order (R in the low byte) with alpha zeroed; callers
     /// pack their own alpha on top.
     uint32_t rgb;
