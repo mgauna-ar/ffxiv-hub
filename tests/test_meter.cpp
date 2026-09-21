@@ -1,5 +1,6 @@
 #include "test_framework.hpp"
 #include "meter/types.hpp"
+#include "hub/game/entity.hpp"
 #include "meter/action_decoder.hpp"
 #include "meter/combatant_registry.hpp"
 #include "meter/metrics_accumulator.hpp"
@@ -909,7 +910,7 @@ TEST_CASE(MeterAccumulator, LimitBreakIsNotPersonalDamage) {
     TEST_ASSERT_EQ(monk->total_damage, 20000u);
     TEST_ASSERT_NEAR(monk->dps, 2000.0, 0.01);
 
-    const auto* lb_row = acc.find_stats(hub::game::LIMIT_BREAK_ENTITY_ID);
+    const auto* lb_row = acc.find_stats(hub::game::LIMIT_BREAK_COMBATANT_ID);
     TEST_ASSERT(lb_row != nullptr);
     TEST_ASSERT(lb_row->name == "Limit Break");
     TEST_ASSERT_EQ(lb_row->actor_type, ActorType::LimitBreak);
@@ -926,31 +927,34 @@ TEST_CASE(MeterAccumulator, LimitBreakIsNotPersonalDamage) {
     TEST_ASSERT_EQ(boss->damage_taken, 200000u);
 }
 
-TEST_CASE(MeterAccumulator, LimitBreakPseudoEntitySource) {
-    // 0xE0000000 has the monster bit set, so without a special case the LB would be
-    // read as an enemy and dropped from raid DPS.
+TEST_CASE(MeterAccumulator, LimitBreakRowSurvivesTheMonsterFilter) {
+    // The synthetic id sits above every real entity id, which means it also has the
+    // monster bit set - without a special case the row would be filtered as an enemy.
     MetricsAccumulator acc;
     CombatantRegistry reg;
 
-    TEST_ASSERT_TRUE(reg.is_friendly(hub::game::LIMIT_BREAK_ENTITY_ID));
+    reg.register_actor(10, "Dragoon", Job::DRG, 0, ActorType::Player);
 
     hub::ipc::CombatActionPacket lb{};
-    lb.source_id = hub::game::LIMIT_BREAK_ENTITY_ID;
+    lb.source_id = 10;
     lb.target_id = 0x400001;
-    lb.action_id = 4238; // Not in the shared 197-208 block.
+    lb.action_id = 4242; // Dragonsong Dive
     lb.damage = 150000;
     lb.effect_type = static_cast<uint16_t>(EffectType::Damage);
     acc.record_action(lb, reg);
     acc.recalculate(10.0, &reg);
 
-    const auto* lb_row = acc.find_stats(hub::game::LIMIT_BREAK_ENTITY_ID);
+    TEST_ASSERT_TRUE(reg.is_friendly(hub::game::LIMIT_BREAK_COMBATANT_ID));
+
+    const auto* lb_row = acc.find_stats(hub::game::LIMIT_BREAK_COMBATANT_ID);
     TEST_ASSERT(lb_row != nullptr);
     TEST_ASSERT_EQ(lb_row->actor_type, ActorType::LimitBreak);
     TEST_ASSERT_TRUE(lb_row->is_friendly());
     TEST_ASSERT_EQ(acc.total_damage(), 150000u);
     TEST_ASSERT_NEAR(lb_row->damage_share_pct, 100.0, 0.01);
 
-    // It survives the party-only filter that hides monsters.
+    // It survives the party-only filter that hides monsters, and the caster keeps a
+    // row of their own with none of the damage.
     const auto rows = acc.sorted_by_dps(/*friendly_only=*/true);
     TEST_ASSERT_EQ(rows.size(), 1u);
     TEST_ASSERT(rows.front().name == "Limit Break");
@@ -1145,4 +1149,83 @@ TEST_CASE(MeterEngine, WipeDurationTrimsDeadTail) {
     TEST_ASSERT_EQ(pull->end_reason, EncounterEndReason::Wipe);
     TEST_ASSERT_NEAR(pull->duration_seconds, 4.0, 0.05);
     TEST_ASSERT_NEAR(pull->total_dps, 2500.0, 1.0);
+}
+
+TEST_CASE(MeterAccumulator, EnemyLimitBreakStaysAnEnemyHit) {
+    // ActionCategory 9 also holds duty-action and NPC limit breaks, so an action id
+    // match alone must not hand a boss's cast to the party's Limit Break row.
+    MetricsAccumulator acc;
+    CombatantRegistry reg;
+
+    reg.register_actor(10, "Dancer", Job::DNC, 0, ActorType::Player);
+    reg.register_actor(0x400001, "Raid Boss", Job::None, 0, ActorType::Monster);
+
+    hub::ipc::CombatActionPacket p{};
+    p.source_id = 0x400001;
+    p.target_id = 10;
+    p.action_id = 29936; // Diamond Dust, a duty-action limit break.
+    p.damage = 60000;
+    p.effect_type = static_cast<uint16_t>(EffectType::Damage);
+    acc.record_action(p, reg);
+
+    TEST_ASSERT(acc.find_stats(hub::game::LIMIT_BREAK_COMBATANT_ID) == nullptr);
+    TEST_ASSERT_EQ(acc.total_damage(), 0u);
+
+    const auto* dnc = acc.find_stats(10);
+    TEST_ASSERT(dnc != nullptr);
+    TEST_ASSERT_EQ(dnc->damage_taken, 60000u);
+}
+
+TEST_CASE(MeterLimitBreak, ActionTableCoversEveryTier) {
+    // Spot checks against the game's ActionCategory 9 sheet.
+    TEST_ASSERT_TRUE(hub::game::is_limit_break_action(197));   // Shield Wall
+    TEST_ASSERT_TRUE(hub::game::is_limit_break_action(200));   // Braver
+    TEST_ASSERT_TRUE(hub::game::is_limit_break_action(208));   // Pulse of Life
+    TEST_ASSERT_TRUE(hub::game::is_limit_break_action(4242));  // Dragonsong Dive
+    TEST_ASSERT_TRUE(hub::game::is_limit_break_action(24858)); // The End
+    TEST_ASSERT_TRUE(hub::game::is_limit_break_action(34867)); // Chromatic Fantasy
+    TEST_ASSERT_TRUE(hub::game::is_limit_break_action(44288)); // Mercy's Justice
+
+    TEST_ASSERT_FALSE(hub::game::is_limit_break_action(0));
+    TEST_ASSERT_FALSE(hub::game::is_limit_break_action(31));    // Heavy Swing
+    TEST_ASSERT_FALSE(hub::game::is_limit_break_action(196));
+    TEST_ASSERT_FALSE(hub::game::is_limit_break_action(209));
+    TEST_ASSERT_FALSE(hub::game::is_limit_break_action(16505)); // Despair
+
+    // The table must stay sorted: is_limit_break_action binary-searches it.
+    TEST_ASSERT_TRUE(std::is_sorted(hub::game::LIMIT_BREAK_ACTIONS.begin(),
+                                    hub::game::LIMIT_BREAK_ACTIONS.end()));
+}
+
+TEST_CASE(MeterAccumulator, PlaceholderEntityIdOpensNoRow) {
+    // 0xE0000000 is the game's placeholder, not an actor: it fills the target slot of
+    // an effect that hit nothing (891 of them in one Zeromus EX clear) and the owner
+    // slot of an ownerless actor. It is never a Limit Break source.
+    MetricsAccumulator acc;
+    CombatantRegistry reg;
+    reg.register_actor(10, "Reaper", Job::RPR, 0, ActorType::Player);
+
+    // Placeholder source: not an actor, so nothing is recorded.
+    hub::ipc::CombatActionPacket from_placeholder{};
+    from_placeholder.source_id = hub::game::NO_ENTITY_ID;
+    from_placeholder.target_id = 0x400001;
+    from_placeholder.action_id = 31;
+    from_placeholder.damage = 1000;
+    from_placeholder.effect_type = static_cast<uint16_t>(EffectType::Damage);
+    acc.record_action(from_placeholder, reg);
+
+    TEST_ASSERT(acc.find_stats(hub::game::LIMIT_BREAK_COMBATANT_ID) == nullptr);
+    TEST_ASSERT(acc.find_stats(hub::game::NO_ENTITY_ID) == nullptr);
+    TEST_ASSERT_EQ(acc.total_damage(), 0u);
+
+    // Placeholder target: the hit still counts for the caster, but opens no row.
+    hub::ipc::CombatActionPacket at_nothing{};
+    at_nothing.source_id = 10;
+    at_nothing.target_id = hub::game::NO_ENTITY_ID;
+    at_nothing.action_id = 24858; // the End
+    at_nothing.damage = 0;
+    at_nothing.effect_type = static_cast<uint16_t>(EffectType::Damage);
+    acc.record_action(at_nothing, reg);
+
+    TEST_ASSERT(acc.find_stats(hub::game::NO_ENTITY_ID) == nullptr);
 }

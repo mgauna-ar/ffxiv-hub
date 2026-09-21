@@ -272,8 +272,8 @@ bool CombatantRegistry::is_friendly(EntityId entity_id) const {
     if (entity_id == 0) {
         return false;
     }
-    // Checked before the monster-bit test below, which the pseudo-entity id matches.
-    if (entity_id == hub::game::LIMIT_BREAK_ENTITY_ID) {
+    // Checked before the monster-bit test below, which the synthetic id also matches.
+    if (entity_id == hub::game::LIMIT_BREAK_COMBATANT_ID) {
         return true;
     }
     if (is_party_member(entity_id)) {

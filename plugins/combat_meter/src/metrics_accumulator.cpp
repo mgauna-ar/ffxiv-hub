@@ -55,7 +55,7 @@ CombatantStats& MetricsAccumulator::get_or_create_stats(EntityId entity_id, cons
         stats.is_party_member = actor->is_party_member;
         stats.is_local_player = actor->is_local_player;
         stats.is_alive = (actor->current_hp > 0 || actor->max_hp == 0);
-    } else if (entity_id == hub::game::LIMIT_BREAK_ENTITY_ID) {
+    } else if (entity_id == hub::game::LIMIT_BREAK_COMBATANT_ID) {
         stats.name = "Limit Break";
         stats.actor_type = ActorType::LimitBreak;
     } else {
@@ -112,8 +112,10 @@ void MetricsAccumulator::record_damage_hit(
         case HitSeverity::CritDirectHit: act.hits.cdh_hits++; break;
     }
 
+    // An effect that hit nothing carries the placeholder id, which would otherwise
+    // open a junk combatant row.
     const EntityId target_id = static_cast<EntityId>(packet.target_id);
-    if (target_id != 0) {
+    if (hub::game::is_real_entity_id(target_id)) {
         CombatantStats& target_stats = get_or_create_stats(target_id, registry);
         target_stats.damage_taken += packet.damage;
     }
@@ -121,18 +123,23 @@ void MetricsAccumulator::record_damage_hit(
 
 void MetricsAccumulator::record_action(const ipc::CombatActionPacket& packet, const CombatantRegistry& registry) {
     const EntityId raw_source_id = static_cast<EntityId>(packet.source_id);
-    if (raw_source_id == 0) {
+    if (!hub::game::is_real_entity_id(raw_source_id)) {
         return;
     }
 
-    // Limit Break belongs to the party, not to whoever pressed it, so it gets its own
-    // row instead of inflating that player's personal DPS and damage share.
-    const bool is_limit_break = (raw_source_id == hub::game::LIMIT_BREAK_ENTITY_ID)
-        || hub::game::is_limit_break_action(packet.action_id);
+    const EntityId resolved_owner = registry.resolve_owner(raw_source_id);
+
+    // The game reports the casting player as the source of a Limit Break, so only the
+    // action id distinguishes one. It belongs to the party rather than to whoever
+    // pressed the button, and gets its own row instead of inflating that player's
+    // personal DPS and share. The action list also carries duty-action and NPC limit
+    // breaks, so an enemy casting one stays an enemy hit.
+    const bool is_limit_break = hub::game::is_limit_break_action(packet.action_id)
+        && registry.is_friendly(resolved_owner);
 
     const EntityId owner_id = is_limit_break
-        ? static_cast<EntityId>(hub::game::LIMIT_BREAK_ENTITY_ID)
-        : registry.resolve_owner(raw_source_id);
+        ? static_cast<EntityId>(hub::game::LIMIT_BREAK_COMBATANT_ID)
+        : resolved_owner;
     const bool is_pet_hit = !is_limit_break
         && ((raw_source_id != owner_id) || registry.is_pet(raw_source_id));
     const bool source_friendly = is_limit_break || registry.is_friendly(owner_id);
@@ -231,17 +238,13 @@ void MetricsAccumulator::record_status_tick(const ipc::StatusTickPacket& packet,
         return;
     }
     const EntityId raw_source_id = packet.source_id;
-    if (raw_source_id == 0) {
+    if (!hub::game::is_real_entity_id(raw_source_id)) {
         return;
     }
 
-    const bool is_limit_break = (raw_source_id == hub::game::LIMIT_BREAK_ENTITY_ID);
-    const EntityId owner_id = is_limit_break
-        ? static_cast<EntityId>(hub::game::LIMIT_BREAK_ENTITY_ID)
-        : registry.resolve_owner(raw_source_id);
-    const bool is_pet_hit = !is_limit_break
-        && ((raw_source_id != owner_id) || registry.is_pet(raw_source_id));
-    const bool source_friendly = is_limit_break || registry.is_friendly(owner_id);
+    const EntityId owner_id = registry.resolve_owner(raw_source_id);
+    const bool is_pet_hit = (raw_source_id != owner_id) || registry.is_pet(raw_source_id);
+    const bool source_friendly = registry.is_friendly(owner_id);
 
     CombatantStats& stats = get_or_create_stats(owner_id, registry);
     const EffectType effect = static_cast<EffectType>(packet.effect_type);
@@ -278,7 +281,7 @@ void MetricsAccumulator::record_status_tick(const ipc::StatusTickPacket& packet,
         }
         act.hits.tick_hits++;
 
-        if (packet.target_id != 0) {
+        if (hub::game::is_real_entity_id(packet.target_id)) {
             CombatantStats& target_stats = get_or_create_stats(packet.target_id, registry);
             target_stats.damage_taken += packet.damage_or_heal;
         }
