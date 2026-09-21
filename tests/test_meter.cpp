@@ -6,6 +6,7 @@
 #include "meter/combatant_registry.hpp"
 #include "meter/metrics_accumulator.hpp"
 #include "meter/encounter_engine.hpp"
+#include "meter/pull_grouping.hpp"
 #include "meter/combat_plugin.hpp"
 #include "common/config/json.hpp"
 #include <algorithm>
@@ -1316,4 +1317,75 @@ TEST_CASE(MeterRegistry, PlayerNamedShadowIsNotAPet) {
     TEST_ASSERT_EQ(hub::game::infer_pet_job("Demi-Bahamut"), Job::SMN);
     TEST_ASSERT_EQ(hub::game::infer_pet_job("Automaton Queen"), Job::MCH);
     TEST_ASSERT_EQ(hub::game::infer_pet_job("Bunshin"), Job::NIN);
+}
+
+TEST_CASE(MeterPullGrouping, GroupsZonesNewestFirst) {
+    // Archive order is chronological, so the last entry is the newest pull.
+    std::vector<PullHistoryEntry> history;
+    for (uint32_t zone : {1238u, 1u, 1238u, 1u, 1238u}) {
+        PullHistoryEntry entry{};
+        entry.encounter_id = history.size() + 1;
+        entry.zone_id = zone;
+        history.push_back(entry);
+    }
+
+    const auto groups = group_pulls_by_zone(history);
+    TEST_ASSERT_EQ(groups.size(), 2u);
+
+    // 1238 owns the newest pull (index 4), so it leads.
+    TEST_ASSERT_EQ(groups[0].zone_id, 1238u);
+    TEST_ASSERT_EQ(groups[0].pulls, (std::vector<size_t>{4, 2, 0}));
+    TEST_ASSERT_EQ(groups[1].zone_id, 1u);
+    TEST_ASSERT_EQ(groups[1].pulls, (std::vector<size_t>{3, 1}));
+}
+
+TEST_CASE(MeterPullGrouping, RevisitedZoneFoldsIntoOneGroup) {
+    // Leaving a duty and coming back must not open a second group for it.
+    std::vector<PullHistoryEntry> history(4);
+    history[0].zone_id = 1238;
+    history[1].zone_id = 1;
+    history[2].zone_id = 1;
+    history[3].zone_id = 1238;
+
+    const auto groups = group_pulls_by_zone(history);
+    TEST_ASSERT_EQ(groups.size(), 2u);
+    TEST_ASSERT_EQ(groups[0].pulls.size(), 2u);
+    TEST_ASSERT_EQ(groups[1].pulls.size(), 2u);
+}
+
+TEST_CASE(MeterPullGrouping, EveryGroupCarriesALabel) {
+    std::vector<PullHistoryEntry> history(3);
+    history[0].zone_id = 0;               // never entered a zone
+    history[1].zone_id = 1238;            // resolved from the territory table
+    history[2].zone_id = 999999;          // not in the sheet
+    history[2].zone_name = "Somewhere";   // explicit name wins
+
+    const auto groups = group_pulls_by_zone(history);
+    TEST_ASSERT_EQ(groups.size(), 3u);
+    for (const auto& group : groups) {
+        TEST_ASSERT_FALSE(group.label.empty());
+    }
+    TEST_ASSERT_EQ(groups[0].label, std::string("Somewhere"));
+    TEST_ASSERT_EQ(groups[1].label, std::string("Futures Rewritten (Ultimate)"));
+    TEST_ASSERT_EQ(groups[2].label, std::string("Unknown zone"));
+}
+
+TEST_CASE(MeterEngine, EncounterIdsSurviveEviction) {
+    // The picker keys its selection on encounter_id precisely because the archive
+    // evicts from the front: if ids were renumbered, the selection would drift onto
+    // a different pull exactly like a positional index does.
+    EncounterEngine engine;
+    engine.set_history_capacity(2);
+
+    auto t = std::chrono::steady_clock::now();
+    for (int i = 0; i < 3; ++i) {
+        engine.start_encounter(t);
+        engine.end_encounter(EncounterEndReason::Manual, t + std::chrono::seconds(10));
+        t += std::chrono::seconds(30);
+    }
+
+    const auto index = engine.pull_history_index();
+    TEST_ASSERT_EQ(index.size(), 2u);
+    TEST_ASSERT_EQ(index[0].encounter_id, 2u);
+    TEST_ASSERT_EQ(index[1].encounter_id, 3u);
 }

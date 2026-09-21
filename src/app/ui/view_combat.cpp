@@ -4,10 +4,12 @@
 #include "app/ui/overlay_settings.hpp"
 #include "app/ui/theme.hpp"
 #include "app/ui/widgets.hpp"
+#include "meter/pull_grouping.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <ctime>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -18,7 +20,10 @@ namespace {
 
 constexpr const char* METER = "combat_meter";
 
-int s_selected_pull_idx = -1; // -1 = Live encounter
+/// Keyed on encounter_id, not on a position in the archive: the history deque
+/// evicts from the front at capacity, so an index stops meaning the same pull.
+/// 0 = live encounter.
+uint64_t s_selected_pull_id = 0;
 uint32_t s_selected_drilldown_entity = 0;
 /// Set when a History row asks to inspect a pull, so the tab bar can switch away
 /// from History on the next frame.
@@ -30,7 +35,7 @@ bool s_jump_to_damage = false;
 constexpr long long kSnapshotIntervalMs = 250;
 meter::EncounterSummary s_live_summary;
 meter::EncounterSummary s_selected_pull;
-int s_cached_pull_idx = -1;
+uint64_t s_cached_pull_id = 0;
 std::chrono::steady_clock::time_point s_last_snapshot{};
 
 constexpr ImGuiTableFlags kTableFlags = ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY |
@@ -41,6 +46,16 @@ void table_headers_row() {
     ImGui::PushStyleColor(ImGuiCol_Text, v4(colors::TextDim));
     ImGui::TableHeadersRow();
     ImGui::PopStyleColor();
+}
+
+/// Position of a pull in the archive listing, or nothing if it has been evicted.
+std::optional<size_t> find_pull_index(const std::vector<meter::PullHistoryEntry>& pull_history,
+                                      uint64_t encounter_id) {
+    if (encounter_id == 0) return std::nullopt;
+    for (size_t i = 0; i < pull_history.size(); ++i) {
+        if (pull_history[i].encounter_id == encounter_id) return i;
+    }
+    return std::nullopt;
 }
 
 /// Local clock time a pull ended. Pulls archived before this was recorded (and
@@ -76,20 +91,49 @@ void render_top_bar(AppState& app_state, const meter::EncounterSummary& summary,
     begin_card("##CombatTopBar", ImVec2(0.0f, m(62.0f)));
 
     const float row_y = ImGui::GetCursorPosY();
-    ImGui::SetNextItemWidth(m(172.0f));
-    const std::string current_pull_name =
-        is_live ? "Live encounter" : ("Pull #" + std::to_string(s_selected_pull_idx + 1));
+    const auto selected_idx = find_pull_index(pull_history, s_selected_pull_id);
+
+    std::string current_pull_name = "Live encounter";
+    if (!is_live && selected_idx) {
+        const auto& sel = pull_history[*selected_idx];
+        std::string zone = meter::zone_label(sel.zone_id, sel.zone_name);
+        if (zone.empty()) zone = "Unknown zone";
+        current_pull_name = zone + "  -  Pull #" + std::to_string(sel.encounter_id);
+    }
+
+    // The popup carries duty names, which do not fit the closed control.
+    ImGui::SetNextWindowSizeConstraints(ImVec2(m(300.0f), 0.0f), ImVec2(m(600.0f), m(420.0f)));
+    ImGui::SetNextItemWidth(m(240.0f));
     if (ImGui::BeginCombo("##PullSelector", current_pull_name.c_str())) {
         if (ImGui::Selectable("Live encounter", is_live)) {
-            s_selected_pull_idx = -1;
+            s_selected_pull_id = 0;
         }
-        for (size_t i = 0; i < pull_history.size(); ++i) {
-            const std::string label =
-                "Pull #" + std::to_string(i + 1) + " (" +
-                format_duration(static_cast<uint64_t>(pull_history[i].duration_seconds)) + ")";
-            if (ImGui::Selectable(label.c_str(), s_selected_pull_idx == static_cast<int>(i))) {
-                s_selected_pull_idx = static_cast<int>(i);
+
+        const auto groups = meter::group_pulls_by_zone(pull_history);
+        for (size_t g = 0; g < groups.size(); ++g) {
+            const auto& group = groups[g];
+            const bool holds_selection =
+                selected_idx && std::find(group.pulls.begin(), group.pulls.end(), *selected_idx)
+                                    != group.pulls.end();
+
+            // Opened once so the newest duty (and whichever holds the current
+            // selection) starts expanded; after that the user's own toggling wins.
+            ImGui::PushID(static_cast<int>(group.zone_id));
+            ImGui::SetNextItemOpen(g == 0 || holds_selection, ImGuiCond_Once);
+            const std::string header = group.label + "  (" + std::to_string(group.pulls.size()) + ")";
+            if (ImGui::TreeNodeEx(header.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth)) {
+                for (size_t idx : group.pulls) {
+                    const auto& pull = pull_history[idx];
+                    const std::string label =
+                        "Pull #" + std::to_string(pull.encounter_id) + "  (" +
+                        format_duration(static_cast<uint64_t>(pull.duration_seconds)) + ")";
+                    if (ImGui::Selectable(label.c_str(), s_selected_pull_id == pull.encounter_id)) {
+                        s_selected_pull_id = pull.encounter_id;
+                    }
+                }
+                ImGui::TreePop();
             }
+            ImGui::PopID();
         }
         ImGui::EndCombo();
     }
@@ -122,7 +166,7 @@ void render_top_bar(AppState& app_state, const meter::EncounterSummary& summary,
     ImGui::SetCursorPosY(row_y);
     if (button(ICON_RESET "  Reset encounter", ButtonKind::Danger, ButtonSize::Medium)) {
         app_state.reset_encounter();
-        s_selected_pull_idx = -1;
+        s_selected_pull_id = 0;
         s_selected_drilldown_entity = 0;
     }
 
@@ -274,7 +318,7 @@ void render_history_table(AppState& app_state,
     right_align(m(metrics::ButtonMd));
     if (button(ICON_TRASH "  Clear history", ButtonKind::Danger, ButtonSize::Medium)) {
         app_state.clear_pull_history();
-        s_selected_pull_idx = -1;
+        s_selected_pull_id = 0;
     }
 
     if (pull_history.empty()) {
@@ -302,7 +346,8 @@ void render_history_table(AppState& app_state,
         ImGui::TableNextRow();
 
         ImGui::TableSetColumnIndex(0);
-        text_colored_u32(colors::TextMuted, "#%zu", i + 1);
+        text_colored_u32(colors::TextMuted, "#%llu",
+                         static_cast<unsigned long long>(pull.encounter_id));
 
         ImGui::TableSetColumnIndex(1);
         text_colored_u32(colors::TextMuted, "%s", format_clock_time(pull.ended_at_unix_s).c_str());
@@ -336,7 +381,7 @@ void render_history_table(AppState& app_state,
         ImGui::TableSetColumnIndex(8);
         const std::string inspect_btn = std::string(ICON_SEARCH "  Inspect##") + std::to_string(i);
         if (button(inspect_btn.c_str(), ButtonKind::Secondary, ButtonSize::Small)) {
-            s_selected_pull_idx = static_cast<int>(i);
+            s_selected_pull_id = pull.encounter_id;
             s_jump_to_damage = true;
         }
     }
@@ -596,8 +641,10 @@ void render_view_combat(AppState& app_state) {
 #ifdef HAVE_IMGUI
     const auto pull_history = app_state.get_pull_history_index();
 
-    const bool is_live = (s_selected_pull_idx < 0 ||
-                          static_cast<size_t>(s_selected_pull_idx) >= pull_history.size());
+    // A selected pull that has aged out of the archive falls back to live rather
+    // than leaving the tables pointing at whatever took its place.
+    const auto selected_index = find_pull_index(pull_history, s_selected_pull_id);
+    const bool is_live = !selected_index.has_value();
 
     const auto now = std::chrono::steady_clock::now();
     const bool stale = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -607,11 +654,11 @@ void render_view_combat(AppState& app_state) {
             s_live_summary = app_state.get_live_summary();
             s_last_snapshot = now;
         }
-    } else if (stale || s_cached_pull_idx != s_selected_pull_idx) {
-        if (auto pull = app_state.get_pull(static_cast<size_t>(s_selected_pull_idx))) {
+    } else if (stale || s_cached_pull_id != s_selected_pull_id) {
+        if (auto pull = app_state.get_pull(*selected_index)) {
             s_selected_pull = std::move(*pull);
         }
-        s_cached_pull_idx = s_selected_pull_idx;
+        s_cached_pull_id = s_selected_pull_id;
         s_last_snapshot = now;
     }
 
