@@ -18,6 +18,10 @@ out/
 test_runner
 hub_test_runner
 
+# Python (tools/)
+__pycache__/
+*.pyc
+
 # IDE & OS
 .DS_Store
 .vs/

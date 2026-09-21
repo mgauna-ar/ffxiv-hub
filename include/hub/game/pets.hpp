@@ -10,96 +10,81 @@ namespace hub::game {
 
 namespace detail {
 
-inline std::string to_lower_ascii(std::string_view sv) {
-    std::string result;
-    result.reserve(sv.size());
-    for (char ch : sv) {
-        result.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
-    }
-    return result;
-}
-
-inline bool contains_ignore_case(std::string_view haystack, std::string_view needle) {
-    const std::string h = to_lower_ascii(haystack);
-    const std::string n = to_lower_ascii(needle);
-    return h.find(n) != std::string::npos;
+inline bool equals_ignore_case(std::string_view a, std::string_view b) {
+    return a.size() == b.size() &&
+           std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+               return std::tolower(static_cast<unsigned char>(x)) ==
+                      std::tolower(static_cast<unsigned char>(y));
+           });
 }
 
 } // namespace detail
 
-/// True if `name` matches a known FFXIV summon/pet name (Bahamut, Carbuncle, Eos, ...).
+/// A combat pet and the job that owns it.
+struct PetEntry {
+    std::string_view name; ///< lowercase; compared case-insensitively
+    Job owner_job;
+};
+
+/// Combat pets only. Deliberately NOT generated from the game's Pet sheet: that
+/// sheet also lists every Beastmaster tameable (squirrel, crab, bat, ghost,
+/// behemoth, chimera...), whose names collide with ordinary enemies and would see
+/// a boss merged into a player's row.
+///
+/// Matching is exact. It used to be a substring test, which made every Titan,
+/// Garuda, Ifrit and Bahamut encounter classify the boss as a pet and drop it from
+/// the meter, and flagged any player whose name contained "eos", "queen" or
+/// "shadow".
+inline constexpr PetEntry KNOWN_PETS[] = {
+    // Summoner
+    {"carbuncle", Job::SMN},
+    {"ruby carbuncle", Job::SMN},
+    {"topaz carbuncle", Job::SMN},
+    {"emerald carbuncle", Job::SMN},
+    {"moonstone carbuncle", Job::SMN},
+    {"amber carbuncle", Job::SMN},
+    {"obsidian carbuncle", Job::SMN},
+    {"demi-bahamut", Job::SMN},
+    {"demi-phoenix", Job::SMN},
+    {"solar bahamut", Job::SMN},
+    {"ifrit-egi", Job::SMN},
+    {"titan-egi", Job::SMN},
+    {"garuda-egi", Job::SMN},
+    {"ruby ifrit", Job::SMN},
+    {"topaz titan", Job::SMN},
+    {"emerald garuda", Job::SMN},
+    // Scholar
+    {"eos", Job::SCH},
+    {"selene", Job::SCH},
+    {"seraph", Job::SCH},
+    // Machinist
+    {"rook autoturret", Job::MCH},
+    {"bishop autoturret", Job::MCH},
+    {"automaton queen", Job::MCH},
+    // Dark Knight
+    {"esteem", Job::DRK},
+    {"living shadow", Job::DRK},
+    // Ninja
+    {"bunshin", Job::NIN},
+};
+
+/// True if `name` is exactly a known combat pet.
 [[nodiscard]] inline bool is_known_pet_name(std::string_view name) {
     if (name.empty()) {
         return false;
     }
-    static constexpr std::string_view KNOWN_PETS[] = {
-        "bahamut",
-        "demi-bahamut",
-        "solar bahamut",
-        "phoenix",
-        "demi-phoenix",
-        "ifrit",
-        "ifrit-egi",
-        "ruby ifrit",
-        "titan",
-        "titan-egi",
-        "topaz titan",
-        "garuda",
-        "garuda-egi",
-        "emerald garuda",
-        "carbuncle",
-        "ruby carbuncle",
-        "topaz carbuncle",
-        "emerald carbuncle",
-        "moonstone carbuncle",
-        "eos",
-        "selene",
-        "seraph",
-        "automaton queen",
-        "queen",
-        "rook autoturret",
-        "autoturret",
-        "living shadow",
-        "esteem",
-        "bunshin",
-        "shadow"
-    };
-
-    for (const auto& pet : KNOWN_PETS) {
-        if (detail::contains_ignore_case(name, pet)) {
-            return true;
-        }
-    }
-    return false;
+    return std::any_of(std::begin(KNOWN_PETS), std::end(KNOWN_PETS),
+                       [name](const PetEntry& pet) {
+                           return detail::equals_ignore_case(name, pet.name);
+                       });
 }
 
-/// Infers the owning job from a known pet's display name (e.g. "Carbuncle" -> SMN).
+/// The job owning `name`, or Job::None when it is not a known pet.
 [[nodiscard]] inline Job infer_pet_job(std::string_view name) {
-    if (detail::contains_ignore_case(name, "bahamut") ||
-        detail::contains_ignore_case(name, "phoenix") ||
-        detail::contains_ignore_case(name, "ifrit") ||
-        detail::contains_ignore_case(name, "titan") ||
-        detail::contains_ignore_case(name, "garuda") ||
-        detail::contains_ignore_case(name, "carbuncle")) {
-        return Job::SMN;
-    }
-    if (detail::contains_ignore_case(name, "eos") ||
-        detail::contains_ignore_case(name, "selene") ||
-        detail::contains_ignore_case(name, "seraph")) {
-        return Job::SCH;
-    }
-    if (detail::contains_ignore_case(name, "automaton") ||
-        detail::contains_ignore_case(name, "queen") ||
-        detail::contains_ignore_case(name, "autoturret") ||
-        detail::contains_ignore_case(name, "rook")) {
-        return Job::MCH;
-    }
-    if (detail::contains_ignore_case(name, "living shadow") ||
-        detail::contains_ignore_case(name, "esteem")) {
-        return Job::DRK;
-    }
-    if (detail::contains_ignore_case(name, "bunshin")) {
-        return Job::NIN;
+    for (const PetEntry& pet : KNOWN_PETS) {
+        if (detail::equals_ignore_case(name, pet.name)) {
+            return pet.owner_job;
+        }
     }
     return Job::None;
 }

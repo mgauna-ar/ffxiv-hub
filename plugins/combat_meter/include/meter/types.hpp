@@ -3,7 +3,9 @@
 #include "common/ui/overlay_config.hpp"
 #include "hub/game/job.hpp"
 #include "hub/game/actions.hpp"
+#include "hub/game/status.hpp"
 #include "hub/game/limit_break.hpp"
+#include "hub/game/territory.hpp"
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -141,11 +143,14 @@ enum class EncounterEndReason : uint8_t {
     }
 }
 
-/// Label for an encounter's territory: the name when one is known, the raw id
-/// otherwise, and empty when the zone was never observed (solo play, where the
-/// party list the id comes from is empty).
+/// Label for an encounter's territory: an explicitly supplied name, else the duty
+/// name for that territory id, else the raw id, and empty when the zone was never
+/// observed (solo play, where the party list the id comes from is empty).
 [[nodiscard]] inline std::string zone_label(uint32_t zone_id, std::string_view zone_name) {
     if (!zone_name.empty()) return std::string(zone_name);
+    if (const std::string_view duty = hub::game::territory_name(zone_id); !duty.empty()) {
+        return std::string(duty);
+    }
     return zone_id != 0 ? "Zone #" + std::to_string(zone_id) : std::string();
 }
 
@@ -242,7 +247,7 @@ constexpr ActionId STATUS_ACTION_KEY_OFFSET = 0x8000'0000u;
 }
 
 [[nodiscard]] inline std::string status_id_to_name(ActionId status_id) {
-    return "Status " + std::to_string(status_id);
+    return hub::game::status_name(status_id);
 }
 
 struct CombatantStats {

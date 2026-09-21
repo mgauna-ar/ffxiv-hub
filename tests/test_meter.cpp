@@ -1,12 +1,14 @@
 #include "test_framework.hpp"
 #include "meter/types.hpp"
 #include "hub/game/entity.hpp"
+#include "hub/game/pets.hpp"
 #include "meter/action_decoder.hpp"
 #include "meter/combatant_registry.hpp"
 #include "meter/metrics_accumulator.hpp"
 #include "meter/encounter_engine.hpp"
 #include "meter/combat_plugin.hpp"
 #include "common/config/json.hpp"
+#include <algorithm>
 #include <array>
 #include <vector>
 #include <atomic>
@@ -590,10 +592,26 @@ TEST_CASE(MeterEngine, ZoneChangeArchivesPullAndTagsSummary) {
     TEST_ASSERT_EQ(pull->zone_id, 1000u);
 }
 
-TEST_CASE(MeterEngine, ZoneLabelPrefersNameThenId) {
-    TEST_ASSERT(zone_label(1000, "The Omega Protocol") == "The Omega Protocol");
-    TEST_ASSERT(zone_label(1000, "") == "Zone #1000");
+TEST_CASE(MeterEngine, ZoneLabelPrefersNameThenTableThenId) {
+    // An explicitly supplied name always wins.
+    TEST_ASSERT(zone_label(1238, "The Omega Protocol") == "The Omega Protocol");
+    // Then the generated territory table, which is why the payload never has to
+    // resolve a zone name itself.
+    TEST_ASSERT(zone_label(1238, "") == "Futures Rewritten (Ultimate)");
+    // Then the raw id, for a territory the sheet carries no duty for.
+    TEST_ASSERT(zone_label(999999, "") == "Zone #999999");
     TEST_ASSERT(zone_label(0, "").empty());
+}
+
+TEST_CASE(MeterEngine, TerritoryTableIsSortedAndResolves) {
+    // territory_name binary-searches the table, so a bad regeneration that left it
+    // unsorted would fail lookups silently.
+    TEST_ASSERT_TRUE(std::is_sorted(
+        hub::game::TERRITORY_TABLE.begin(), hub::game::TERRITORY_TABLE.end(),
+        [](const auto& a, const auto& b) { return a.id < b.id; }));
+    TEST_ASSERT(hub::game::territory_name(1238) == "Futures Rewritten (Ultimate)");
+    TEST_ASSERT(hub::game::territory_name(1000) == "the Excitatron 6000");
+    TEST_ASSERT(hub::game::territory_name(999999).empty());
 }
 
 TEST_CASE(MeterEngine, PullHistoryArchive) {
@@ -1228,4 +1246,74 @@ TEST_CASE(MeterAccumulator, PlaceholderEntityIdOpensNoRow) {
     acc.record_action(at_nothing, reg);
 
     TEST_ASSERT(acc.find_stats(hub::game::NO_ENTITY_ID) == nullptr);
+}
+
+TEST_CASE(MeterGameData, BeastmasterResolvesToAJob) {
+    // job.hpp stopped at PCT, so a BST in the party read as Job::None with no role,
+    // which also made CombatantRegistry::is_friendly's role check miss.
+    TEST_ASSERT_EQ(static_cast<uint32_t>(Job::BST), 43u);
+    TEST_ASSERT(hub::game::to_string(Job::BST) == "Beastmaster");
+    TEST_ASSERT(hub::game::job_abbreviation(Job::BST) == "BST");
+    TEST_ASSERT_EQ(hub::game::job_to_role(Job::BST), Role::Melee);
+
+    CombatantRegistry reg;
+    reg.register_actor(10, "Tamer Mcgee", Job::BST);
+    TEST_ASSERT_TRUE(reg.is_friendly(10));
+    const auto* bst = reg.find_actor(10);
+    TEST_ASSERT(bst != nullptr);
+    TEST_ASSERT_EQ(bst->role, Role::Melee);
+}
+
+TEST_CASE(MeterGameData, ActionAndStatusNamesComeFromTheSheets) {
+    // The hand-written table held 42 actions, so the drilldown showed "Action 36954"
+    // for nearly everything, and every DoT row read "Status <id>".
+    TEST_ASSERT(hub::game::action_name(200) == "Braver");
+    TEST_ASSERT(hub::game::action_name(31) == "Heavy Swing");
+    TEST_ASSERT(hub::game::action_name(36954) == "Lance Barrage");
+    TEST_ASSERT(hub::game::status_name(1871) == "Dia");
+    // Ids the sheets do not carry still degrade to the readable fallback.
+    TEST_ASSERT(hub::game::action_name(999999) == "Action 999999");
+    TEST_ASSERT(hub::game::status_name(999999) == "Status 999999");
+}
+
+TEST_CASE(MeterRegistry, PrimalBossIsNotAPet) {
+    // Pet matching was a substring test, so "Titan" matched the pet name "titan":
+    // the boss was flagged as a pet and dropped from the meter entirely.
+    CombatantRegistry reg;
+    MetricsAccumulator acc;
+    reg.register_actor(10, "Warrior", Job::WAR, 0, ActorType::Player);
+    reg.register_actor(0x400001, "Titan", Job::None, 0, ActorType::Monster);
+
+    const auto* boss = reg.find_actor(0x400001);
+    TEST_ASSERT(boss != nullptr);
+    TEST_ASSERT_FALSE(boss->is_pet);
+    TEST_ASSERT_EQ(boss->owner_id, 0u);
+
+    hub::ipc::CombatActionPacket p{};
+    p.source_id = 0x400001;
+    p.target_id = 10;
+    p.damage = 50000;
+    p.effect_type = static_cast<uint16_t>(EffectType::Damage);
+    acc.record_action(p, reg);
+    acc.recalculate(10.0, &reg);
+
+    const auto rows = acc.sorted_by_dps(/*friendly_only=*/false);
+    TEST_ASSERT_EQ(rows.size(), 2u);
+    TEST_ASSERT_TRUE(std::any_of(rows.begin(), rows.end(),
+                                 [](const CombatantStats& c) { return c.name == "Titan"; }));
+}
+
+TEST_CASE(MeterRegistry, PlayerNamedShadowIsNotAPet) {
+    // Same substring bug from the other direction: an ordinary player name that
+    // happens to contain a pet name had its damage merged into someone else's row.
+    for (const char* name : {"Shadowdove", "Theos", "Queenie", "Titania Fae"}) {
+        TEST_ASSERT_FALSE(hub::game::is_known_pet_name(name));
+        TEST_ASSERT_EQ(hub::game::infer_pet_job(name), Job::None);
+    }
+    // Real pets still resolve, case-insensitively, and still name their owner job.
+    TEST_ASSERT_TRUE(hub::game::is_known_pet_name("Eos"));
+    TEST_ASSERT_TRUE(hub::game::is_known_pet_name("living shadow"));
+    TEST_ASSERT_EQ(hub::game::infer_pet_job("Demi-Bahamut"), Job::SMN);
+    TEST_ASSERT_EQ(hub::game::infer_pet_job("Automaton Queen"), Job::MCH);
+    TEST_ASSERT_EQ(hub::game::infer_pet_job("Bunshin"), Job::NIN);
 }

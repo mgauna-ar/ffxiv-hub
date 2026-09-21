@@ -8,15 +8,15 @@
 
 namespace hub::game {
 
-/// Name from the game's Action sheet.
+/// Name from the game's Status sheet.
 /// Empty when the sheet carries no such row. Defined in src/common/game_tables.cpp,
 /// so including this header does not pull the table into every translation unit.
-[[nodiscard]] std::string_view action_sheet_name(uint32_t id) noexcept;
+[[nodiscard]] std::string_view status_sheet_name(uint32_t id) noexcept;
 
-/// Display name, falling back to "Action <id>" for ids the sheet lacks.
-[[nodiscard]] inline std::string action_name(uint32_t id) {
-    const std::string_view name = action_sheet_name(id);
-    return name.empty() ? "Action " + std::to_string(id) : std::string(name);
+/// Display name, falling back to "Status <id>" for ids the sheet lacks.
+[[nodiscard]] inline std::string status_name(uint32_t id) {
+    const std::string_view name = status_sheet_name(id);
+    return name.empty() ? "Status " + std::to_string(id) : std::string(name);
 }
 
 } // namespace hub::game
