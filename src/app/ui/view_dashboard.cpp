@@ -122,7 +122,7 @@ void render_stat_row(AppState& app_state) {
               colors::TextPrimary, pipe_state, colors::Accent);
     ImGui::SameLine(0.0f, m(metrics::Gutter));
 
-    const auto summary = app_state.encounter_engine().current_summary();
+    const auto summary = app_state.get_live_summary();
     char raid_dps[32];
     std::snprintf(raid_dps, sizeof(raid_dps), "%s", format_dps(summary.total_dps).c_str());
     char combatants[40];

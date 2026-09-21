@@ -7,6 +7,8 @@ EncounterEngine::EncounterEngine(double inactivity_timeout_seconds)
     : m_inactivity_timeout_seconds(inactivity_timeout_seconds) {}
 
 void EncounterEngine::process_action(const ipc::CombatActionPacket& packet, TimePoint now) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+
     if (m_state == EncounterState::InCombat) {
         check_inactivity(now);
     }
@@ -17,19 +19,22 @@ void EncounterEngine::process_action(const ipc::CombatActionPacket& packet, Time
         }
         const auto effect = static_cast<EffectType>(packet.effect_type);
         if (effect == EffectType::Damage || effect == EffectType::Heal || packet.damage > 0) {
-            start_encounter(now, packet.timestamp_us);
+            start_encounter_locked(now, packet.timestamp_us);
         }
     }
 
     if (m_state == EncounterState::InCombat) {
         m_accumulator.record_action(packet, m_registry);
         m_last_activity_time = now;
-        const double dur = std::chrono::duration<double>(now - m_start_time).count();
-        m_accumulator.recalculate(dur, &m_registry);
+        // Derived rates are recomputed by update() or lazily by current_summary();
+        // doing it per packet walks every combatant on the game's detour thread.
+        m_dirty = true;
     }
 }
 
 void EncounterEngine::process_status_tick(const ipc::StatusTickPacket& packet, TimePoint now) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+
     if (m_state == EncounterState::InCombat) {
         check_inactivity(now);
     }
@@ -39,12 +44,12 @@ void EncounterEngine::process_status_tick(const ipc::StatusTickPacket& packet, T
     if (m_state == EncounterState::InCombat) {
         m_accumulator.record_status_tick(packet, m_registry);
         m_last_activity_time = now;
-        const double dur = std::chrono::duration<double>(now - m_start_time).count();
-        m_accumulator.recalculate(dur, &m_registry);
+        m_dirty = true;
     }
 }
 
 void EncounterEngine::process_actor_info(const ipc::ActorInfoPacket& packet, TimePoint now) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     m_registry.register_actor(packet);
     if (m_state == EncounterState::InCombat) {
         check_wipe(now);
@@ -52,29 +57,37 @@ void EncounterEngine::process_actor_info(const ipc::ActorInfoPacket& packet, Tim
 }
 
 void EncounterEngine::process_party_sync(const ipc::PartySyncPacket& packet) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     m_registry.sync_party(packet);
 }
 
 void EncounterEngine::process_encounter_control(const ipc::EncounterControlPacket& packet, TimePoint now) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+
     if (packet.zone_id != 0 && packet.zone_id != m_current_zone_id) {
-        set_zone(packet.zone_id, "", now);
+        set_zone_locked(packet.zone_id, "", now);
     }
 
     // control_command: 1 = EndEncounter, 2 = ResetEncounter, 3 = SplitEncounter
     if (packet.control_command == 1) {
-        end_encounter(EncounterEndReason::Manual, now, packet.timestamp_us);
+        end_encounter_locked(EncounterEndReason::Manual, now, packet.timestamp_us);
     } else if (packet.control_command == 2) {
-        reset_current();
+        reset_current_locked();
     } else if (packet.control_command == 3) {
-        split_encounter(now);
+        if (m_state == EncounterState::InCombat) {
+            end_encounter_locked(EncounterEndReason::Manual, now);
+            start_encounter_locked(now);
+        }
     } else if (packet.in_combat_flag != 0 && m_state != EncounterState::InCombat) {
         if (!m_registry.is_party_wiped()) {
-            start_encounter(now, packet.timestamp_us);
+            start_encounter_locked(now, packet.timestamp_us);
         }
     }
 }
 
 void EncounterEngine::update(TimePoint now) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+
     if (m_state == EncounterState::InCombat) {
         check_wipe(now);
         if (m_state != EncounterState::InCombat) {
@@ -86,12 +99,20 @@ void EncounterEngine::update(TimePoint now) {
             return;
         }
 
+        // Unconditional: the duration keeps growing between packets, so the
+        // derived rates go stale even when nothing new arrived.
         const double dur = std::chrono::duration<double>(now - m_start_time).count();
         m_accumulator.recalculate(dur, &m_registry);
+        m_dirty = false;
     }
 }
 
 void EncounterEngine::start_encounter(TimePoint now, uint64_t timestamp_us) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    start_encounter_locked(now, timestamp_us);
+}
+
+void EncounterEngine::start_encounter_locked(TimePoint now, uint64_t timestamp_us) {
     m_accumulator.clear();
     m_start_time = now;
     m_last_activity_time = now;
@@ -99,9 +120,15 @@ void EncounterEngine::start_encounter(TimePoint now, uint64_t timestamp_us) {
         ? timestamp_us
         : static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count());
     m_state = EncounterState::InCombat;
+    m_dirty = false;
 }
 
 void EncounterEngine::end_encounter(EncounterEndReason reason, TimePoint now, uint64_t timestamp_us) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    end_encounter_locked(reason, now, timestamp_us);
+}
+
+void EncounterEngine::end_encounter_locked(EncounterEndReason reason, TimePoint now, uint64_t timestamp_us) {
     if (m_state != EncounterState::InCombat) {
         return;
     }
@@ -111,6 +138,7 @@ void EncounterEngine::end_encounter(EncounterEndReason reason, TimePoint now, ui
         : std::chrono::duration<double>(now - m_start_time).count();
 
     m_accumulator.recalculate(dur, &m_registry);
+    m_dirty = false;
 
     EncounterSummary summary;
     summary.encounter_id = ++m_next_encounter_id;
@@ -132,8 +160,8 @@ void EncounterEngine::end_encounter(EncounterEndReason reason, TimePoint now, ui
     summary.end_reason = reason;
     summary.combatants = m_accumulator.sorted_by_dps();
 
-    if (m_pull_history.size() >= m_history_capacity) {
-        m_pull_history.erase(m_pull_history.begin());
+    while (m_pull_history.size() >= m_history_capacity && !m_pull_history.empty()) {
+        m_pull_history.pop_front();
     }
     m_pull_history.push_back(std::move(summary));
 
@@ -141,54 +169,117 @@ void EncounterEngine::end_encounter(EncounterEndReason reason, TimePoint now, ui
 }
 
 void EncounterEngine::split_encounter(TimePoint now) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (m_state == EncounterState::InCombat) {
-        end_encounter(EncounterEndReason::Manual, now);
-        start_encounter(now);
+        end_encounter_locked(EncounterEndReason::Manual, now);
+        start_encounter_locked(now);
     }
 }
 
 void EncounterEngine::reset_current() {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    reset_current_locked();
+}
+
+void EncounterEngine::reset_current_locked() {
     m_accumulator.clear();
     m_state = EncounterState::Idle;
+    m_dirty = false;
 }
 
 void EncounterEngine::set_zone(uint32_t zone_id, std::string zone_name, TimePoint now) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    set_zone_locked(zone_id, std::move(zone_name), now);
+}
+
+void EncounterEngine::set_zone_locked(uint32_t zone_id, std::string zone_name, TimePoint now) {
     if (zone_id != m_current_zone_id) {
         if (m_state == EncounterState::InCombat) {
-            end_encounter(EncounterEndReason::ZoneChange, now);
+            end_encounter_locked(EncounterEndReason::ZoneChange, now);
         }
         m_current_zone_id = zone_id;
         m_current_zone_name = std::move(zone_name);
     }
 }
 
-double EncounterEngine::active_duration_seconds(TimePoint now) const noexcept {
+double EncounterEngine::active_duration_seconds(TimePoint now) const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (m_state != EncounterState::InCombat) {
         return 0.0;
     }
     return std::chrono::duration<double>(now - m_start_time).count();
 }
 
-const EncounterSummary* EncounterEngine::latest_pull() const noexcept {
+std::vector<EncounterSummary> EncounterEngine::pull_history() const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    return std::vector<EncounterSummary>(m_pull_history.begin(), m_pull_history.end());
+}
+
+std::vector<PullHistoryEntry> EncounterEngine::pull_history_index() const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::vector<PullHistoryEntry> index;
+    index.reserve(m_pull_history.size());
+    for (const auto& pull : m_pull_history) {
+        index.push_back(PullHistoryEntry{
+            pull.encounter_id,
+            pull.zone_id,
+            pull.zone_name,
+            pull.ended_at_unix_s,
+            pull.duration_seconds,
+            pull.total_damage,
+            pull.total_effective_healing,
+            pull.total_dps,
+            pull.total_hps,
+            pull.combatants.size(),
+            pull.state,
+            pull.end_reason
+        });
+    }
+    return index;
+}
+
+std::optional<EncounterSummary> EncounterEngine::pull_at(size_t index) const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (index >= m_pull_history.size()) {
+        return std::nullopt;
+    }
+    return m_pull_history[index];
+}
+
+const EncounterSummary* EncounterEngine::latest_pull_locked() const noexcept {
     if (m_pull_history.empty()) {
         return nullptr;
     }
     return &m_pull_history.back();
 }
 
-EncounterSummary EncounterEngine::current_summary(TimePoint now) const {
+std::optional<EncounterSummary> EncounterEngine::latest_pull() const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (m_pull_history.empty()) {
+        return std::nullopt;
+    }
+    return m_pull_history.back();
+}
+
+EncounterSummary EncounterEngine::current_summary(TimePoint now) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+
+    double dur = 0.0;
+    if (m_state == EncounterState::InCombat) {
+        dur = std::chrono::duration<double>(now - m_start_time).count();
+        if (m_dirty) {
+            m_accumulator.recalculate(dur, &m_registry);
+            m_dirty = false;
+        }
+    } else if (const auto* pull = latest_pull_locked()) {
+        dur = pull->duration_seconds;
+    }
+
     EncounterSummary summary;
     summary.encounter_id = m_next_encounter_id + 1;
     summary.zone_id = m_current_zone_id;
     summary.zone_name = m_current_zone_name;
     summary.start_time_us = m_start_time_us;
-
-    double dur = 0.0;
-    if (m_state == EncounterState::InCombat) {
-        dur = std::chrono::duration<double>(now - m_start_time).count();
-    } else if (latest_pull() != nullptr) {
-        dur = latest_pull()->duration_seconds;
-    }
     summary.duration_seconds = dur;
     summary.end_time_us = m_start_time_us + static_cast<uint64_t>(dur * 1e6);
 
@@ -209,14 +300,14 @@ void EncounterEngine::check_inactivity(TimePoint now) {
     if (m_state == EncounterState::InCombat) {
         const double elapsed = std::chrono::duration<double>(now - m_last_activity_time).count();
         if (elapsed >= m_inactivity_timeout_seconds) {
-            end_encounter(EncounterEndReason::Inactivity, now);
+            end_encounter_locked(EncounterEndReason::Inactivity, now);
         }
     }
 }
 
 void EncounterEngine::check_wipe(TimePoint now) {
     if (m_state == EncounterState::InCombat && m_registry.is_party_wiped()) {
-        end_encounter(EncounterEndReason::Wipe, now);
+        end_encounter_locked(EncounterEndReason::Wipe, now);
     }
 }
 

@@ -326,7 +326,8 @@ void MetricsAccumulator::merge_combatants(EntityId from_id, EntityId to_id) {
 
     CombatantStats& to = it_to->second;
     to.total_damage += from_stats.total_damage;
-    to.pet_damage += from_stats.total_damage;
+    // Plus the merged entry's own pet share, or a pet-of-a-pet chain loses it.
+    to.pet_damage += from_stats.total_damage + from_stats.pet_damage;
     to.damage_taken += from_stats.damage_taken;
     to.total_healing += from_stats.total_healing;
     to.effective_healing += from_stats.effective_healing;

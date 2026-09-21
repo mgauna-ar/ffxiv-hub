@@ -44,10 +44,19 @@ private:
     void reader_thread_func();
     void writer_thread_func();
     bool write_raw(const uint8_t* data, size_t size);
+    bool read_exact(void* out, size_t size);
 
     std::string m_pipe_name;
     [[maybe_unused]] void* m_pipe_handle{nullptr};
+    /// The reader's own copy, published before the thread starts and never
+    /// cleared by disconnect(), so cancellation - not a nulled pointer - is what
+    /// ends the read.
+    [[maybe_unused]] void* m_reader_handle{nullptr};
     [[maybe_unused]] void* m_stop_event{nullptr};
+    /// Per-thread OVERLAPPED events, so a blocked read/write can be cancelled at
+    /// disconnect instead of having the handle closed out from under it.
+    [[maybe_unused]] void* m_read_event{nullptr};
+    [[maybe_unused]] void* m_write_event{nullptr};
     std::mutex m_send_mutex;
     std::atomic<bool> m_connected{false};
     std::atomic<bool> m_running{false};

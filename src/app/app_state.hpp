@@ -89,11 +89,14 @@ public:
     // ==========================================
     // Combat Meter Plugin Integration
     // ==========================================
-    [[nodiscard]] meter::EncounterEngine& encounter_engine() noexcept { return m_engine; }
-    [[nodiscard]] meter::CombatantRegistry& combatant_registry() noexcept { return m_engine.registry(); }
-    [[nodiscard]] std::mutex& combat_mutex() noexcept { return m_combat_mutex; }
-
+    // No raw engine/registry accessor: every read goes through the snapshot
+    // getters below so it cannot skip m_combat_mutex.
     [[nodiscard]] meter::EncounterSummary get_live_summary();
+    /// Header-only archive listing. Prefer this over get_pull_history() for
+    /// anything rendered per frame: a full summary carries every combatant's
+    /// per-action breakdown.
+    [[nodiscard]] std::vector<meter::PullHistoryEntry> get_pull_history_index();
+    [[nodiscard]] std::optional<meter::EncounterSummary> get_pull(size_t index);
     [[nodiscard]] std::vector<meter::EncounterSummary> get_pull_history();
     void reset_encounter();
     void clear_pull_history();

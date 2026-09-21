@@ -16,6 +16,7 @@ PipeServer::PipeServer(const char* pipe_name)
     : m_pipe_name(pipe_name ? pipe_name : DEFAULT_PIPE_NAME) {
 #ifdef _WIN32
     m_stop_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    m_write_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
 #endif
 }
 
@@ -25,6 +26,10 @@ PipeServer::~PipeServer() {
     if (m_stop_event) {
         CloseHandle(static_cast<HANDLE>(m_stop_event));
         m_stop_event = nullptr;
+    }
+    if (m_write_event) {
+        CloseHandle(static_cast<HANDLE>(m_write_event));
+        m_write_event = nullptr;
     }
 #endif
 }
@@ -52,12 +57,12 @@ void PipeServer::stop() {
         SetEvent(static_cast<HANDLE>(m_stop_event));
     }
 
+    // Only cancel and detach here. The worker thread owns the handle's
+    // lifetime; closing it from both sides races on a recycled handle value.
     {
         std::lock_guard<std::mutex> lock(m_send_mutex);
         if (m_pipe_handle && m_pipe_handle != INVALID_HANDLE_VALUE) {
             CancelIoEx(static_cast<HANDLE>(m_pipe_handle), nullptr);
-            DisconnectNamedPipe(static_cast<HANDLE>(m_pipe_handle));
-            CloseHandle(static_cast<HANDLE>(m_pipe_handle));
             m_pipe_handle = nullptr;
         }
     }
@@ -104,14 +109,20 @@ bool PipeServer::send_packet(
     auto framed = serialize_packet(plugin_id, message_type, seq, payload_bytes);
 
 #ifdef _WIN32
-    if (!m_connected.load() || !m_pipe_handle || m_pipe_handle == INVALID_HANDLE_VALUE) {
+    if (!m_connected.load()) {
         return false;
     }
 
+    // The handle check has to be inside the lock: the worker can null it out
+    // between a check and the WriteFile.
     std::lock_guard<std::mutex> lock(m_send_mutex);
+    if (!m_pipe_handle || m_pipe_handle == INVALID_HANDLE_VALUE || !m_write_event) {
+        return false;
+    }
+
     OVERLAPPED ov_write{};
-    ov_write.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    if (!ov_write.hEvent) return false;
+    ov_write.hEvent = static_cast<HANDLE>(m_write_event);
+    ResetEvent(ov_write.hEvent);
 
     DWORD written = 0;
     BOOL ok = WriteFile(
@@ -124,7 +135,6 @@ bool PipeServer::send_packet(
     if (!ok && GetLastError() == ERROR_IO_PENDING) {
         ok = GetOverlappedResult(static_cast<HANDLE>(m_pipe_handle), &ov_write, &written, TRUE);
     }
-    CloseHandle(ov_write.hEvent);
     return (ok && written == framed.size());
 #else
     (void)framed;
@@ -361,14 +371,16 @@ void PipeServer::server_worker_thread() {
                 break;
             }
 
+            // Validate before sizing the buffer: payload_size is wire data, and a
+            // 4 GB resize throws std::bad_alloc straight out of this thread.
+            if (header.payload_size > MAX_PAYLOAD_SIZE) {
+                break;
+            }
+
             read_buffer.resize(sizeof(PacketHeader) + header.payload_size);
             std::memcpy(read_buffer.data(), &header, sizeof(PacketHeader));
 
             if (header.payload_size > 0) {
-                if (header.payload_size > MAX_PAYLOAD_SIZE) {
-                    break;
-                }
-
                 DWORD payload_read = 0;
                 DWORD total_payload_read = 0;
                 bool payload_ok = true;
@@ -412,13 +424,13 @@ void PipeServer::server_worker_thread() {
         }
 
         m_connected.store(false);
-        DisconnectNamedPipe(hPipe);
-        CloseHandle(hPipe);
 
         {
             std::lock_guard<std::mutex> lock(m_send_mutex);
             m_pipe_handle = nullptr;
         }
+        DisconnectNamedPipe(hPipe);
+        CloseHandle(hPipe);
     }
 }
 #else

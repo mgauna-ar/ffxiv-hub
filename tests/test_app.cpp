@@ -250,3 +250,45 @@ TEST_CASE(UITheme, FormattersAndColorMapping) {
 
     TEST_ASSERT(tank_col != healer_col);
 }
+
+TEST_CASE(AppState, PullHistoryIndexMatchesFullSummaries) {
+    app::AppState state;
+    state.initialize();
+
+    // Two pulls: damage, then an explicit end, twice over.
+    for (uint32_t pull = 0; pull < 2; ++pull) {
+        ipc::CombatActionPayload act{};
+        act.source_id = 1001;
+        act.target_id = 0x40000001;
+        act.action_id = 31;
+        act.damage = 1000 * (pull + 1);
+        act.effect_type = static_cast<uint16_t>(meter::EffectType::Damage);
+        state.pipe_server().process_raw_packet(
+            ipc::serialize_typed_packet(PluginId::CombatMeter, MessageType::CombatAction, pull, act));
+
+        ipc::CombatControlPayload ctrl{};
+        ctrl.control_command = 1; // EndEncounter
+        state.pipe_server().process_raw_packet(
+            ipc::serialize_typed_packet(PluginId::CombatMeter, MessageType::CombatControl, pull, ctrl));
+    }
+
+    const auto index = state.get_pull_history_index();
+    const auto full = state.get_pull_history();
+    TEST_ASSERT_EQ(index.size(), 2u);
+    TEST_ASSERT_EQ(index.size(), full.size());
+
+    for (size_t i = 0; i < index.size(); ++i) {
+        TEST_ASSERT_EQ(index[i].encounter_id, full[i].encounter_id);
+        TEST_ASSERT_EQ(index[i].total_damage, full[i].total_damage);
+        TEST_ASSERT_EQ(index[i].combatant_count, full[i].combatants.size());
+        TEST_ASSERT(index[i].state == full[i].state);
+
+        const auto one = state.get_pull(i);
+        TEST_ASSERT(one.has_value());
+        TEST_ASSERT_EQ(one->encounter_id, full[i].encounter_id);
+    }
+
+    TEST_ASSERT(!state.get_pull(index.size()).has_value());
+
+    state.shutdown();
+}

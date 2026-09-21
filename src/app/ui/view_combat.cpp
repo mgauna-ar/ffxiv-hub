@@ -5,6 +5,7 @@
 #include "app/ui/theme.hpp"
 #include "app/ui/widgets.hpp"
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <ctime>
 #include <string>
@@ -22,6 +23,15 @@ uint32_t s_selected_drilldown_entity = 0;
 /// Set when a History row asks to inspect a pull, so the tab bar can switch away
 /// from History on the next frame.
 bool s_jump_to_damage = false;
+
+/// A full EncounterSummary carries every combatant's per-action breakdown, so
+/// refetching one per frame means hundreds of map and string allocations under
+/// the combat mutex. Snapshot on a timer instead, like the in-game overlay does.
+constexpr long long kSnapshotIntervalMs = 250;
+meter::EncounterSummary s_live_summary;
+meter::EncounterSummary s_selected_pull;
+int s_cached_pull_idx = -1;
+std::chrono::steady_clock::time_point s_last_snapshot{};
 
 constexpr ImGuiTableFlags kTableFlags = ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY |
                                         ImGuiTableFlags_BordersInnerV |
@@ -62,7 +72,7 @@ void encounter_state_pill(meter::EncounterState state) {
 }
 
 void render_top_bar(AppState& app_state, const meter::EncounterSummary& summary,
-                    const std::vector<meter::EncounterSummary>& pull_history, bool is_live) {
+                    const std::vector<meter::PullHistoryEntry>& pull_history, bool is_live) {
     begin_card("##CombatTopBar", ImVec2(0.0f, m(62.0f)));
 
     const float row_y = ImGui::GetCursorPosY();
@@ -133,10 +143,13 @@ void combatant_name_cell(const meter::CombatantStats& c, const char* id_prefix) 
 }
 
 void render_damage_table(const meter::EncounterSummary& summary, float height) {
-    auto combatants = summary.combatants;
+    // Sort pointers: the structs carry a per-action map that is not worth copying.
+    std::vector<const meter::CombatantStats*> combatants;
+    combatants.reserve(summary.combatants.size());
+    for (const auto& c : summary.combatants) combatants.push_back(&c);
     std::sort(combatants.begin(), combatants.end(),
-              [](const meter::CombatantStats& a, const meter::CombatantStats& b) {
-                  return a.dps > b.dps;
+              [](const meter::CombatantStats* a, const meter::CombatantStats* b) {
+                  return a->dps > b->dps;
               });
 
     if (combatants.empty()) {
@@ -145,7 +158,7 @@ void render_damage_table(const meter::EncounterSummary& summary, float height) {
         return;
     }
 
-    const double top_dps = std::max(combatants.front().dps, 1.0);
+    const double top_dps = std::max(combatants.front()->dps, 1.0);
     if (!ImGui::BeginTable("##DamageRankingTable", 8, kTableFlags, ImVec2(0.0f, height))) return;
 
     ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, m(30.0f));
@@ -160,7 +173,8 @@ void render_damage_table(const meter::EncounterSummary& summary, float height) {
     table_headers_row();
 
     int rank = 1;
-    for (const auto& c : combatants) {
+    for (const meter::CombatantStats* cp : combatants) {
+        const auto& c = *cp;
         if (!c.is_friendly() && c.dps == 0.0) continue;
 
         ImGui::TableNextRow();
@@ -197,10 +211,12 @@ void render_damage_table(const meter::EncounterSummary& summary, float height) {
 }
 
 void render_healing_table(const meter::EncounterSummary& summary, float height) {
-    auto combatants = summary.combatants;
+    std::vector<const meter::CombatantStats*> combatants;
+    combatants.reserve(summary.combatants.size());
+    for (const auto& c : summary.combatants) combatants.push_back(&c);
     std::sort(combatants.begin(), combatants.end(),
-              [](const meter::CombatantStats& a, const meter::CombatantStats& b) {
-                  return a.hps > b.hps;
+              [](const meter::CombatantStats* a, const meter::CombatantStats* b) {
+                  return a->hps > b->hps;
               });
 
     if (combatants.empty()) {
@@ -209,7 +225,7 @@ void render_healing_table(const meter::EncounterSummary& summary, float height) 
         return;
     }
 
-    const double top_hps = std::max(combatants.front().hps, 1.0);
+    const double top_hps = std::max(combatants.front()->hps, 1.0);
     if (!ImGui::BeginTable("##HealingRankingTable", 6, kTableFlags, ImVec2(0.0f, height))) return;
 
     ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, m(30.0f));
@@ -222,7 +238,8 @@ void render_healing_table(const meter::EncounterSummary& summary, float height) 
     table_headers_row();
 
     int rank = 1;
-    for (const auto& c : combatants) {
+    for (const meter::CombatantStats* cp : combatants) {
+        const auto& c = *cp;
         if (!c.is_friendly() && c.hps == 0.0) continue;
 
         ImGui::TableNextRow();
@@ -253,7 +270,7 @@ void render_healing_table(const meter::EncounterSummary& summary, float height) 
 }
 
 void render_history_table(AppState& app_state,
-                          const std::vector<meter::EncounterSummary>& pull_history) {
+                          const std::vector<meter::PullHistoryEntry>& pull_history) {
     right_align(m(metrics::ButtonMd));
     if (button(ICON_TRASH "  Clear history", ButtonKind::Danger, ButtonSize::Medium)) {
         app_state.clear_pull_history();
@@ -572,13 +589,28 @@ float ranking_table_height() {
 
 void render_view_combat(AppState& app_state) {
 #ifdef HAVE_IMGUI
-    const auto live_summary = app_state.get_live_summary();
-    const auto pull_history = app_state.get_pull_history();
+    const auto pull_history = app_state.get_pull_history_index();
 
     const bool is_live = (s_selected_pull_idx < 0 ||
                           static_cast<size_t>(s_selected_pull_idx) >= pull_history.size());
-    const meter::EncounterSummary& current_summary =
-        is_live ? live_summary : pull_history[static_cast<size_t>(s_selected_pull_idx)];
+
+    const auto now = std::chrono::steady_clock::now();
+    const bool stale = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           now - s_last_snapshot).count() >= kSnapshotIntervalMs;
+    if (is_live) {
+        if (stale) {
+            s_live_summary = app_state.get_live_summary();
+            s_last_snapshot = now;
+        }
+    } else if (stale || s_cached_pull_idx != s_selected_pull_idx) {
+        if (auto pull = app_state.get_pull(static_cast<size_t>(s_selected_pull_idx))) {
+            s_selected_pull = std::move(*pull);
+        }
+        s_cached_pull_idx = s_selected_pull_idx;
+        s_last_snapshot = now;
+    }
+
+    const meter::EncounterSummary& current_summary = is_live ? s_live_summary : s_selected_pull;
 
     page_header(ICON_SWORDS, "Combat Meter",
                 "Per-pull damage, healing and ability breakdowns");

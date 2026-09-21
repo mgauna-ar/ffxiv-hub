@@ -8,6 +8,8 @@
 #include "common/config/json.hpp"
 #include <array>
 #include <vector>
+#include <atomic>
+#include <thread>
 #include <cstring>
 
 using namespace hub::meter;
@@ -514,8 +516,8 @@ TEST_CASE(MeterEngine, InactivityTimeoutSplit) {
     TEST_ASSERT_FALSE(engine.in_combat());
 
     // Invariant: Duration is calculated from last activity (3s), NOT inflated by 7s timeout
-    const auto* pull = engine.latest_pull();
-    TEST_ASSERT(pull != nullptr);
+    const auto pull = engine.latest_pull();
+    TEST_ASSERT(pull.has_value());
     TEST_ASSERT_NEAR(pull->duration_seconds, 3.0, 0.05);
     TEST_ASSERT_EQ(pull->end_reason, EncounterEndReason::Inactivity);
     TEST_ASSERT_EQ(pull->total_damage, 25000u);
@@ -552,8 +554,8 @@ TEST_CASE(MeterEngine, PartyWipeDetection) {
     engine.update(t0 + std::chrono::seconds(2));
     TEST_ASSERT_EQ(engine.state(), EncounterState::Wipe);
 
-    const auto* pull = engine.latest_pull();
-    TEST_ASSERT(pull != nullptr);
+    const auto pull = engine.latest_pull();
+    TEST_ASSERT(pull.has_value());
     TEST_ASSERT_EQ(pull->state, EncounterState::Wipe);
     TEST_ASSERT_EQ(pull->end_reason, EncounterEndReason::Wipe);
 }
@@ -580,8 +582,8 @@ TEST_CASE(MeterEngine, ZoneChangeArchivesPullAndTagsSummary) {
     engine.process_encounter_control(zone, t0 + std::chrono::seconds(3));
     TEST_ASSERT_EQ(engine.current_zone_id(), 1001u);
 
-    const auto* pull = engine.latest_pull();
-    TEST_ASSERT(pull != nullptr);
+    const auto pull = engine.latest_pull();
+    TEST_ASSERT(pull.has_value());
     TEST_ASSERT_EQ(pull->end_reason, EncounterEndReason::ZoneChange);
     // The pull is filed under the zone it was fought in, not the new one.
     TEST_ASSERT_EQ(pull->zone_id, 1000u);
@@ -825,4 +827,55 @@ TEST_CASE(MeterPlugin, EmitsCombatActionOverIpc) {
     std::memcpy(&payload, item.data() + sizeof(hub::ipc::PacketHeader), sizeof(payload));
     TEST_ASSERT_EQ(payload.action_id, 31u);
     TEST_ASSERT_EQ(payload.damage, 25000u);
+}
+
+TEST_CASE(MeterEngine, ConcurrentProducersAndReaders) {
+    // The in-game engine is reached by the detour thread, the orchestration
+    // thread and the Present thread at once. Run under -fsanitize=thread to
+    // catch an entry point that forgot to take the lock.
+    EncounterEngine engine;
+    std::atomic<bool> stop{false};
+
+    std::thread producer([&] {
+        for (uint32_t i = 0; i < 2000; ++i) {
+            hub::ipc::CombatActionPacket pkt{};
+            pkt.source_id = 1000 + (i % 8);
+            pkt.target_id = 0x40000001;
+            pkt.action_id = 31 + (i % 4);
+            pkt.damage = 100;
+            pkt.effect_type = static_cast<uint16_t>(EffectType::Damage);
+            engine.process_action(pkt);
+        }
+        stop.store(true);
+    });
+
+    std::thread registrar([&] {
+        while (!stop.load()) {
+            engine.with_registry([](CombatantRegistry& reg) {
+                reg.register_actor(1003, "Party Member", Job::WHM);
+            });
+        }
+    });
+
+    std::thread reader([&] {
+        while (!stop.load()) {
+            const auto summary = engine.current_summary();
+            (void)summary.combatants.size();
+            (void)engine.in_combat();
+            (void)engine.pull_history_index();
+        }
+    });
+
+    std::thread ticker([&] {
+        while (!stop.load()) {
+            engine.update();
+        }
+    });
+
+    producer.join();
+    registrar.join();
+    reader.join();
+    ticker.join();
+
+    TEST_ASSERT(engine.current_summary().total_damage > 0u);
 }

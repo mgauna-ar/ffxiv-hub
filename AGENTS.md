@@ -129,11 +129,17 @@ When modifying detours, hooks, or timing/analytics math, the following invariant
 - **7.0s Inactivity Timeout & Duration Accuracy**: Encounters auto-split after 7.0 seconds without combat activity. Duration is calculated from the time of the last combat activity (`m_last_activity_time - m_start_time`), not inflated by the 7.0s timeout window.
 - **Friendly Raid Damage Isolation**: Enemy incoming damage to players is tracked under `damage_taken` on the target. Enemy damage must never be added to `m_total_damage` or raid DPS.
 - **Direct Action Encounter Initiation Only**: Passive DoT/HoT ticks must never initiate encounters when combat state is Idle, Wipe, or Complete.
+- **`EncounterEngine` Is Shared State, Not Thread-Local**: In-game, four threads reach one engine - the `ReceiveActionEffect`/`ProcessHotDot` detours on the game's main thread, the payload orchestration thread (`sync_party`, `set_zone`, `update`), the DX11 `Present` thread rendering `CombatOverlay`, and the `PipeClient` reader thread dispatching commands. Every public entry point takes `EncounterEngine::m_mutex` (recursive, because the lifecycle calls re-enter each other). The registry must be reached through `with_registry()`; the raw `registry()`/`accumulator()` accessors do not lock and are for single-threaded use only.
+- **Derived Rates Are Recomputed On The Tick, Not Per Packet**: `record_action` only accumulates. `MetricsAccumulator::recalculate` - which walks every combatant, resolves owners and merges pets - runs from `update()`, from `end_encounter()`, and lazily from `current_summary()` when packets have landed since. It must never be called per decoded effect: at raid AoE rates that is an O(combatants) sweep per hit on the game's detour thread.
+- **Snapshots Are Throttled, Not Per Frame**: An `EncounterSummary` carries every combatant's per-action map. The in-game overlay and the desktop Combat view both cache one and refresh on an interval. List views use `pull_history_index()` (header fields only), not `pull_history()`.
 
 ### 4. IPC & Ring Buffer Safety
-- **Multiplexed Packet Framing**: Every packet sent over Named Pipe `\\.\pipe\ffxiv_hub_pipe` begins with the fixed 16-byte `PacketHeader`:
-  `magic (0x46465848 "FFXH") | plugin_id (uint16_t) | message_type (uint16_t) | sequence (uint32_t) | payload_size (uint32_t)`.
-- **Wait-Free SPSC Ring Buffer**: The in-game detour thread pushes combat events to a lock-free SPSC ring buffer (capacity 4096). Detour threads must never wait on mutexes. A background consumer thread streams packets over Named Pipe.
+- **Multiplexed Packet Framing**: Every packet sent over Named Pipe `\\.\pipe\ffxiv_hub_pipe` begins with the fixed 20-byte `PacketHeader`:
+  `magic (0x46465848 "FFXH") | version (uint16_t) | plugin_id (uint16_t) | message_type (uint16_t) | reserved (uint16_t) | sequence (uint32_t) | payload_size (uint32_t)`.
+- **Validate `payload_size` Before Allocating**: `payload_size` is wire data. Both pipe read loops must reject anything above `MAX_PAYLOAD_SIZE` (64 KB) *before* sizing a buffer from it - a 4 GB `resize` throws `std::bad_alloc` out of a worker thread that has no handler.
+- **A Malformed Header Ends The Connection**: The pipes are byte-mode, so a bad magic means the stream is out of frame and cannot be resynchronised. Both sides drop the connection and reconnect rather than skipping bytes. Every framed read loops until it has the full header/payload; a short read is not an error.
+- **One Owner Per Pipe HANDLE**: The reading worker owns the handle's lifetime. `stop()`/`disconnect()` cancel I/O (`CancelIoEx` plus the stop event) and detach the pointer, but never `CloseHandle` a handle another thread may still be inside - the value gets recycled.
+- **Wait-Free SPSC Ring Buffer**: The in-game detour thread pushes combat events to a lock-free SPSC ring buffer (capacity 4096). The IPC push path must never wait on a mutex. `pop()` moves the packet out of its slot rather than copying it. A background consumer thread streams packets over Named Pipe.
 - **Exact Binary Struct Packing**: All IPC structs use `#pragma pack(push, 1)` and are verified with `static_assert(sizeof(...) == N)`.
 
 ### 5. Hook Lifecycle, DirectX 11 & OS Teardown Safety
@@ -205,6 +211,15 @@ clang++ -std=c++20 -Wall -Wextra -Wpedantic -Werror \
   plugins/latency_mitigator/src/*.cpp plugins/combat_meter/src/*.cpp tests/*.cpp \
   -o hub_test_runner && ./hub_test_runner
 ```
+
+### Checking `EncounterEngine` Locking (ThreadSanitizer)
+`MeterEngine.ConcurrentProducersAndReaders` drives the engine from four threads at
+once, mirroring the in-game topology. It only reports a missing lock under TSan:
+```bash
+clang++ -std=c++20 -fsanitize=thread -g -O1   -Iinclude -Isrc -Itests -Iplugins -Iplugins/latency_mitigator/include -Iplugins/combat_meter/include   src/common/*.cpp src/common/ipc/*.cpp src/common/config/*.cpp src/common/os/*.cpp src/common/ui/*.cpp   plugins/*/src/*.cpp src/payload/*.cpp src/app/app_state.cpp src/app/ui/*.cpp tests/*.cpp   -o tsan_runner && ./tsan_runner
+```
+Run this after touching any `EncounterEngine`, `CombatantRegistry` or
+`MetricsAccumulator` entry point. It must report zero data races.
 
 ### Windows MSVC Build & Packaging
 ```cmd

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <unordered_map>
 #include <string>
+#include <chrono>
 #include <mutex>
 
 namespace hub::meter {
@@ -54,7 +55,13 @@ private:
         uint32_t job_id{0};
         uint32_t max_hp{0};
         std::string name;
+        /// Last time the object table was read for this actor. Monsters and NPCs
+        /// have job_id 0 forever, so "has a job" cannot be the freshness test.
+        std::chrono::steady_clock::time_point last_read{};
     };
+
+    /// How long a cached actor is trusted before the object table is read again.
+    static constexpr std::chrono::seconds kActorCacheTtl{5};
 
     std::mutex m_cache_mutex;
     std::unordered_map<uint32_t, CachedActor> m_actor_cache;

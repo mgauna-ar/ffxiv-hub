@@ -200,21 +200,36 @@ void ObjectReader::inspect_and_sync_actor(uint32_t entity_id, meter::CombatantRe
         return;
     }
 
-    // This runs per decoded effect, so skip the SEH + object-table lookup once
-    // the actor is fully identified.
+    // This runs per decoded effect. The cache is keyed on when the object table
+    // was last read, not on the actor being "identified": monsters and NPCs have
+    // job_id 0 permanently, so that test never passed for them and every hit on
+    // a boss re-ran the lookup and re-sent an ActorInfo packet.
+    const auto now = std::chrono::steady_clock::now();
     {
         std::lock_guard<std::mutex> lock(m_cache_mutex);
         auto it = m_actor_cache.find(entity_id);
-        if (it != m_actor_cache.end() && it->second.job_id != 0 && !it->second.name.empty()) {
+        if (it != m_actor_cache.end() && (now - it->second.last_read) < kActorCacheTtl) {
             return;
         }
     }
 
     ipc::ActorInfoPacket packet{};
     if (read_character(entity_id, packet)) {
+        bool changed = true;
         {
             std::lock_guard<std::mutex> lock(m_cache_mutex);
-            m_actor_cache[entity_id] = CachedActor{packet.owner_id, packet.job_id, packet.max_hp, packet.name};
+            auto it = m_actor_cache.find(entity_id);
+            if (it != m_actor_cache.end()) {
+                changed = it->second.owner_id != packet.owner_id ||
+                          it->second.job_id != packet.job_id ||
+                          it->second.max_hp != packet.max_hp ||
+                          it->second.name != packet.name;
+            }
+            m_actor_cache[entity_id] =
+                CachedActor{packet.owner_id, packet.job_id, packet.max_hp, packet.name, now};
+        }
+        if (!changed) {
+            return;
         }
         if (registry) {
             registry->register_actor(
@@ -283,7 +298,8 @@ void ObjectReader::sync_party(meter::CombatantRegistry* registry) {
             std::lock_guard<std::mutex> lock(m_cache_mutex);
             auto it = m_actor_cache.find(m.entity_id);
             if (it == m_actor_cache.end() || it->second.job_id != m.job_id || it->second.name != m.name) {
-                m_actor_cache[m.entity_id] = CachedActor{0, m.job_id, m.max_hp, m.name};
+                m_actor_cache[m.entity_id] =
+                    CachedActor{0, m.job_id, m.max_hp, m.name, std::chrono::steady_clock::now()};
                 actor_changed = true;
             }
         }
@@ -353,6 +369,9 @@ void ObjectReader::sync_party(meter::CombatantRegistry* registry) {
         if (extracted.territory_type != 0 && extracted.territory_type != m_last_territory) {
             m_last_territory = extracted.territory_type;
             territory_changed = true;
+            // Nothing from the old zone's object table is coming back, and the
+            // cache would otherwise keep every actor id seen this session.
+            m_actor_cache.clear();
         }
     }
 

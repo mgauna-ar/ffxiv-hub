@@ -141,7 +141,9 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
 
     combat_plugin->set_actor_resolver(
         [reader = object_reader.get(), plugin = combat_plugin.get()](uint32_t entity_id) {
-            reader->inspect_and_sync_actor(entity_id, &plugin->engine().registry());
+            plugin->engine().with_registry([&](hub::meter::CombatantRegistry& registry) {
+                reader->inspect_and_sync_actor(entity_id, &registry);
+            });
         }
     );
 
@@ -198,7 +200,9 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
 
         // Sync party composition every 1.5 seconds
         if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_party_sync).count() > 1500) {
-            object_reader->sync_party(&combat_plugin->engine().registry());
+            combat_plugin->engine().with_registry([&](hub::meter::CombatantRegistry& registry) {
+                object_reader->sync_party(&registry);
+            });
             // Same territory id the app receives; set_zone no-ops when unchanged
             // and closes an in-flight pull when it is not.
             if (const uint16_t territory = object_reader->current_territory(); territory != 0) {

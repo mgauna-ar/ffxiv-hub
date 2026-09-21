@@ -5,6 +5,7 @@
 #include <memory>
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 namespace hub::ipc {
@@ -57,7 +58,10 @@ public:
         if (tail == head) {
             return false;
         }
-        item = (*m_buffer)[tail & (Capacity - 1)];
+        // Moved, not copied: for the vector<uint8_t> packets this saves a heap
+        // allocation per packet. Safe under SPSC - the producer cannot touch
+        // this slot again until the tail index below is published.
+        item = std::move((*m_buffer)[tail & (Capacity - 1)]);
         m_tail.store(tail + 1, std::memory_order_release);
         return true;
     }

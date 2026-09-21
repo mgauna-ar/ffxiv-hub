@@ -124,15 +124,17 @@ void CombatPlugin::on_receive_action_effect(
         const auto* chr = reinterpret_cast<const game::CharacterObject*>(source_character);
         if (chr->entity_id == source_entity_id) {
             const uint32_t owner_id = normalize_owner_id(chr->owner_id);
-            m_engine.registry().register_actor(
-                chr->entity_id,
-                chr->name,
-                static_cast<Job>(chr->class_job),
-                owner_id,
-                actor_type_from_object_kind(chr->object_kind, owner_id),
-                chr->max_hp,
-                chr->current_hp
-            );
+            m_engine.with_registry([&](CombatantRegistry& registry) {
+                registry.register_actor(
+                    chr->entity_id,
+                    chr->name,
+                    static_cast<Job>(chr->class_job),
+                    owner_id,
+                    actor_type_from_object_kind(chr->object_kind, owner_id),
+                    chr->max_hp,
+                    chr->current_hp
+                );
+            });
         }
     }
 

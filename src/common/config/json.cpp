@@ -96,6 +96,10 @@ JsonValue::ArrayType& JsonValue::as_array() {
 
 namespace {
 
+/// Objects and arrays parse recursively, so a deeply nested document would
+/// otherwise decide how much stack this uses.
+constexpr int MAX_PARSE_DEPTH = 64;
+
 class Parser {
 public:
     explicit Parser(std::string_view src) : m_src(src), m_pos(0) {}
@@ -103,6 +107,7 @@ public:
     std::optional<JsonValue> parse_value() {
         skip_whitespace();
         if (m_pos >= m_src.size()) return std::nullopt;
+        if (m_depth >= MAX_PARSE_DEPTH) return std::nullopt;
 
         const char c = m_src[m_pos];
         if (c == '{') return parse_object();
@@ -122,7 +127,17 @@ private:
         }
     }
 
+    /// Holds the nesting count for one parse_object/parse_array frame.
+    struct DepthGuard {
+        int& depth;
+        explicit DepthGuard(int& d) : depth(d) { ++depth; }
+        ~DepthGuard() { --depth; }
+        DepthGuard(const DepthGuard&) = delete;
+        DepthGuard& operator=(const DepthGuard&) = delete;
+    };
+
     std::optional<JsonValue> parse_object() {
+        DepthGuard guard(m_depth);
         ++m_pos; // Skip '{'
         JsonValue::ObjectType obj;
         skip_whitespace();
@@ -164,6 +179,7 @@ private:
     }
 
     std::optional<JsonValue> parse_array() {
+        DepthGuard guard(m_depth);
         ++m_pos; // Skip '['
         JsonValue::ArrayType arr;
         skip_whitespace();
@@ -278,6 +294,7 @@ private:
 
     std::string_view m_src;
     size_t m_pos{0};
+    int m_depth{0};
 };
 
 void stringify_internal(const JsonValue& val, std::ostringstream& ss, int indent_level, int indent_spaces) {

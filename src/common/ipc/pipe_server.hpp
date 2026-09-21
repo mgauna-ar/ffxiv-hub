@@ -104,6 +104,8 @@ private:
 
     [[maybe_unused]] void* m_pipe_handle{nullptr}; // Win32 HANDLE
     [[maybe_unused]] void* m_stop_event{nullptr};  // Win32 HANDLE
+    /// Reused across writes rather than created per packet. Guarded by m_send_mutex.
+    [[maybe_unused]] void* m_write_event{nullptr}; // Win32 HANDLE
 
     // Dispatch callbacks
     CombatActionCallback m_on_combat_action;

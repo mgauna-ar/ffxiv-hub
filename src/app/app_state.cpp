@@ -324,6 +324,16 @@ meter::EncounterSummary AppState::get_live_summary() {
     return m_engine.current_summary();
 }
 
+std::vector<meter::PullHistoryEntry> AppState::get_pull_history_index() {
+    std::lock_guard<std::mutex> lock(m_combat_mutex);
+    return m_engine.pull_history_index();
+}
+
+std::optional<meter::EncounterSummary> AppState::get_pull(size_t index) {
+    std::lock_guard<std::mutex> lock(m_combat_mutex);
+    return m_engine.pull_at(index);
+}
+
 std::vector<meter::EncounterSummary> AppState::get_pull_history() {
     std::lock_guard<std::mutex> lock(m_combat_mutex);
     return m_engine.pull_history();
