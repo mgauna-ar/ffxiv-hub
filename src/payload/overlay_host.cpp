@@ -1,4 +1,5 @@
 #include "payload/overlay_host.hpp"
+#include "common/ui/icon_font.hpp"
 #include <algorithm>
 #include <initializer_list>
 #include <string>
@@ -184,15 +185,22 @@ void OverlayHost::setup_fonts() {
     const std::string regular_path = first_present({"seguisb.ttf", "segoeui.ttf", "arial.ttf"});
     const std::string bold_path    = first_present({"segoeuib.ttf", "seguisb.ttf", "arialbd.ttf"});
 
+    // Icons merge into whichever font was added last, so each font that renders
+    // them needs its own merge pass at that font's size.
     if (!regular_path.empty() && !bold_path.empty()) {
         m_font_regular = io.Fonts->AddFontFromFileTTF(regular_path.c_str(), FONT_SIZE_BASE, &cfg);
+        hub::common::ui::load_icon_font(FONT_SIZE_BASE);
         m_font_bold    = io.Fonts->AddFontFromFileTTF(bold_path.c_str(), FONT_SIZE_BASE, &cfg);
+        hub::common::ui::load_icon_font(FONT_SIZE_BASE);
         m_font_medium  = io.Fonts->AddFontFromFileTTF(bold_path.c_str(), FONT_SIZE_MEDIUM, &cfg);
+        hub::common::ui::load_icon_font(FONT_SIZE_MEDIUM);
         m_font_large   = io.Fonts->AddFontFromFileTTF(bold_path.c_str(), FONT_SIZE_LARGE, &cfg);
+        hub::common::ui::load_icon_font(FONT_SIZE_LARGE);
     }
 
     if (!m_font_regular) {
         m_font_regular = io.Fonts->AddFontDefault();
+        hub::common::ui::load_icon_font(FONT_SIZE_BASE);
         m_font_bold    = m_font_regular;
         m_font_medium  = m_font_regular;
         m_font_large   = m_font_regular;

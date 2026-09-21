@@ -5,6 +5,7 @@
 #include "app/ui/view_combat.hpp"
 #include "app/ui/view_latency.hpp"
 #include "app/ui/view_settings.hpp"
+#include "common/ui/icon_font.hpp"
 #include "common/os/logger.hpp"
 #include "common/os/auto_start.hpp"
 #include "common/os/process_finder.hpp"
@@ -331,11 +332,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     }
     // Icons merge into whichever font was added last, so each font that renders them
     // needs its own merge pass.
-    hub::app::ui::load_icon_font(base_font_size);
+    hub::common::ui::load_icon_font(base_font_size);
 
     ImFont* bold = io.Fonts->AddFontFromFileTTF(bold_font_path.c_str(), base_font_size);
     if (bold != nullptr) {
-        hub::app::ui::load_icon_font(base_font_size);
+        hub::common::ui::load_icon_font(base_font_size);
     }
     hub::app::ui::set_bold_font(bold);
 

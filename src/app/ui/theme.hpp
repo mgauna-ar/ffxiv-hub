@@ -104,12 +104,6 @@ void set_ui_scale(float scale);
 /// Scales an unscaled pixel constant (a metrics:: value, or a one-off) to the current DPI.
 [[nodiscard]] inline float m(float px) { return px * ui_scale(); }
 
-/// Merges the embedded icon glyphs into the font that was added last, at the given
-/// pixel size. Call once per font that has to render icons, right after adding it.
-/// Silently does nothing if the atlas rejects the data: icon macros then render as
-/// blanks, and every label that uses one also carries text.
-void load_icon_font(float size_px);
-
 /// Sets the bold ImFont* used for headers and branding text. Called once at startup.
 void set_bold_font(ImFont* font);
 

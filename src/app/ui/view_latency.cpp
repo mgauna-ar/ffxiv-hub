@@ -1,6 +1,6 @@
 #include "app/ui/view_latency.hpp"
 #include "app/ui/config_binding.hpp"
-#include "app/ui/icons.hpp"
+#include "common/ui/icons.hpp"
 #include "app/ui/overlay_settings.hpp"
 #include "app/ui/theme.hpp"
 #include "app/ui/widgets.hpp"

@@ -1,12 +1,12 @@
-#include "app/ui/theme.hpp"
-#include "app/ui/imgui_guard.hpp"
+#include "common/ui/icon_font.hpp"
+#include "common/ui/imgui_guard.hpp"
 
 #ifdef HAVE_IMGUI
-#include "app/ui/icons.hpp"
-#include "app/ui/icons_font.inl"
+#include "common/ui/icons.hpp"
+#include "common/ui/icons_font.inl"
 #endif
 
-namespace hub::app::ui {
+namespace hub::common::ui {
 
 void load_icon_font(float size_px) {
 #ifdef HAVE_IMGUI
@@ -29,4 +29,4 @@ void load_icon_font(float size_px) {
 #endif
 }
 
-} // namespace hub::app::ui
+} // namespace hub::common::ui

@@ -1,6 +1,6 @@
 #include "app/ui/view_combat.hpp"
 #include "app/ui/config_binding.hpp"
-#include "app/ui/icons.hpp"
+#include "common/ui/icons.hpp"
 #include "app/ui/overlay_settings.hpp"
 #include "app/ui/theme.hpp"
 #include "app/ui/widgets.hpp"
@@ -176,7 +176,7 @@ void render_top_bar(AppState& app_state, const meter::EncounterSummary& summary,
 /// Name cell shared by the damage and healing tables: a job badge, then a
 /// row-spanning selectable that drives the drilldown panel.
 void combatant_name_cell(const meter::CombatantStats& c, const char* id_prefix) {
-    job_badge(c.job);
+    job_badge(c.job, c.actor_type == meter::ActorType::LimitBreak);
     ImGui::SameLine(0.0f, m(8.0f));
 
     const std::string sel_label = c.name + "##" + id_prefix + std::to_string(c.entity_id);

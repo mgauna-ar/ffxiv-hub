@@ -77,6 +77,7 @@ flowchart TD
 - **Automatic Pet Attribution**: Automatically maps pet damage and abilities (Bahamut, Phoenix, Solar Bahamut, Carbuncle, Automaton Queen, Living Shadow, Eos, Selene) to their owner with zero orphan rows.
 - **Encounter State Machine**: Automatic start on direct offensive/healing action, party wipe detection, and 7.0-second inactivity timeout with accurate duration calculation.
 - **Analytical Drilldown**: Inspect per-action min/avg/max hits, swing counts, damage contribution, and hit severity distribution.
+- **Per-Job Row Identity**: Every combatant row carries its own job glyph and job color in both the in-game overlay and the desktop inspector; the synthetic Limit Break row reads as a gold `LB` rather than an unknown job.
 
 ### ⚡ Latency Mitigator Plugin
 - **Animation Lock Latency Compensation**: Eliminates double-weaving animation clip for players with higher ping by subtracting round-trip latency while strictly preserving native game timings.
@@ -138,7 +139,7 @@ The GitHub Actions CI/CD pipeline automatically compiles, tests, and publishes `
 Bundled third-party assets:
 - **Dear ImGui** (MIT) - vendored under `src/third_party/imgui/`.
 - **MinHook** (BSD-2-Clause) - vendored under `src/third_party/minhook/`.
-- **Lucide icons** (ISC) - a 50-glyph subset is embedded in `src/app/ui/icons_font.inl`;
+- **Lucide icons** (ISC) - a 71-glyph subset is embedded in `src/common/ui/icons_font.inl`;
   regenerate it with `tools/embed_icon_font.py`.
 
 Final Fantasy XIV is a registered trademark of Square Enix Co., Ltd.

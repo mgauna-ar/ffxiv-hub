@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 #include "app/app_state.hpp"
 #include "app/ui/theme.hpp"
+#include "common/ui/job_style.hpp"
 #include "common/ipc/pipe_server.hpp"
 #include "common/os/tray_manager.hpp"
 #include <chrono>
@@ -239,16 +240,54 @@ TEST_CASE(UITheme, FormattersAndColorMapping) {
     TEST_ASSERT(app::ui::format_duration(75) == "01:15");
     TEST_ASSERT(app::ui::format_duration(605) == "10:05");
 
-    // Color mapping
-    uint32_t tank_col = app::ui::get_role_color_u32(meter::Role::Tank);
+    // Colors are per job now, so jobs sharing a role must not share a color.
     uint32_t war_col = app::ui::get_job_color_u32(meter::Job::WAR);
-    TEST_ASSERT_EQ(tank_col, war_col);
+    uint32_t drk_col = app::ui::get_job_color_u32(meter::Job::DRK);
+    TEST_ASSERT(war_col != drk_col);
 
+    uint32_t blm_col = app::ui::get_job_color_u32(meter::Job::BLM);
+    uint32_t smn_col = app::ui::get_job_color_u32(meter::Job::SMN);
+    TEST_ASSERT(blm_col != smn_col);
+
+    // Alpha still rides in the top byte, opaque by default.
+    TEST_ASSERT_EQ(war_col >> 24, 255u);
+    TEST_ASSERT_EQ(app::ui::get_job_color_u32(meter::Job::WAR, 0.0f) >> 24, 0u);
+
+    // A base class reads as its job.
+    TEST_ASSERT_EQ(app::ui::get_job_color_u32(meter::Job::GLA),
+                   app::ui::get_job_color_u32(meter::Job::PLD));
+
+    uint32_t tank_col = app::ui::get_role_color_u32(meter::Role::Tank);
     uint32_t healer_col = app::ui::get_role_color_u32(meter::Role::Healer);
-    uint32_t whm_col = app::ui::get_job_color_u32(meter::Job::WHM);
-    TEST_ASSERT_EQ(healer_col, whm_col);
-
     TEST_ASSERT(tank_col != healer_col);
+}
+
+TEST_CASE(UITheme, CombatantStyleCoversEveryJob) {
+    using common::ui::combatant_style;
+
+    // Every job the game can report gets a glyph and a label that is not "???".
+    for (uint32_t id = 1; id <= static_cast<uint32_t>(meter::Job::BST); ++id) {
+        const auto style = combatant_style(static_cast<meter::Job>(id));
+        TEST_ASSERT(style.icon != nullptr && style.icon[0] != '\0');
+        TEST_ASSERT(style.label != "???");
+        TEST_ASSERT_EQ(style.label, hub::game::job_abbreviation(static_cast<meter::Job>(id)));
+        TEST_ASSERT_EQ(style.rgb >> 24, 0u); // alpha is the caller's business
+    }
+
+    // An actor whose job never arrived reads as a dash, never "???".
+    const auto unknown = combatant_style(meter::Job::None);
+    TEST_ASSERT_EQ(unknown.label, "--");
+    TEST_ASSERT(unknown.icon != nullptr);
+
+    // Limit Break overrides whatever job it is asked about.
+    const auto lb = combatant_style(meter::Job::None, /*is_limit_break=*/true);
+    TEST_ASSERT_EQ(lb.label, "LB");
+    TEST_ASSERT(lb.rgb != unknown.rgb);
+    TEST_ASSERT_EQ(lb.rgb, combatant_style(meter::Job::WHM, /*is_limit_break=*/true).rgb);
+
+    // Distinct glyphs where it matters: the four casters must not collide.
+    TEST_ASSERT(combatant_style(meter::Job::BLM).icon != combatant_style(meter::Job::SMN).icon);
+    TEST_ASSERT(combatant_style(meter::Job::RDM).icon != combatant_style(meter::Job::PCT).icon);
 }
 
 TEST_CASE(AppState, PullHistoryIndexMatchesFullSummaries) {

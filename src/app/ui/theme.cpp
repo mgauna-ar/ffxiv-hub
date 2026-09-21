@@ -1,4 +1,5 @@
 #include "app/ui/theme.hpp"
+#include "common/ui/job_style.hpp"
 #include <iomanip>
 #include <sstream>
 #include <cmath>
@@ -145,7 +146,8 @@ uint32_t get_role_color_u32(game::Role role, float alpha) {
 }
 
 uint32_t get_job_color_u32(game::Job job, float alpha) {
-    return get_role_color_u32(game::job_to_role(job), alpha);
+    const auto a = static_cast<uint32_t>(std::clamp(alpha, 0.0f, 1.0f) * 255.0f);
+    return (common::ui::job_rgb(job) & 0x00FFFFFF) | (a << 24);
 }
 
 std::string format_dps(double dps) {

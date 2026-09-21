@@ -1,5 +1,6 @@
 #include "app/ui/widgets.hpp"
-#include "app/ui/icons.hpp"
+#include "common/ui/icons.hpp"
+#include "common/ui/job_style.hpp"
 
 #ifdef HAVE_IMGUI
 #include <algorithm>
@@ -277,14 +278,15 @@ void stat_tile(const char* id, float width, const char* icon, const char* label,
     end_card();
 }
 
-void job_badge(game::Job job) {
-    const uint32_t color = get_job_color_u32(job);
-    const std::string_view abbr = game::job_abbreviation(job);
-    char text[8]{};
-    std::snprintf(text, sizeof(text), "%.*s", static_cast<int>(abbr.size()), abbr.data());
+void job_badge(game::Job job, bool is_limit_break) {
+    const auto style = common::ui::combatant_style(job, is_limit_break);
+    const uint32_t color = colors::with_alpha(style.rgb, 1.0f);
+    char text[24]{};
+    std::snprintf(text, sizeof(text), "%s %.*s", style.icon,
+                  static_cast<int>(style.label.size()), style.label.data());
 
     const ImVec2 size = ImGui::CalcTextSize(text);
-    const float width = m(36.0f);
+    const float width = m(56.0f);
     const float height = size.y + m(2.0f);
     const ImVec2 p = ImGui::GetCursorScreenPos();
 

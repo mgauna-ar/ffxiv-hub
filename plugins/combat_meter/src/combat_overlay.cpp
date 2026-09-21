@@ -1,7 +1,9 @@
 #include "meter/combat_overlay.hpp"
 #include "payload/overlay_host.hpp"
+#include "common/ui/job_style.hpp"
 #include <algorithm>
 #include <cstdio>
+#include <string>
 
 namespace hub::meter {
 
@@ -64,39 +66,24 @@ namespace hub::meter {
 
 namespace {
 
-inline uint32_t get_role_color(Job job) {
-    Role role = job_to_role(job);
-    switch (role) {
-        case Role::Tank:
-            return IM_COL32(59, 130, 246, 48);  // #3B82F6 Blue
-        case Role::Healer:
-            return IM_COL32(16, 185, 129, 48);  // #10B981 Green
-        case Role::Melee:
-            return IM_COL32(239, 68, 68, 48);   // #EF4444 Red
-        case Role::Ranged:
-            return IM_COL32(249, 115, 22, 48);  // #F97316 Orange
-        case Role::Caster:
-            return IM_COL32(168, 85, 247, 48);  // #A855F7 Purple
-        default:
-            return IM_COL32(100, 116, 139, 48); // Slate
-    }
+/// The shared table already packs in IM_COL32 channel order; only alpha differs
+/// between the row tint and the name text.
+inline uint32_t style_color(const hub::common::ui::CombatantStyle& style, uint32_t alpha) {
+    return (style.rgb & 0x00FFFFFFu) | (alpha << 24);
 }
 
-inline uint32_t get_job_accent_color(Job job) {
-    Role role = job_to_role(job);
-    switch (role) {
-        case Role::Tank:
-            return IM_COL32(96, 165, 250, 255);
-        case Role::Healer:
-            return IM_COL32(52, 211, 153, 255);
-        case Role::Melee:
-            return IM_COL32(248, 113, 113, 255);
-        case Role::Ranged:
-            return IM_COL32(251, 146, 60, 255);
-        case Role::Caster:
-            return IM_COL32(192, 132, 252, 255);
-        default:
-            return IM_COL32(148, 163, 184, 255);
+inline hub::common::ui::CombatantStyle combatant_style(const CombatantStats& c) {
+    return hub::common::ui::combatant_style(c.job, c.actor_type == ActorType::LimitBreak);
+}
+
+/// The glyph and the color carry the job, so the name cell drops the [ABV]
+/// prefix and puts the full job name in a tooltip instead.
+void render_name_cell(const CombatantStats& c, const hub::common::ui::CombatantStyle& style) {
+    ImGui::TextColored(ImColor(style_color(style, 255)), "%s  %s", style.icon, c.name.c_str());
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s", c.actor_type == ActorType::LimitBreak
+                                    ? "Limit Break"
+                                    : std::string(to_string(c.job)).c_str());
     }
 }
 
@@ -273,14 +260,11 @@ void CombatOverlay::render_damage_table(const EncounterSummary& summary) {
             center_in_row(row_h);
             ImGui::TextDisabled("%d", rank++);
 
+            const auto style = combatant_style(*player);
+
             ImGui::TableSetColumnIndex(col++);
             center_in_row(row_h);
-            ImGui::TextColored(
-                ImColor(get_job_accent_color(player->job)),
-                "[%s] %s",
-                std::string(job_abbreviation(player->job)).c_str(),
-                player->name.c_str()
-            );
+            render_name_cell(*player, style);
 
             ImGui::TableSetColumnIndex(col++);
             center_in_row(row_h);
@@ -313,7 +297,7 @@ void CombatOverlay::render_damage_table(const EncounterSummary& summary) {
 
             render_row_progress_bar(
                 static_cast<float>(player->dps / top_dps),
-                get_role_color(player->job)
+                style_color(style, 48)
             );
         }
         ImGui::EndTable();
@@ -357,14 +341,11 @@ void CombatOverlay::render_healing_table(const EncounterSummary& summary) {
             center_in_row(row_h);
             ImGui::TextDisabled("%d", rank++);
 
+            const auto style = combatant_style(*player);
+
             ImGui::TableSetColumnIndex(col++);
             center_in_row(row_h);
-            ImGui::TextColored(
-                ImColor(get_job_accent_color(player->job)),
-                "[%s] %s",
-                std::string(job_abbreviation(player->job)).c_str(),
-                player->name.c_str()
-            );
+            render_name_cell(*player, style);
 
             ImGui::TableSetColumnIndex(col++);
             center_in_row(row_h);
@@ -400,7 +381,7 @@ void CombatOverlay::render_healing_table(const EncounterSummary& summary) {
 
             render_row_progress_bar(
                 static_cast<float>(player->hps / top_hps),
-                get_role_color(player->job)
+                style_color(style, 48)
             );
         }
         ImGui::EndTable();

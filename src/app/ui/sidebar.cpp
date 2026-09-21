@@ -1,5 +1,5 @@
 #include "app/ui/sidebar.hpp"
-#include "app/ui/icons.hpp"
+#include "common/ui/icons.hpp"
 #include "app/ui/theme.hpp"
 #include "app/ui/widgets.hpp"
 

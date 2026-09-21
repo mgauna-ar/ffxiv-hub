@@ -2,7 +2,7 @@
 
 #include "app/app_state.hpp"
 #include "app/ui/config_binding.hpp"
-#include "app/ui/icons.hpp"
+#include "common/ui/icons.hpp"
 #include "app/ui/theme.hpp"
 #include "app/ui/widgets.hpp"
 #include "hub/game_state.hpp"

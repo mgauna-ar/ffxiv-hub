@@ -1,6 +1,6 @@
 #pragma once
 
-#include "app/ui/imgui_guard.hpp"
+#include "common/ui/imgui_guard.hpp"
 #include "app/ui/theme.hpp"
 #include <cstdint>
 
@@ -83,8 +83,8 @@ void row_progress_bar(float fraction, uint32_t color);
 void stat_tile(const char* id, float width, const char* icon, const char* label,
                const char* value, uint32_t value_color, const char* subtitle, uint32_t accent);
 
-/// Colored job badge for a combatant row.
-void job_badge(game::Job job);
+/// Colored job badge for a combatant row: job glyph plus abbreviation.
+void job_badge(game::Job job, bool is_limit_break = false);
 
 /// Centered placeholder for a table or graph with nothing in it yet.
 void empty_state(const char* icon, const char* title, const char* hint);
