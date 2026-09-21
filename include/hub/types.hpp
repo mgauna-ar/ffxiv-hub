@@ -15,9 +15,6 @@ enum class PluginId : uint16_t {
 
 /// IPC binary packet message types multiplexed across the single Named Pipe
 enum class MessageType : uint16_t {
-    // Retired, never sent: 0x0002, 0x0003, 0x0004, 0x0102, 0x0103, 0x0104,
-    // 0x0203, 0x0207, 0x0208. Listed so a new feature does not reuse an id.
-
     // Core / Hub Lifecycle Messages (0x0001 - 0x00FF)
     Heartbeat           = 0x0001,
     Command             = 0x0005,
