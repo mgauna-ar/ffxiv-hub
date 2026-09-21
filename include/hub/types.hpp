@@ -74,6 +74,8 @@ enum class CommandId : uint32_t {
     UnhookAndExit       = 33,
     /// param_uint is a hub::ui::HideCondition bitmask
     SetHideConditions   = 34,
+    /// param_uint is a hub::meter::MeterMetric
+    SetMeterMetric      = 35,
 };
 
 /// 2D Floating-point rectangle coordinates for overlay geometry

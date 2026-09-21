@@ -249,6 +249,8 @@ struct EncounterSummary {
     std::string zone_name;
     uint64_t start_time_us{0};
     uint64_t end_time_us{0};
+    /// Wall-clock end, for display. start/end_time_us are steady_clock based.
+    uint64_t ended_at_unix_s{0};
     double duration_seconds{0.0};
     uint64_t total_damage{0};
     uint64_t total_healing{0};
@@ -273,6 +275,8 @@ struct CombatConfig {
     bool   show_col_crit{true};
     bool   show_col_dh{true};
     bool   show_col_cdh{true};
+    /// Which table the in-game overlay draws: 0 = damage, 1 = healing.
+    uint32_t overlay_metric{0};
     /// Position, size, lock, click-through, opacity, scale, hide conditions.
     ui::OverlayConfig overlay{
         .opacity = constants::DEFAULT_WINDOW_OPACITY,

@@ -157,25 +157,6 @@ void center_in_row(float row_h) {
     }
 }
 
-const char* end_reason_label(EncounterEndReason reason) {
-    switch (reason) {
-        case EncounterEndReason::Wipe: return "Wipe";
-        case EncounterEndReason::Inactivity: return "Timeout";
-        case EncounterEndReason::ZoneChange: return "Zone";
-        case EncounterEndReason::Manual: return "Clear";
-        default: return "--";
-    }
-}
-
-ImVec4 end_reason_color(EncounterEndReason reason) {
-    switch (reason) {
-        case EncounterEndReason::Wipe: return ImVec4(0.95f, 0.30f, 0.30f, 1.0f);
-        case EncounterEndReason::Inactivity: return ImVec4(0.85f, 0.70f, 0.25f, 1.0f);
-        case EncounterEndReason::Manual: return ImVec4(0.25f, 0.80f, 0.45f, 1.0f);
-        default: return ImVec4(0.60f, 0.65f, 0.75f, 1.0f);
-    }
-}
-
 } // namespace
 
 float CombatOverlay::row_height() const {
@@ -204,75 +185,14 @@ void CombatOverlay::render_row_progress_bar(float fraction, uint32_t color_u32) 
     ImGui::GetWindowDrawList()->AddRectFilled(row_min, row_max, color_u32, 0.0f);
 }
 
-void CombatOverlay::render_padlock(float size) {
-    const bool locked = m_locked.load();
-    const ImVec2 origin = ImGui::GetCursorScreenPos();
-
-    if (ImGui::InvisibleButton("##LockToggle", ImVec2(size, size))) {
-        m_locked.store(!locked);
-    }
-    const bool hovered = ImGui::IsItemHovered();
-    if (hovered) {
-        ImGui::SetTooltip("%s", locked ? "Locked (click to unlock)" : "Unlocked (click to lock)");
-    }
-
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    const ImU32 col = hovered ? IM_COL32(235, 240, 250, 255) : IM_COL32(160, 170, 190, 255);
-
-    // Body sits on the lower half; the shackle arcs above it, tilted when open.
-    const float body_w = size * 0.62f;
-    const float body_h = size * 0.46f;
-    const ImVec2 body_min(origin.x + (size - body_w) * 0.5f, origin.y + size - body_h - size * 0.08f);
-    const ImVec2 body_max(body_min.x + body_w, body_min.y + body_h);
-    dl->AddRectFilled(body_min, body_max, col, size * 0.10f);
-
-    const float shackle_r = size * 0.22f;
-    const ImVec2 shackle_c(origin.x + size * 0.5f + (locked ? 0.0f : size * 0.16f),
-                           body_min.y - shackle_r * 0.35f);
-    dl->PathArcTo(shackle_c, shackle_r, IM_PI, IM_PI * 2.0f, 12);
-    dl->PathStroke(col, 0, std::max(1.0f, size * 0.10f));
-
-    // Both legs reach the body when closed; the trailing one stays short when open.
-    dl->AddLine(ImVec2(shackle_c.x - shackle_r, shackle_c.y),
-                ImVec2(shackle_c.x - shackle_r, body_min.y),
-                col, std::max(1.0f, size * 0.10f));
-    if (locked) {
-        dl->AddLine(ImVec2(shackle_c.x + shackle_r, shackle_c.y),
-                    ImVec2(shackle_c.x + shackle_r, body_min.y),
-                    col, std::max(1.0f, size * 0.10f));
-    }
-}
-
-void CombatOverlay::render_top_bar(const EncounterSummary& current, bool viewing_history) {
+void CombatOverlay::render_top_bar(const EncounterSummary& current) {
     const float avail_w = ImGui::GetWindowWidth();
     const bool compact = avail_w < 520.0f;
     const bool roomy = avail_w >= 700.0f;
+    const bool healing = (m_metric.load() == MeterMetric::Healing);
 
-    bool is_damage = (m_active_tab == OverlayTab::Damage);
-    bool is_healing = (m_active_tab == OverlayTab::Healing);
-    bool is_history = (m_active_tab == OverlayTab::History);
-
-    const ImVec4 active_bg(0.20f, 0.25f, 0.35f, 1.0f);
-
-    if (is_damage) ImGui::PushStyleColor(ImGuiCol_Button, active_bg);
-    if (ImGui::SmallButton(compact ? "D" : "DMG")) m_active_tab = OverlayTab::Damage;
-    if (is_damage) ImGui::PopStyleColor();
-
-    ImGui::SameLine();
-    if (is_healing) ImGui::PushStyleColor(ImGuiCol_Button, active_bg);
-    if (ImGui::SmallButton(compact ? "H" : "HEAL")) m_active_tab = OverlayTab::Healing;
-    if (is_healing) ImGui::PopStyleColor();
-
-    ImGui::SameLine();
-    if (is_history) ImGui::PushStyleColor(ImGuiCol_Button, active_bg);
-    if (ImGui::SmallButton(compact ? "P" : "HIST")) m_active_tab = OverlayTab::History;
-    if (is_history) ImGui::PopStyleColor();
-
-    // Status pill: which encounter the numbers below actually describe.
-    ImGui::SameLine();
-    if (viewing_history) {
-        ImGui::TextColored(ImVec4(0.55f, 0.70f, 0.95f, 1.0f), "Pull #%d", m_selected_history_pull + 1);
-    } else if (m_engine && m_engine->in_combat()) {
+    // Status pill: whether the numbers below are still moving.
+    if (m_engine && m_engine->in_combat()) {
         ImGui::TextColored(ImVec4(0.95f, 0.30f, 0.35f, 1.0f), "LIVE");
     } else {
         ImGui::TextColored(ImVec4(0.55f, 0.60f, 0.70f, 1.0f), "IDLE");
@@ -287,7 +207,7 @@ void CombatOverlay::render_top_bar(const EncounterSummary& current, bool viewing
 
     ImGui::SameLine();
     char rate_buf[32];
-    if (m_active_tab == OverlayTab::Healing) {
+    if (healing) {
         format_rate(rate_buf, sizeof(rate_buf), current.total_hps);
         ImGui::TextColored(ImVec4(0.10f, 0.80f, 0.40f, 1.0f), "%s HPS", rate_buf);
     } else {
@@ -299,9 +219,7 @@ void CombatOverlay::render_top_bar(const EncounterSummary& current, bool viewing
     if (!compact) {
         ImGui::SameLine();
         char dmg_buf[32];
-        const uint64_t total = (m_active_tab == OverlayTab::Healing)
-                                   ? current.total_effective_healing
-                                   : current.total_damage;
+        const uint64_t total = healing ? current.total_effective_healing : current.total_damage;
         format_number(dmg_buf, sizeof(dmg_buf), total);
         ImGui::TextColored(ImVec4(0.70f, 0.75f, 0.85f, 1.0f), "%s", dmg_buf);
     }
@@ -309,15 +227,9 @@ void CombatOverlay::render_top_bar(const EncounterSummary& current, bool viewing
         ImGui::SameLine();
         ImGui::TextDisabled("| %s", current.zone_name.c_str());
     }
-
-    const float lock_size = ImGui::GetTextLineHeight() + 2.0f;
-    if (ImGui::GetContentRegionAvail().x > lock_size + 12.0f) {
-        ImGui::SameLine(ImGui::GetWindowWidth() - lock_size - 12.0f);
-        render_padlock(lock_size);
-    }
 }
 
-void CombatOverlay::render_damage_tab(const EncounterSummary& summary) {
+void CombatOverlay::render_damage_table(const EncounterSummary& summary) {
     const auto players = sorted_combatants(summary, m_party_only.load(), /*by_healing=*/false, m_hide_inactive.load());
     const double top_dps = players.empty() ? 1.0 : std::max(players.front()->dps, 1.0);
 
@@ -405,7 +317,7 @@ void CombatOverlay::render_damage_tab(const EncounterSummary& summary) {
     }
 }
 
-void CombatOverlay::render_healing_tab(const EncounterSummary& summary) {
+void CombatOverlay::render_healing_table(const EncounterSummary& summary) {
     const auto healers = sorted_combatants(summary, m_party_only.load(), /*by_healing=*/true, m_hide_inactive.load());
     const double top_hps = healers.empty() ? 1.0 : std::max(healers.front()->hps, 1.0);
 
@@ -492,98 +404,6 @@ void CombatOverlay::render_healing_tab(const EncounterSummary& summary) {
     }
 }
 
-void CombatOverlay::render_history_tab() {
-    if (!m_engine) {
-        ImGui::TextDisabled("No encounter engine connected");
-        return;
-    }
-
-    const auto& history = m_engine->pull_history();
-
-    if (ImGui::SmallButton("Clear History")) {
-        m_engine->clear_history();
-        m_selected_history_pull = -1;
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("(Pulls stored: %zu)", history.size());
-
-    if (history.empty()) {
-        ImGui::Separator();
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.7f, 1.0f), "No past encounters archived yet.");
-        return;
-    }
-
-    ImGui::Separator();
-
-    ImGuiTableFlags flags = ImGuiTableFlags_RowBg |
-                            ImGuiTableFlags_BordersInnerV |
-                            ImGuiTableFlags_ScrollY |
-                            ImGuiTableFlags_Resizable |
-                            ImGuiTableFlags_SizingStretchSame;
-
-    if (ImGui::BeginTable("##HistTable", 7, flags, ImVec2(0, 0))) {
-        ImGui::TableSetupColumn("Pull", ImGuiTableColumnFlags_WidthFixed, 44.0f);
-        ImGui::TableSetupColumn("Zone", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("Duration", ImGuiTableColumnFlags_WidthFixed, 66.0f);
-        ImGui::TableSetupColumn("Raid DPS", ImGuiTableColumnFlags_WidthFixed, 74.0f);
-        ImGui::TableSetupColumn("Total Dmg", ImGuiTableColumnFlags_WidthFixed, 76.0f);
-        ImGui::TableSetupColumn("Result", ImGuiTableColumnFlags_WidthFixed, 62.0f);
-        ImGui::TableSetupColumn("##View", ImGuiTableColumnFlags_WidthFixed, 52.0f);
-        ImGui::TableSetupScrollFreeze(0, 1);
-
-        push_header_font();
-        ImGui::TableHeadersRow();
-        pop_header_font();
-
-        const float row_h = row_height();
-        for (int i = static_cast<int>(history.size()) - 1; i >= 0; --i) {
-            const auto& p = history[i];
-            ImGui::PushID(i);
-            ImGui::TableNextRow(0, row_h);
-
-            ImGui::TableSetColumnIndex(0);
-            center_in_row(row_h);
-            const bool selected = (m_selected_history_pull == i);
-            if (selected) {
-                ImGui::TextColored(ImVec4(0.55f, 0.70f, 0.95f, 1.0f), "#%d", i + 1);
-            } else {
-                ImGui::Text("#%d", i + 1);
-            }
-
-            ImGui::TableSetColumnIndex(1);
-            center_in_row(row_h);
-            ImGui::TextUnformatted(p.zone_name.empty() ? "Unknown" : p.zone_name.c_str());
-
-            ImGui::TableSetColumnIndex(2);
-            center_in_row(row_h);
-            const uint32_t s = static_cast<uint32_t>(p.duration_seconds);
-            ImGui::Text("%02u:%02u", s / 60, s % 60);
-
-            ImGui::TableSetColumnIndex(3);
-            center_in_row(row_h);
-            text_rate(p.total_dps);
-
-            ImGui::TableSetColumnIndex(4);
-            center_in_row(row_h);
-            text_number(p.total_damage);
-
-            ImGui::TableSetColumnIndex(5);
-            center_in_row(row_h);
-            ImGui::TextColored(end_reason_color(p.end_reason), "%s", end_reason_label(p.end_reason));
-
-            ImGui::TableSetColumnIndex(6);
-            center_in_row(row_h);
-            if (ImGui::SmallButton("View")) {
-                m_selected_history_pull = i;
-                m_active_tab = OverlayTab::Damage;
-            }
-
-            ImGui::PopID();
-        }
-        ImGui::EndTable();
-    }
-}
-
 void CombatOverlay::render() {
     const float opacity = std::clamp(m_opacity.load(), 0.2f, 1.0f);
     const float scale = std::clamp(m_scale.load(), 0.7f, 2.0f);
@@ -633,13 +453,7 @@ void CombatOverlay::render() {
         m_width = cur_size.x;
         m_height = cur_size.y;
 
-        static const std::vector<EncounterSummary> s_no_history;
-        const auto& history = m_engine ? m_engine->pull_history() : s_no_history;
-        const bool viewing_history =
-            m_selected_history_pull >= 0 &&
-            m_selected_history_pull < static_cast<int>(history.size());
-
-        if (m_engine && !viewing_history) {
+        if (m_engine) {
             const auto now = std::chrono::steady_clock::now();
             const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_last_refresh);
             if (age.count() >= static_cast<long long>(m_refresh_interval_ms.load())) {
@@ -647,22 +461,14 @@ void CombatOverlay::render() {
                 m_last_refresh = now;
             }
         }
-        const EncounterSummary& shown =
-            viewing_history ? history[m_selected_history_pull] : m_cached_summary;
 
-        render_top_bar(shown, viewing_history);
+        render_top_bar(m_cached_summary);
         ImGui::Separator();
 
-        switch (m_active_tab) {
-            case OverlayTab::Damage:
-                render_damage_tab(shown);
-                break;
-            case OverlayTab::Healing:
-                render_healing_tab(shown);
-                break;
-            case OverlayTab::History:
-                render_history_tab();
-                break;
+        if (m_metric.load() == MeterMetric::Healing) {
+            render_healing_table(m_cached_summary);
+        } else {
+            render_damage_table(m_cached_summary);
         }
     }
     ImGui::End();

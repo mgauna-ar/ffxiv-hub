@@ -118,6 +118,9 @@ void EncounterEngine::end_encounter(EncounterEndReason reason, TimePoint now, ui
     summary.zone_name = m_current_zone_name;
     summary.start_time_us = m_start_time_us;
     summary.end_time_us = (timestamp_us > 0) ? timestamp_us : m_start_time_us + static_cast<uint64_t>(dur * 1e6);
+    summary.ended_at_unix_s = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
     summary.duration_seconds = dur;
     summary.total_damage = m_accumulator.total_damage();
     summary.total_healing = m_accumulator.total_healing();

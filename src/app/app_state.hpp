@@ -108,6 +108,7 @@ public:
     void send_combat_column_crit(bool show);
     void send_combat_column_dh(bool show);
     void send_combat_column_cdh(bool show);
+    void send_combat_overlay_metric(uint32_t metric);
     void send_combat_reset_stats();
     void send_combat_reset_overlay_geometry();
     void send_combat_end_encounter();

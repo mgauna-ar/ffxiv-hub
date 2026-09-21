@@ -6,6 +6,7 @@
 #include "app/ui/widgets.hpp"
 #include <algorithm>
 #include <cstdio>
+#include <ctime>
 #include <string>
 #include <vector>
 
@@ -30,6 +31,22 @@ void table_headers_row() {
     ImGui::PushStyleColor(ImGuiCol_Text, v4(colors::TextDim));
     ImGui::TableHeadersRow();
     ImGui::PopStyleColor();
+}
+
+/// Local clock time a pull ended. Pulls archived before this was recorded (and
+/// the live encounter) carry 0.
+std::string format_clock_time(uint64_t unix_seconds) {
+    if (unix_seconds == 0) return "--:--";
+    const auto t = static_cast<std::time_t>(unix_seconds);
+    std::tm tm{};
+#ifdef _WIN32
+    localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
+    char buf[8];
+    std::snprintf(buf, sizeof(buf), "%02d:%02d", tm.tm_hour, tm.tm_min);
+    return buf;
 }
 
 /// Encounter state as a badge, so the live/wipe/clear distinction is visible at a
@@ -249,11 +266,13 @@ void render_history_table(AppState& app_state,
         return;
     }
 
-    if (!ImGui::BeginTable("##PullHistoryTable", 6, kTableFlags, ImVec2(0.0f, fill_h(0.0f)))) return;
+    if (!ImGui::BeginTable("##PullHistoryTable", 8, kTableFlags, ImVec2(0.0f, fill_h(0.0f)))) return;
 
     ImGui::TableSetupColumn("Pull", ImGuiTableColumnFlags_WidthFixed, m(60.0f));
+    ImGui::TableSetupColumn("Ended", ImGuiTableColumnFlags_WidthFixed, m(70.0f));
     ImGui::TableSetupColumn("Duration", ImGuiTableColumnFlags_WidthFixed, m(90.0f));
     ImGui::TableSetupColumn("Raid DPS", ImGuiTableColumnFlags_WidthFixed, m(100.0f));
+    ImGui::TableSetupColumn("Raid HPS", ImGuiTableColumnFlags_WidthFixed, m(100.0f));
     ImGui::TableSetupColumn("Total damage", ImGuiTableColumnFlags_WidthFixed, m(110.0f));
     ImGui::TableSetupColumn("Outcome", ImGuiTableColumnFlags_WidthFixed, m(100.0f));
     ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthStretch);
@@ -268,16 +287,22 @@ void render_history_table(AppState& app_state,
         text_colored_u32(colors::TextMuted, "#%zu", i + 1);
 
         ImGui::TableSetColumnIndex(1);
+        text_colored_u32(colors::TextMuted, "%s", format_clock_time(pull.ended_at_unix_s).c_str());
+
+        ImGui::TableSetColumnIndex(2);
         text_colored_u32(colors::TextBody, "%s",
                          format_duration(static_cast<uint64_t>(pull.duration_seconds)).c_str());
 
-        ImGui::TableSetColumnIndex(2);
+        ImGui::TableSetColumnIndex(3);
         text_colored_u32(colors::AccentHover, "%s", format_dps(pull.total_dps).c_str());
 
-        ImGui::TableSetColumnIndex(3);
+        ImGui::TableSetColumnIndex(4);
+        text_colored_u32(colors::SuccessLight, "%s", format_dps(pull.total_hps).c_str());
+
+        ImGui::TableSetColumnIndex(5);
         text_colored_u32(colors::TextBody, "%s", format_damage(pull.total_damage).c_str());
 
-        ImGui::TableSetColumnIndex(4);
+        ImGui::TableSetColumnIndex(6);
         if (pull.state == meter::EncounterState::Wipe) {
             pill("Wipe", colors::Danger);
         } else if (pull.state == meter::EncounterState::Complete) {
@@ -286,7 +311,7 @@ void render_history_table(AppState& app_state,
             pill("Timeout", colors::TextDim);
         }
 
-        ImGui::TableSetColumnIndex(5);
+        ImGui::TableSetColumnIndex(7);
         const std::string inspect_btn = std::string(ICON_SEARCH "  Inspect##") + std::to_string(i);
         if (button(inspect_btn.c_str(), ButtonKind::Secondary, ButtonSize::Small)) {
             s_selected_pull_idx = static_cast<int>(i);
@@ -315,6 +340,15 @@ void render_overlay_card(AppState& app_state) {
     overlay_opts.max_scale = meter::constants::MAX_UI_SCALE;
     overlay_opts.defaults = meter::CombatConfig{}.overlay;
     render_overlay_settings(app_state, overlay_opts);
+
+    static const char* metric_modes[] = { "Damage", "Healing" };
+    int metric = cfg_int(METER, "overlay_metric", 0);
+    begin_setting_row("Meter metric", "Which table the in-game meter draws.");
+    if (ImGui::Combo("##meter_metric", &metric, metric_modes, 2)) {
+        cfg_store(METER, "overlay_metric", metric);
+        app_state.send_combat_overlay_metric(static_cast<uint32_t>(metric));
+    }
+    end_setting_row();
 
     end_card();
 }

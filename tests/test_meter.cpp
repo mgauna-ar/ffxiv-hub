@@ -577,6 +577,9 @@ TEST_CASE(MeterEngine, PullHistoryArchive) {
     TEST_ASSERT_EQ(engine.pull_history()[2].total_damage, 5000u);
     TEST_ASSERT_EQ(engine.pull_history()[1].total_damage, 4000u);
     TEST_ASSERT_EQ(engine.pull_history()[0].total_damage, 3000u);
+
+    // Archived pulls carry a wall-clock end so the app can show when they happened.
+    TEST_ASSERT(engine.pull_history()[2].ended_at_unix_s > 0u);
 }
 
 TEST_CASE(MeterPlugin, PluginLifecycleAndConfig) {

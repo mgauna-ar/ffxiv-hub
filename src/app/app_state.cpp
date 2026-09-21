@@ -45,6 +45,14 @@ AppState::~AppState() {
 
 bool AppState::initialize() {
     config::ConfigManager::instance().load();
+    // The mirror engine has to close pulls on the same schedule as the in-game
+    // one, or the app's history lands on different encounter boundaries.
+    const auto& meter_cfg = config::ConfigManager::instance().root()["combat_meter"];
+    if (meter_cfg.contains("inactivity_timeout_seconds")) {
+        std::lock_guard<std::mutex> lock(m_combat_mutex);
+        m_engine.set_inactivity_timeout(meter_cfg["inactivity_timeout_seconds"].as_double(
+            meter::constants::DEFAULT_INACTIVITY_TIMEOUT_SECONDS));
+    }
     m_pipe_server.start();
     m_network_monitor.start(0);
     return true;
@@ -398,6 +406,10 @@ void AppState::send_unhook_and_exit() {
 }
 
 void AppState::send_combat_end_encounter() {
+    {
+        std::lock_guard<std::mutex> lock(m_combat_mutex);
+        m_engine.end_encounter(meter::EncounterEndReason::Manual);
+    }
     m_pipe_server.send_command(PluginId::CombatMeter, CommandId::EndEncounter, 0);
 }
 
@@ -414,6 +426,10 @@ void AppState::send_combat_refresh_interval(uint32_t ms) {
 }
 
 void AppState::send_combat_inactivity_timeout(float seconds) {
+    {
+        std::lock_guard<std::mutex> lock(m_combat_mutex);
+        m_engine.set_inactivity_timeout(static_cast<double>(seconds));
+    }
     m_pipe_server.send_command(PluginId::CombatMeter, CommandId::SetInactivityTimeout, 0, seconds);
 }
 
@@ -431,6 +447,10 @@ void AppState::send_combat_column_dh(bool show) {
 
 void AppState::send_combat_column_cdh(bool show) {
     m_pipe_server.send_command(PluginId::CombatMeter, CommandId::SetColumnCdh, show ? 1 : 0);
+}
+
+void AppState::send_combat_overlay_metric(uint32_t metric) {
+    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::SetMeterMetric, metric);
 }
 
 void AppState::send_combat_reset_stats() {

@@ -30,7 +30,8 @@ ConfigManager::ConfigManager() {
         {"overlay_hide_conditions", JsonValue(0)},
         {"party_only", JsonValue(false)},
         {"hide_inactive", JsonValue(false)},
-        {"inactivity_timeout_seconds", JsonValue(7.0f)}
+        {"inactivity_timeout_seconds", JsonValue(7.0f)},
+        {"overlay_metric", JsonValue(0)}
     };
     m_root["latency_mitigator"] = JsonValue::ObjectType{
         {"enabled", JsonValue(true)},

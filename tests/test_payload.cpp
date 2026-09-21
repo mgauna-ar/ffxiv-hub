@@ -52,7 +52,7 @@ TEST_CASE(Payload, LatencyOverlayInterfaceAndState) {
     TEST_ASSERT_NEAR(hud.scale(), 1.25f, 0.01f);
 }
 
-TEST_CASE(Payload, CombatOverlayInterfaceAndTabs) {
+TEST_CASE(Payload, CombatOverlayInterface) {
     meter::EncounterEngine engine;
     meter::CombatOverlay overlay(&engine);
 
@@ -68,11 +68,9 @@ TEST_CASE(Payload, CombatOverlayInterfaceAndTabs) {
     TEST_ASSERT_NEAR(read_geo.width, 450.0f, 0.01f);
     TEST_ASSERT_NEAR(read_geo.height, 250.0f, 0.01f);
 
-    TEST_ASSERT(overlay.active_tab() == meter::OverlayTab::Damage);
-    overlay.set_active_tab(meter::OverlayTab::Healing);
-    TEST_ASSERT(overlay.active_tab() == meter::OverlayTab::Healing);
-    overlay.set_active_tab(meter::OverlayTab::History);
-    TEST_ASSERT(overlay.active_tab() == meter::OverlayTab::History);
+    TEST_ASSERT(overlay.metric() == meter::MeterMetric::Damage);
+    overlay.set_metric(meter::MeterMetric::Healing);
+    TEST_ASSERT(overlay.metric() == meter::MeterMetric::Healing);
 
     TEST_ASSERT(!overlay.is_locked());
     overlay.set_locked(true);

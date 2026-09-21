@@ -108,6 +108,12 @@ void dispatch_combat_meter(const CommandDispatchTargets& t, const ipc::CommandPa
         case CommandId::SetColumnCdh:
             if (t.combat_overlay) t.combat_overlay->set_show_col_cdh(cmd.param_uint != 0);
             break;
+        case CommandId::SetMeterMetric:
+            if (t.combat_overlay) {
+                t.combat_overlay->set_metric(cmd.param_uint == 1 ? meter::MeterMetric::Healing
+                                                                 : meter::MeterMetric::Damage);
+            }
+            break;
         case CommandId::ReloadConfig:
             if (t.combat_plugin) {
                 config::ConfigManager::instance().load();

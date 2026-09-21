@@ -57,11 +57,12 @@ void CombatPlugin::serialize_config(config::JsonValue& out) const {
     out["show_col_crit"] = config::JsonValue(m_config.show_col_crit);
     out["show_col_dh"] = config::JsonValue(m_config.show_col_dh);
     out["show_col_cdh"] = config::JsonValue(m_config.show_col_cdh);
+    out["overlay_metric"] = config::JsonValue(m_config.overlay_metric);
 
-    // The overlay is the source of truth for anything the player can change live
-    // in-game (dragging/resizing the window, the padlock icon, opacity/scale
-    // commands from the desktop app) - m_config only holds the last-loaded values
-    // for these until they're synced here, so read the live state back out.
+    // The overlay is the source of truth for anything that can change live
+    // (dragging/resizing the window, opacity/scale commands from the desktop
+    // app) - m_config only holds the last-loaded values for these until they're
+    // synced here, so read the live state back out.
     if (m_overlay) {
         out["party_only"] = config::JsonValue(m_overlay->party_only());
     }
@@ -84,6 +85,7 @@ void CombatPlugin::deserialize_config(const config::JsonValue& in) {
     if (in.contains("show_col_crit")) m_config.show_col_crit = in["show_col_crit"].as_bool(m_config.show_col_crit);
     if (in.contains("show_col_dh")) m_config.show_col_dh = in["show_col_dh"].as_bool(m_config.show_col_dh);
     if (in.contains("show_col_cdh")) m_config.show_col_cdh = in["show_col_cdh"].as_bool(m_config.show_col_cdh);
+    if (in.contains("overlay_metric")) m_config.overlay_metric = static_cast<uint32_t>(in["overlay_metric"].as_int(static_cast<int>(m_config.overlay_metric)));
     m_config.overlay = ui::deserialize_overlay(in, m_config.overlay);
 
     if (m_overlay) {
@@ -95,6 +97,7 @@ void CombatPlugin::deserialize_config(const config::JsonValue& in) {
         m_overlay->set_show_col_crit(m_config.show_col_crit);
         m_overlay->set_show_col_dh(m_config.show_col_dh);
         m_overlay->set_show_col_cdh(m_config.show_col_cdh);
+        m_overlay->set_metric(m_config.overlay_metric == 1 ? MeterMetric::Healing : MeterMetric::Damage);
         m_overlay->apply_config(m_config.overlay);
     }
 }

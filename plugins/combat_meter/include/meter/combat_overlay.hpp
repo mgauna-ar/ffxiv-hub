@@ -12,21 +12,20 @@
 
 namespace hub::meter {
 
-enum class OverlayTab : uint8_t {
+enum class MeterMetric : uint8_t {
     Damage,
-    Healing,
-    History
+    Healing
 };
 
 /**
  * @brief Independent In-Game Combat Meter Analytical Inspector Overlay (Dear ImGui).
  *
- * Renders the full analytical inspector directly onto Final Fantasy XIV's backbuffer
- * before frame presentation. Features:
- * - Damage, Healing (effective vs overheal), and History tabs
+ * Renders the live encounter directly onto Final Fantasy XIV's backbuffer before
+ * frame presentation. Features:
+ * - A single table, damage or healing (effective vs overheal), picked in the app
  * - Job/Role colored full-row horizontal progress bars
  * - Dynamic row heights (24px to 34px) and TrueType fonts
- * - Single-row responsive top bar with padlock toggle
+ * - Single-row responsive top bar
  */
 class CombatOverlay : public hub::ui::OverlayBase {
 public:
@@ -40,9 +39,9 @@ public:
     void set_engine(EncounterEngine* engine) noexcept { m_engine = engine; }
     [[nodiscard]] EncounterEngine* engine() const noexcept { return m_engine; }
 
-    // Tab navigation
-    void set_active_tab(OverlayTab tab) noexcept { m_active_tab = tab; }
-    [[nodiscard]] OverlayTab active_tab() const noexcept { return m_active_tab; }
+    // Which table the overlay draws; selected from the desktop app.
+    void set_metric(MeterMetric metric) noexcept { m_metric.store(metric); }
+    [[nodiscard]] MeterMetric metric() const noexcept { return m_metric.load(); }
 
     // Overlay controls (visible/locked/click_through/opacity/scale/geometry/
     // hide conditions inherited from OverlayBase)
@@ -67,10 +66,6 @@ public:
     void set_show_col_cdh(bool show) noexcept { m_show_col_cdh.store(show); }
     [[nodiscard]] bool show_col_cdh() const noexcept { return m_show_col_cdh.load(); }
 
-    /// Negative selects the live encounter rather than an archived pull.
-    void set_selected_history_pull(int index) noexcept { m_selected_history_pull = index; }
-    [[nodiscard]] int selected_history_pull() const noexcept { return m_selected_history_pull; }
-
     [[nodiscard]] Rect default_geometry() const noexcept override;
 
     /// Ranked view of a summary's combatants: pets merged into owners, zero-stat
@@ -92,8 +87,7 @@ private:
     std::atomic<bool> m_show_col_cdh{true};
     std::atomic<uint32_t> m_refresh_interval_ms{500};
 
-    OverlayTab m_active_tab{OverlayTab::Damage};
-    int m_selected_history_pull{-1};
+    std::atomic<MeterMetric> m_metric{MeterMetric::Damage};
 
     /// Rebuilding the summary is O(combatants x actions); the game presents far
     /// faster than the numbers meaningfully change.
@@ -101,12 +95,10 @@ private:
     std::chrono::steady_clock::time_point m_last_refresh{};
 
 #ifdef _WIN32
-    void render_top_bar(const EncounterSummary& current, bool viewing_history);
-    void render_damage_tab(const EncounterSummary& summary);
-    void render_healing_tab(const EncounterSummary& summary);
-    void render_history_tab();
+    void render_top_bar(const EncounterSummary& current);
+    void render_damage_table(const EncounterSummary& summary);
+    void render_healing_table(const EncounterSummary& summary);
     void render_row_progress_bar(float fraction, uint32_t color_u32);
-    void render_padlock(float size);
     [[nodiscard]] float row_height() const;
 #endif
 };
