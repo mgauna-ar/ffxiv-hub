@@ -201,6 +201,77 @@ Located in [`include/hub/game_definitions.hpp`](include/hub/game_definitions.hpp
 
 ---
 
+## 🔄 After a Game Patch
+
+Five headers are generated from the game's own Excel sheets, and the payload's signatures
+are byte patterns in the game executable. Both can go stale on patch day. Everything here
+is offline - no XIVAPI, no third-party data - and needs only files copied from an install.
+
+### 1. Copy the game files
+
+Only the `0a0000` (exd) category and the executable are read, ~375 MB total. From the
+Windows install root (`C:\Program Files (x86)\SquareEnix\FINAL FANTASY XIV - A Realm Reborn\`):
+
+```
+game/sqpack/ffxiv/0a0000.win32.*     # .index, .index2 and every datN
+game/ffxiv_dx11.exe
+```
+
+The other category prefixes are models, textures, sound and scripts; the `ex1`...`ex5`
+folders hold expansion content. Excel sheets all live in the base `ffxiv` repository,
+current expansion included. Put them anywhere outside the repo - both tools default to
+`$FFXIV_HUB_GAME_DIR`, then `~/ffxiv/game`, and take `--game-dir`.
+
+### 2. Regenerate the data tables
+
+```bash
+python3 tools/gen_game_tables.py
+```
+
+Writes `include/hub/game/{actions,status,territory,limit_break,job}.hpp` and
+`src/common/game_tables.cpp`. Review `git diff` on those: it shows exactly which actions,
+statuses, duties and jobs the patch added or renamed. Regeneration is deterministic - an
+unchanged install must produce byte-identical files.
+
+- **Action and Status are large** (~45k and ~4.8k rows), so they live in one `.cpp` with
+  only a declaration in the header. Do not move them into a header: pulling 1.6 MB into
+  every translation unit is the difference between a 37s build and a much worse one.
+- **`pets.hpp` is deliberately NOT generated.** The game's `Pet` sheet also lists every
+  Beastmaster tameable (`squirrel`, `crab`, `bat`, `ghost`, `behemoth`, `chimera`...),
+  whose names collide with ordinary enemies; generating it would merge bosses into player
+  rows. It stays hand-curated, and matching is exact - a substring test previously
+  classified every Titan/Garuda/Ifrit/Bahamut boss as a pet and dropped it from the meter.
+- **Column indices are positional**, pinned at the top of the generator and verified
+  against known rows (Braver/200 in ActionCategory 9, territory 1238 ->
+  "Futures Rewritten (Ultimate)"). If a patch reorders sheet columns the generator will
+  emit plausible-looking wrong data rather than fail, so check those spot-values in the
+  diff, and re-pin the indices if they moved.
+- **`ClassJob.Role` does not match this project's `Role`**: the game does not split
+  physical ranged from casters. `job_to_role` derives that from the job-role column (where
+  2 and 6 are both healer subtypes) and lets a base class inherit from the job that grows
+  out of it. Verified to reproduce the hand-written table exactly for every pre-existing job.
+
+### 3. Check the signatures
+
+```bash
+python3 tools/check_signatures.py
+```
+
+Reads the patterns straight out of `game_definitions.hpp` - no second copy to drift - and
+matches them with the same `hub::memory::find_pattern` the payload uses, against `.text`
+in the executable on disk. Each is `OK` (exactly one hit), `BROKEN` (zero) or `AMBIGUOUS`
+(more than one, which is just as bad since the payload takes the first match). Non-zero
+exit if any is not `OK`.
+
+**What it cannot do:** it reports that a signature broke, not what to replace it with, and
+it cannot validate the struct field offsets above. Both remain manual reversing work.
+
+### 4. Verify
+
+```bash
+make
+```
+
 ## 🧪 Verification & Test Commands
 
 ### Running Unit Tests (macOS / Linux / Windows)
