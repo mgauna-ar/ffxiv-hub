@@ -134,5 +134,12 @@ The GitHub Actions CI/CD pipeline automatically compiles, tests, and publishes `
 ---
 
 ## 📄 License & Fair Use
+
+Bundled third-party assets:
+- **Dear ImGui** (MIT) - vendored under `src/third_party/imgui/`.
+- **MinHook** (BSD-2-Clause) - vendored under `src/third_party/minhook/`.
+- **Lucide icons** (ISC) - a 50-glyph subset is embedded in `src/app/ui/icons_font.inl`;
+  regenerate it with `tools/embed_icon_font.py`.
+
 Final Fantasy XIV is a registered trademark of Square Enix Co., Ltd.
 This project is an independent open-source utility designed for non-commercial educational and diagnostic purposes.

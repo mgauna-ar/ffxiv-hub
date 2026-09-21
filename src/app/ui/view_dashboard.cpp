@@ -1,145 +1,258 @@
 #include "app/ui/view_dashboard.hpp"
+#include "app/ui/icons.hpp"
 #include "app/ui/theme.hpp"
+#include "app/ui/widgets.hpp"
 #include <string>
 #include "common/os/logger.hpp"
 #include "hub/game_definitions.hpp"
 
-#ifdef _WIN32
-#if __has_include("third_party/imgui/imgui.h")
-#include "third_party/imgui/imgui.h"
-#define HAVE_IMGUI 1
-#elif __has_include("imgui.h")
-#include "imgui.h"
-#define HAVE_IMGUI 1
-#endif
-#endif
-
 namespace hub::app::ui {
+
+#ifdef HAVE_IMGUI
+namespace {
+
+/// Icon shown beside a plugin card, keyed off the view it opens so the dashboard
+/// does not need to know anything else about the plugin.
+const char* plugin_icon(DesktopView view) {
+    switch (view) {
+        case DesktopView::CombatMeter:      return ICON_SWORDS;
+        case DesktopView::LatencyMitigator: return ICON_ACTIVITY;
+        case DesktopView::Dashboard:
+        case DesktopView::Settings:         break;
+    }
+    return ICON_LAYERS;
+}
+
+uint32_t plugin_accent(DesktopView view) {
+    switch (view) {
+        case DesktopView::CombatMeter:      return colors::Danger;
+        case DesktopView::LatencyMitigator: return colors::Accent;
+        case DesktopView::Dashboard:
+        case DesktopView::Settings:         break;
+    }
+    return colors::Violet;
+}
+
+/// The attach state, as one headline plus one detail line, so the hero card can
+/// show it without a branch per line at the call site.
+struct AttachStatus {
+    const char* headline;
+    uint32_t headline_color;
+    std::string detail;
+    uint32_t detail_color;
+};
+
+AttachStatus attach_status(AppState& app_state) {
+    if (app_state.game_pid() == 0) {
+        return { "Waiting for game", colors::TextMuted,
+                 "Start Final Fantasy XIV (Dawntrail) and the hub attaches by itself.",
+                 colors::TextDim };
+    }
+    if (app_state.is_access_denied()) {
+        return { "Access denied (error 5)", colors::Danger,
+                 "Injection was refused. Run FFXIV Hub as administrator.", colors::Warning };
+    }
+    if (!app_state.is_connected()) {
+        return { "Injected, awaiting handshake", colors::Warning,
+                 "hub_payload.dll is resident; the IPC pipe has not answered yet.",
+                 colors::TextDim };
+    }
+    if (!app_state.hooks_installed()) {
+        // A live pipe with dead hooks looks identical to a healthy attach from the
+        // outside, and is the state worth surfacing loudly.
+        std::string detail = app_state.payload_status_message();
+        if (detail.empty()) detail = "The payload is connected but no hooks are installed.";
+        return { "Connected, hooks NOT installed", colors::Danger, detail, colors::Warning };
+    }
+    return { "Hooked & active", colors::SuccessLight,
+             "hub_payload.dll is hooked into the client's present loop.", colors::TextDim };
+}
+
+void render_hero(AppState& app_state) {
+    const AttachStatus status = attach_status(app_state);
+
+    CardOptions opts{};
+    opts.accent = status.headline_color;
+    begin_card("##GameStatusHero", ImVec2(0.0f, m(104.0f)), opts);
+
+    const float body_y = ImGui::GetCursorPosY();
+    icon_chip(ICON_GAMEPAD, status.headline_color, 46.0f);
+
+    ImGui::SameLine(0.0f, m(14.0f));
+    ImGui::BeginGroup();
+    ImGui::SetCursorPosY(body_y + m(2.0f));
+    ImGui::PushFont(bold_font());
+    text_colored_u32(colors::TextPrimary, "FINAL FANTASY XIV");
+    ImGui::PopFont();
+    ImGui::SameLine(0.0f, m(8.0f));
+    text_colored_u32(colors::TextFaint, "x64 DX11");
+
+    text_colored_u32(status.headline_color, "%s", status.headline);
+    text_colored_u32(status.detail_color, "%s", status.detail.c_str());
+    ImGui::EndGroup();
+
+    // Right-hand facts column: version and PID, the two things worth checking first
+    // when hooks stop resolving.
+    ImGui::SameLine();
+    const float facts_w = m(220.0f);
+    right_align(facts_w);
+    ImGui::BeginGroup();
+    ImGui::SetCursorPosY(body_y + m(4.0f));
+    if (app_state.game_pid() != 0) {
+        text_colored_u32(colors::TextMuted, "ffxiv_dx11.exe  -  PID %u", app_state.game_pid());
+    } else {
+        text_colored_u32(colors::TextDim, "no process attached");
+    }
+    text_colored_u32(colors::TextDim, "signatures target %s",
+                     std::string(game::definitions::SUPPORTED_GAME_VERSION).c_str());
+    text_colored_u32(colors::TextDim, "protocol FFXH v1 (20-byte pack)");
+    ImGui::EndGroup();
+
+    end_card();
+}
+
+void render_stat_row(AppState& app_state) {
+    const float w = split_w(4);
+
+    const char* pipe_state = app_state.is_connected() ? "duplex, attached" : "listening";
+    char packets[32];
+    std::snprintf(packets, sizeof(packets), "%s",
+                  format_damage(app_state.pipe_server().packets_received()).c_str());
+    stat_tile("##TilePackets", w, ICON_PLUG, "IPC PACKETS", packets,
+              colors::TextPrimary, pipe_state, colors::Accent);
+    ImGui::SameLine(0.0f, m(metrics::Gutter));
+
+    const auto summary = app_state.encounter_engine().current_summary();
+    char raid_dps[32];
+    std::snprintf(raid_dps, sizeof(raid_dps), "%s", format_dps(summary.total_dps).c_str());
+    char combatants[40];
+    std::snprintf(combatants, sizeof(combatants), "%zu combatants tracked", summary.combatants.size());
+    stat_tile("##TileDps", w, ICON_SWORDS, "RAID DPS", raid_dps,
+              summary.total_dps > 0.0 ? colors::SuccessLight : colors::TextDim,
+              combatants, colors::Success);
+    ImGui::SameLine(0.0f, m(metrics::Gutter));
+
+    const auto metrics_snapshot = app_state.get_mitigator_metrics();
+    char saved[32];
+    std::snprintf(saved, sizeof(saved), "%.2f s", metrics_snapshot.total_delay_reduced_ms / 1000.0f);
+    char actions[40];
+    std::snprintf(actions, sizeof(actions), "%llu actions mitigated",
+                  static_cast<unsigned long long>(metrics_snapshot.total_actions_mitigated));
+    stat_tile("##TileSaved", w, ICON_BOLT, "LATENCY SAVED", saved,
+              colors::WarningLight, actions, colors::Warning);
+    ImGui::SameLine(0.0f, m(metrics::Gutter));
+
+    const double ping = app_state.network_ping_ms();
+    char ping_text[32];
+    if (ping >= 0.0) {
+        std::snprintf(ping_text, sizeof(ping_text), "%.0f ms", ping);
+    } else {
+        std::snprintf(ping_text, sizeof(ping_text), "--");
+    }
+    char jitter[40];
+    std::snprintf(jitter, sizeof(jitter), "+/- %.1f ms jitter", metrics_snapshot.latest_jitter_ms);
+    stat_tile("##TilePing", w, ICON_ACTIVITY, "NETWORK PING", ping_text,
+              ping >= 0.0 ? colors::TextPrimary : colors::TextDim, jitter, colors::Violet);
+}
+
+void render_plugin_cards(AppState& app_state) {
+    const auto& plugins = app_state.registered_plugins();
+    if (plugins.empty()) {
+        empty_state(ICON_LAYERS, "No plugins registered",
+                    "The payload reports its plugins once it attaches.");
+        return;
+    }
+
+    const int columns = static_cast<int>(plugins.size());
+    const float card_w = split_w(columns);
+
+    for (size_t i = 0; i < plugins.size(); ++i) {
+        const auto& plugin = plugins[i];
+        if (i > 0) ImGui::SameLine(0.0f, m(metrics::Gutter));
+
+        const uint32_t accent = plugin_accent(plugin.view);
+        CardOptions opts{};
+        opts.hoverable = true;
+        const std::string card_id = "##PluginCard" + std::to_string(static_cast<uint16_t>(plugin.id));
+        begin_card(card_id.c_str(), ImVec2(card_w, 0.0f), opts);
+
+        const float head_y = ImGui::GetCursorPosY();
+        icon_chip(plugin_icon(plugin.view), accent, metrics::ChipSizeLg);
+        ImGui::SameLine(0.0f, m(10.0f));
+        ImGui::BeginGroup();
+        ImGui::SetCursorPosY(head_y + m(1.0f));
+        ImGui::PushFont(bold_font());
+        text_colored_u32(colors::TextPrimary, "%s", plugin.name.c_str());
+        ImGui::PopFont();
+        text_colored_u32(colors::TextDim, "v%s  -  in-game overlay", plugin.version.c_str());
+        ImGui::EndGroup();
+
+        ImGui::SameLine();
+        const float pill_w = m(92.0f);
+        right_align(pill_w);
+        ImGui::SetCursorPosY(head_y + m(5.0f));
+        pill("Registered", colors::SuccessLight);
+
+        ImGui::Dummy(ImVec2(0.0f, m(6.0f)));
+        ImGui::PushTextWrapPos(0.0f);
+        text_colored_u32(colors::TextMuted, "%s", plugin.description.c_str());
+        ImGui::PopTextWrapPos();
+
+        // Push the action to the card's bottom edge so cards of differing text
+        // length still line their buttons up.
+        const float gap = ImGui::GetContentRegionAvail().y - m(metrics::ButtonH);
+        if (gap > 0.0f) ImGui::Dummy(ImVec2(0.0f, gap));
+        if (button(ICON_PLAY "  Open view", ButtonKind::Primary, ButtonSize::Medium)) {
+            app_state.set_current_view(plugin.view);
+        }
+
+        end_card();
+    }
+}
+
+} // namespace
+#endif
 
 void render_view_dashboard(AppState& app_state) {
 #ifdef HAVE_IMGUI
-    ImGui::PushFont(bold_font());
-    ImGui::TextColored(ImVec4(0.95f, 0.96f, 0.98f, 1.0f), "System Dashboard");
-    ImGui::PopFont();
-    ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "Central telemetry and runtime supervision for Final Fantasy XIV");
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    const float panel_width = (ImGui::GetContentRegionAvail().x - 16.0f * ui_scale()) * 0.5f;
-    const float card_height = 160.0f * ui_scale();
-
-    // Row 1: Left = Game Status, Right = Hub Server Status
-    ImGui::BeginChild("##GameStatusCard", ImVec2(panel_width, card_height), true);
-    ImGui::TextColored(ImVec4(0.231f, 0.510f, 0.965f, 1.0f), "FINAL FANTASY XIV (x64 DX11)");
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    const uint32_t pid = app_state.game_pid();
-    if (pid != 0) {
-        ImGui::Text("Process: Running (PID %u)", pid);
-        ImGui::Text("Target Executable: ffxiv_dx11.exe");
-        // Offsets and signatures are client-version specific, so which version
-        // they target is the first thing to check when hooks stop resolving.
-        ImGui::Text("Signatures Target: %s",
-                    std::string(game::definitions::SUPPORTED_GAME_VERSION).c_str());
-        if (app_state.is_access_denied()) {
-            ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f), "State: Access Denied (Error 5)");
-            ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.25f, 1.0f), "Please run FFXIV Hub as Administrator!");
-        } else if (!app_state.is_connected()) {
-            ImGui::Text("Payload State: Injected / Awaiting Handshake");
-        } else if (app_state.hooks_installed()) {
-            ImGui::TextColored(ImVec4(0.063f, 0.725f, 0.506f, 1.0f),
-                               "Payload State: Hooked & Active (hub_payload.dll)");
-        } else {
-            // A live pipe with dead hooks looks identical to a healthy attach
-            // from the outside, and is the state worth surfacing loudly.
-            ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f),
-                               "Payload State: Connected, hooks NOT installed");
-            const std::string detail = app_state.payload_status_message();
-            if (!detail.empty()) {
-                ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.25f, 1.0f), "%s", detail.c_str());
-            }
-        }
-    } else {
-        ImGui::TextColored(ImVec4(0.70f, 0.74f, 0.82f, 1.0f), "Process: Not detected");
-        ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "Start Final Fantasy XIV (Dawntrail) to auto-attach");
-    }
-    ImGui::EndChild();
-
+    page_header(ICON_DASHBOARD, "System Dashboard",
+                "Central telemetry and runtime supervision for Final Fantasy XIV");
     ImGui::SameLine();
+    right_align(m(metrics::ButtonMd));
+    if (button(ICON_REFRESH "  Re-scan", ButtonKind::Secondary, ButtonSize::Medium)) {
+        app_state.update();
+    }
+    ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
 
-    ImGui::BeginChild("##HubServerCard", ImVec2(panel_width, card_height), true);
-    ImGui::TextColored(ImVec4(0.063f, 0.725f, 0.506f, 1.0f), "HUB IPC SERVER");
-    ImGui::Separator();
-    ImGui::Spacing();
+    render_hero(app_state);
+    ImGui::Dummy(ImVec2(0.0f, m(2.0f)));
+    render_stat_row(app_state);
+    ImGui::Dummy(ImVec2(0.0f, m(6.0f)));
 
-    ImGui::Text("Endpoint: \\\\.\\pipe\\ffxiv_hub_pipe");
-    ImGui::Text("Connection: %s", app_state.is_connected() ? "Connected (Duplex)" : "Listening");
-    ImGui::Text("Packets Ingested: %llu", static_cast<unsigned long long>(app_state.pipe_server().packets_received()));
-    ImGui::Text("Protocol Version: FFXH v1 (20-byte pack)");
+    char plugins_label[48];
+    std::snprintf(plugins_label, sizeof(plugins_label), "REGISTERED PLUGINS (%zu)",
+                  app_state.registered_plugins().size());
+    section_header(ICON_LAYERS, plugins_label);
+
+    // The action row is pinned to the bottom, so the plugin cards take whatever
+    // height is left instead of leaving a gap under a fixed-size block.
+    const float actions_h = m(metrics::ButtonH) + m(10.0f);
+    ImGui::BeginChild("##PluginCardRow", ImVec2(0.0f, fill_h(0.0f) - actions_h),
+                      ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
+    render_plugin_cards(app_state);
     ImGui::EndChild();
 
-    ImGui::Spacing();
-    ImGui::Spacing();
-
-    // Row 2: Registered Plugins Registry (100% Dynamic!)
-    ImGui::TextColored(ImVec4(0.95f, 0.96f, 0.98f, 1.0f), "Registered Plugins (%zu)", app_state.registered_plugins().size());
-    ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "Modular in-game extensions loaded in this session");
-    ImGui::Spacing();
-
-    if (ImGui::BeginTable("##PluginsTable", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn("Plugin", ImGuiTableColumnFlags_WidthFixed, 180.0f * ui_scale());
-        ImGui::TableSetupColumn("Version", ImGuiTableColumnFlags_WidthFixed, 80.0f * ui_scale());
-        ImGui::TableSetupColumn("Description", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 140.0f * ui_scale());
-        ImGui::TableHeadersRow();
-
-        for (const auto& plugin : app_state.registered_plugins()) {
-            ImGui::TableNextRow();
-
-            // Plugin Name & State
-            ImGui::TableSetColumnIndex(0);
-            ImGui::TextColored(ImVec4(0.95f, 0.96f, 0.98f, 1.0f), "%s", plugin.name.c_str());
-
-            // Version
-            ImGui::TableSetColumnIndex(1);
-            ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "v%s", plugin.version.c_str());
-
-            // Description
-            ImGui::TableSetColumnIndex(2);
-            ImGui::TextColored(ImVec4(0.70f, 0.74f, 0.82f, 1.0f), "%s", plugin.description.c_str());
-
-            // Action: Navigate to plugin view
-            ImGui::TableSetColumnIndex(3);
-            std::string btn_label = "Open View ##" + std::to_string(static_cast<uint16_t>(plugin.id));
-            if (ImGui::Button(btn_label.c_str(), ImVec2(130.0f * ui_scale(), 24.0f * ui_scale()))) {
-                app_state.set_current_view(plugin.view);
-            }
-        }
-
-        ImGui::EndTable();
-    }
-
-    ImGui::Spacing();
-    ImGui::Spacing();
-
-    // Row 3: Hub System Actions
-    ImGui::TextColored(ImVec4(0.95f, 0.96f, 0.98f, 1.0f), "Hub Actions");
-    ImGui::Spacing();
-
-    const ImVec2 action_button_size(160.0f * ui_scale(), 32.0f * ui_scale());
-    if (ImGui::Button("Open Logs Folder", action_button_size)) {
+    if (button(ICON_FOLDER "  Open logs folder", ButtonKind::Secondary, ButtonSize::Large)) {
         os::Logger::open_config_folder();
     }
-    ImGui::SameLine();
-    if (ImGui::Button("View Log File", action_button_size)) {
+    ImGui::SameLine(0.0f, m(8.0f));
+    if (button(ICON_FILE "  View log file", ButtonKind::Secondary, ButtonSize::Medium)) {
         os::Logger::open_log_file();
     }
     ImGui::SameLine();
-    if (ImGui::Button("Check FFXIV Process", action_button_size)) {
-        app_state.update();
-    }
+    right_align(m(240.0f));
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + m(7.0f));
+    text_colored_u32(colors::TextFaint, "\\\\.\\pipe\\ffxiv_hub_pipe  -  FFXH v1");
 #else
     (void)app_state;
 #endif

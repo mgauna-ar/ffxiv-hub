@@ -4,7 +4,8 @@ CXXFLAGS = -std=c++20 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc -Iplugins
 COMMON_SRCS = $(wildcard src/common/*.cpp) \
               $(wildcard src/common/ipc/*.cpp) \
               $(wildcard src/common/config/*.cpp) \
-              $(wildcard src/common/os/*.cpp)
+              $(wildcard src/common/os/*.cpp) \
+              $(wildcard src/common/ui/*.cpp)
 
 PLUGIN_SRCS = $(wildcard plugins/latency_mitigator/src/*.cpp) \
               $(wildcard plugins/combat_meter/src/*.cpp)

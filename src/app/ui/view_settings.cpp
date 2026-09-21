@@ -1,21 +1,14 @@
 #include "app/ui/view_settings.hpp"
-#include "app/ui/theme.hpp"
 #include "app/ui/config_binding.hpp"
+#include "app/ui/icons.hpp"
+#include "app/ui/theme.hpp"
+#include "app/ui/widgets.hpp"
 #include <filesystem>
 #include "common/os/auto_start.hpp"
 #include "common/os/logger.hpp"
 #include <fstream>
+#include <string>
 #include <vector>
-
-#ifdef _WIN32
-#if __has_include("third_party/imgui/imgui.h")
-#include "third_party/imgui/imgui.h"
-#define HAVE_IMGUI 1
-#elif __has_include("imgui.h")
-#include "imgui.h"
-#define HAVE_IMGUI 1
-#endif
-#endif
 
 namespace hub::app::ui {
 
@@ -50,76 +43,71 @@ std::vector<std::string> read_recent_log_lines(size_t max_lines = 50) {
     return lines;
 }
 
-} // namespace
-#endif
-
-void render_view_settings(AppState& app_state) {
-#ifdef HAVE_IMGUI
-    ImGui::PushFont(bold_font());
-    ImGui::TextColored(ImVec4(0.95f, 0.96f, 0.98f, 1.0f), "FFXIV Hub Settings");
-    ImGui::PopFont();
-    ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "Desktop manager options, system integration, and diagnostic logs");
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    // Section 1: System Integration
-    ImGui::TextColored(ImVec4(0.231f, 0.510f, 0.965f, 1.0f), "System & Windows Integration");
-    ImGui::Spacing();
+void render_integration_card() {
+    CardOptions opts{};
+    opts.auto_height = true;
+    begin_card("##IntegrationCard", ImVec2(0.0f, 0.0f), opts);
+    section_header(ICON_MONITOR, "SYSTEM & WINDOWS INTEGRATION");
 
     // The registry is the real source of truth here, so config follows it rather
     // than the other way round.
     bool auto_start = os::AutoStart::is_enabled();
-    if (ImGui::Checkbox("Start FFXIV Hub automatically when Windows starts", &auto_start)) {
+    if (setting_toggle("Start with Windows",
+                       "Registers FFXIV Hub in the current user's run key.", &auto_start)) {
         os::AutoStart::set_enabled(auto_start);
         cfg_store(HUB, "start_with_windows", auto_start);
     }
 
     bool minimize_to_tray = cfg_bool(HUB, "minimize_to_tray", true);
-    if (ImGui::Checkbox("Minimize to System Tray when closing the application window", &minimize_to_tray)) {
+    if (setting_toggle("Close to system tray",
+                       "Closing the window hides it instead of quitting.", &minimize_to_tray)) {
         cfg_store(HUB, "minimize_to_tray", minimize_to_tray);
     }
 
     bool balloon_notifs = cfg_bool(HUB, "show_notifications", true);
-    if (ImGui::Checkbox("Enable Windows notification area alerts on game connect", &balloon_notifs)) {
+    if (setting_toggle("Notification area alerts",
+                       "Balloon tips when the hub attaches to or loses the game.", &balloon_notifs)) {
         cfg_store(HUB, "show_notifications", balloon_notifs);
     }
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
+    end_card();
+}
 
-    // Section 2: Configuration Persistence
-    ImGui::TextColored(ImVec4(0.231f, 0.510f, 0.965f, 1.0f), "Configuration Management");
-    ImGui::Spacing();
+void render_config_card(AppState& app_state) {
+    CardOptions opts{};
+    opts.auto_height = true;
+    begin_card("##ConfigCard", ImVec2(0.0f, 0.0f), opts);
+    section_header(ICON_DATABASE, "CONFIGURATION", colors::Violet);
 
-    ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "%s", "Config file: %APPDATA%/ffxiv-hub/config.json");
-    ImGui::Spacing();
+    icon_chip(ICON_FILE, colors::TextDim, 20.0f);
+    ImGui::SameLine(0.0f, m(8.0f));
+    text_colored_u32(colors::TextDim, "%%APPDATA%%/ffxiv-hub/config.json");
+    ImGui::Dummy(ImVec2(0.0f, m(6.0f)));
 
-    if (ImGui::Button("Save Configuration Now", ImVec2(180.0f * ui_scale(), 28.0f * ui_scale()))) {
+    if (button(ICON_SAVE "  Save now", ButtonKind::Secondary, ButtonSize::Medium)) {
         app_state.config_manager().save();
     }
-    ImGui::SameLine();
-    if (ImGui::Button("Reload From Disk", ImVec2(160.0f * ui_scale(), 28.0f * ui_scale()))) {
+    ImGui::SameLine(0.0f, m(8.0f));
+    if (button(ICON_REFRESH "  Reload from disk", ButtonKind::Secondary, ButtonSize::Large)) {
         app_state.config_manager().load();
         // The payload holds its own copy and autosaves over hand edits, so it has
         // to be told as well.
         app_state.send_reload_config();
     }
-    ImGui::SameLine();
-    if (ImGui::Button("Open Config Directory", ImVec2(180.0f * ui_scale(), 28.0f * ui_scale()))) {
+    ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
+    if (button(ICON_FOLDER "  Open config directory", ButtonKind::Secondary, ButtonSize::Large)) {
         os::Logger::open_config_folder();
     }
 
-    ImGui::Spacing();
-    if (ImGui::Button("Reset All Settings to Defaults", ImVec2(230.0f * ui_scale(), 28.0f * ui_scale()))) {
+    ImGui::Dummy(ImVec2(0.0f, m(8.0f)));
+    if (button(ICON_RESET "  Reset all settings", ButtonKind::Danger, ButtonSize::Large)) {
         ImGui::OpenPopup("##ConfirmResetDefaults");
     }
+    ImGui::SameLine(0.0f, m(8.0f));
 
-    ImGui::SameLine();
     // Previously the only way to unload the payload was killing the game.
     ImGui::BeginDisabled(!app_state.is_connected());
-    if (ImGui::Button("Unload Payload From Game", ImVec2(210.0f * ui_scale(), 28.0f * ui_scale()))) {
+    if (button(ICON_POWER "  Unload payload", ButtonKind::Danger, ButtonSize::Medium)) {
         app_state.send_unhook_and_exit();
     }
     ImGui::EndDisabled();
@@ -129,11 +117,18 @@ void render_view_settings(AppState& app_state) {
 
     if (ImGui::BeginPopupModal("##ConfirmResetDefaults", nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
-        ImGui::TextColored(ImVec4(0.95f, 0.96f, 0.98f, 1.0f), "Reset every setting to its default?");
-        ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f),
-                           "Overlay positions, mitigation tuning and meter options are all discarded.");
-        ImGui::Spacing();
-        if (ImGui::Button("Reset Everything", ImVec2(150.0f * ui_scale(), 26.0f * ui_scale()))) {
+        icon_chip(ICON_WARNING, colors::Danger, metrics::ChipSizeLg);
+        ImGui::SameLine(0.0f, m(10.0f));
+        ImGui::BeginGroup();
+        ImGui::PushFont(bold_font());
+        text_colored_u32(colors::TextPrimary, "Reset every setting to its default?");
+        ImGui::PopFont();
+        text_colored_u32(colors::TextDim,
+                         "Overlay positions, mitigation tuning and meter options are all discarded.");
+        ImGui::EndGroup();
+        ImGui::Dummy(ImVec2(0.0f, m(8.0f)));
+
+        if (button(ICON_TRASH "  Reset everything", ButtonKind::Danger, ButtonSize::Large)) {
             const auto path = app_state.config_manager().get_config_path();
             std::error_code ec;
             std::filesystem::remove(path, ec);
@@ -144,48 +139,88 @@ void render_view_settings(AppState& app_state) {
             app_state.send_reload_config();
             ImGui::CloseCurrentPopup();
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(100.0f * ui_scale(), 26.0f * ui_scale()))) {
+        ImGui::SameLine(0.0f, m(8.0f));
+        if (button("Cancel", ButtonKind::Secondary, ButtonSize::Small)) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
     }
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
+    end_card();
+}
 
-    // Section 3: Diagnostic Logs Viewer
-    ImGui::TextColored(ImVec4(0.231f, 0.510f, 0.965f, 1.0f), "Diagnostic Log Inspection");
-    ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "Showing the most recent entries from hub.log");
-    ImGui::Spacing();
-
-    if (ImGui::Button("Open Log File in Editor", ImVec2(180.0f * ui_scale(), 26.0f * ui_scale()))) {
+void render_log_card() {
+    begin_card("##LogCard", ImVec2(0.0f, fill_h(0.0f)));
+    begin_section_header(ICON_TERMINAL, "DIAGNOSTIC LOG",
+                         m(metrics::ButtonLg) + m(metrics::ButtonMd) + m(8.0f), colors::Warning);
+    if (button(ICON_FILE "  Open log in editor", ButtonKind::Secondary, ButtonSize::Large)) {
         os::Logger::open_log_file();
     }
-    ImGui::SameLine();
-    if (ImGui::Button("Open Logs Folder", ImVec2(160.0f * ui_scale(), 26.0f * ui_scale()))) {
+    ImGui::SameLine(0.0f, m(8.0f));
+    if (button(ICON_FOLDER "  Logs folder", ButtonKind::Secondary, ButtonSize::Medium)) {
         os::Logger::open_config_folder();
     }
+    end_section_header();
 
-    ImGui::Spacing();
+    // Sunken well rather than another raised card: the log is output, not a control.
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, v4(colors::SurfaceSunken));
+    ImGui::BeginChild("##LogViewerChild", ImVec2(0.0f, fill_h(0.0f)), ImGuiChildFlags_Border,
+                      ImGuiWindowFlags_HorizontalScrollbar);
 
-    ImGui::BeginChild("##LogViewerChild", ImVec2(0.0f * ui_scale(), 220.0f * ui_scale()), true, ImGuiWindowFlags_HorizontalScrollbar);
-    auto log_lines = read_recent_log_lines(60);
+    const auto log_lines = read_recent_log_lines(200);
     if (log_lines.empty()) {
-        ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "No log entries found yet in hub.log");
+        empty_state(ICON_TERMINAL, "No log entries yet",
+                    "hub.log fills in as the hub attaches and runs.");
     } else {
         for (const auto& line : log_lines) {
             if (line.find("[ERROR]") != std::string::npos) {
-                ImGui::TextColored(ImVec4(0.937f, 0.267f, 0.267f, 1.0f), "%s", line.c_str());
+                text_colored_u32(colors::DangerLight, "%s", line.c_str());
             } else if (line.find("[WARN]") != std::string::npos) {
-                ImGui::TextColored(ImVec4(0.95f, 0.78f, 0.25f, 1.0f), "%s", line.c_str());
+                text_colored_u32(colors::WarningLight, "%s", line.c_str());
             } else {
-                ImGui::TextUnformatted(line.c_str());
+                text_colored_u32(colors::TextMuted, "%s", line.c_str());
             }
         }
     }
+
     ImGui::EndChild();
+    ImGui::PopStyleColor();
+    end_card();
+}
+
+} // namespace
+#endif
+
+void render_view_settings(AppState& app_state) {
+#ifdef HAVE_IMGUI
+    page_header(ICON_SETTINGS, "Hub Settings",
+                "Desktop manager options, system integration and diagnostic logs");
+    ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
+
+    // Top band splits into two columns when there is room; the log below always
+    // takes whatever height is left.
+    const int columns = settings_columns(2);
+    const float col_w = split_w(columns);
+
+    ImGui::BeginChild("##SettingsTopLeft", ImVec2(columns > 1 ? col_w : 0.0f, 0.0f),
+                      ImGuiChildFlags_AutoResizeY, ImGuiWindowFlags_NoBackground);
+    render_integration_card();
+    if (columns == 1) {
+        ImGui::Dummy(ImVec2(0.0f, m(metrics::Gutter)));
+        render_config_card(app_state);
+    }
+    ImGui::EndChild();
+
+    if (columns > 1) {
+        ImGui::SameLine(0.0f, m(metrics::Gutter));
+        ImGui::BeginChild("##SettingsTopRight", ImVec2(col_w, 0.0f),
+                          ImGuiChildFlags_AutoResizeY, ImGuiWindowFlags_NoBackground);
+        render_config_card(app_state);
+        ImGui::EndChild();
+    }
+
+    ImGui::Dummy(ImVec2(0.0f, m(metrics::Gutter)));
+    render_log_card();
 #else
     (void)app_state;
 #endif

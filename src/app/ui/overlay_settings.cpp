@@ -2,19 +2,12 @@
 
 #include "app/app_state.hpp"
 #include "app/ui/config_binding.hpp"
+#include "app/ui/icons.hpp"
+#include "app/ui/theme.hpp"
+#include "app/ui/widgets.hpp"
 #include "hub/game_state.hpp"
 #include <iterator>
 #include <string>
-
-#ifdef _WIN32
-#if __has_include("third_party/imgui/imgui.h")
-#include "third_party/imgui/imgui.h"
-#define HAVE_IMGUI 1
-#elif __has_include("imgui.h")
-#include "imgui.h"
-#define HAVE_IMGUI 1
-#endif
-#endif
 
 namespace hub::app::ui {
 
@@ -68,8 +61,6 @@ enum class CombatVisibility : int {
     return out.empty() ? "idle" : out;
 }
 
-const ImVec4 kMutedText{0.55f, 0.59f, 0.67f, 1.0f};
-
 } // namespace
 
 void render_overlay_settings(AppState& app_state, const OverlaySettingsOptions& opts) {
@@ -77,44 +68,46 @@ void render_overlay_settings(AppState& app_state, const OverlaySettingsOptions& 
     const PluginId plugin = opts.plugin;
     const auto& defaults = opts.defaults;
 
+    section_header(ICON_MONITOR, "IN-GAME OVERLAY");
+
     bool visible = cfg_bool(section, "overlay_visible", defaults.visible);
-    if (ImGui::Checkbox(opts.visible_label, &visible)) {
+    if (setting_toggle(opts.visible_label, "Draws the overlay on top of the game client.", &visible)) {
         cfg_store(section, "overlay_visible", visible);
         app_state.send_overlay_command(plugin, CommandId::SetOverlayVisible, visible ? 1 : 0);
     }
 
     bool locked = cfg_bool(section, "overlay_locked", defaults.locked);
-    if (ImGui::Checkbox(opts.locked_label, &locked)) {
+    if (setting_toggle(opts.locked_label, "Freezes the overlay so it cannot be dragged or resized.", &locked)) {
         cfg_store(section, "overlay_locked", locked);
         app_state.send_overlay_command(plugin, CommandId::SetLocked, locked ? 1 : 0);
     }
 
     bool click_through = cfg_bool(section, "overlay_click_through", defaults.click_through);
-    if (ImGui::Checkbox("Click-Through Mode (Ctrl+\\)", &click_through)) {
+    if (setting_toggle("Click-through mode", "Mouse input passes to the game (Ctrl+\\).", &click_through)) {
         cfg_store(section, "overlay_click_through", click_through);
         app_state.send_overlay_command(plugin, CommandId::SetClickThrough, click_through ? 1 : 0);
     }
 
-    ImGui::Spacing();
-
     float opacity = cfg_float(section, "overlay_opacity", defaults.opacity);
-    if (ImGui::SliderFloat(opts.opacity_label, &opacity, opts.min_opacity, opts.max_opacity, "%.2f")) {
+    begin_setting_row(opts.opacity_label, "How solid the overlay panel reads over gameplay.");
+    if (ImGui::SliderFloat("##overlay_opacity", &opacity, opts.min_opacity, opts.max_opacity, "%.2f")) {
         cfg_store(section, "overlay_opacity", opacity);
         app_state.send_overlay_command(plugin, CommandId::SetOpacity, 0, opacity);
     }
+    end_setting_row();
 
     if (opts.show_scale) {
         float scale = cfg_float(section, "overlay_scale", defaults.scale);
-        if (ImGui::SliderFloat(opts.scale_label, &scale, opts.min_scale, opts.max_scale, "%.2fx")) {
+        begin_setting_row(opts.scale_label, "Independent of the desktop window's DPI scale.");
+        if (ImGui::SliderFloat("##overlay_scale", &scale, opts.min_scale, opts.max_scale, "%.2fx")) {
             cfg_store(section, "overlay_scale", scale);
             app_state.send_overlay_command(plugin, CommandId::SetScale, 0, scale);
         }
+        end_setting_row();
     }
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::TextColored(kMutedText, "VISIBILITY");
-    ImGui::Spacing();
+    ImGui::Dummy(ImVec2(0.0f, m(6.0f)));
+    section_header(ICON_EYE, "VISIBILITY", colors::Violet);
 
     auto bits = static_cast<uint32_t>(
         cfg_int(section, "overlay_hide_conditions", static_cast<int>(defaults.hide_conditions)));
@@ -127,37 +120,43 @@ void render_overlay_settings(AppState& app_state, const OverlaySettingsOptions& 
 
     static const char* combat_modes[] = { "Always", "Only in combat", "Only out of combat" };
     int combat_mode = static_cast<int>(combat_visibility_of(bits));
-    if (ImGui::Combo("Show overlay", &combat_mode, combat_modes, 3)) {
+    begin_setting_row("Show overlay", "Combat state the overlay is allowed to appear in.");
+    if (ImGui::Combo("##combat_visibility", &combat_mode, combat_modes, 3)) {
         bits = with_combat_visibility(bits, static_cast<CombatVisibility>(combat_mode));
     }
+    end_setting_row();
 
     bool only_in_duty = has_condition(bits, HideCondition::OutsideDuty);
-    if (ImGui::Checkbox("Only in duty content", &only_in_duty)) {
+    if (setting_toggle("Only in duty content", "Hidden in overworld zones and hubs.", &only_in_duty)) {
         bits = with_condition(bits, HideCondition::OutsideDuty, only_in_duty);
     }
 
-    ImGui::Spacing();
-    ImGui::TextColored(kMutedText, "Hide during");
-
-    const struct { HideCondition cond; const char* label; } hide_during[] = {
-        { HideCondition::InCutscene, "Cutscenes" },
-        { HideCondition::Loading, "Loading screens" },
-        { HideCondition::MenuOpen, "Menus & dialogs" },
+    const struct { HideCondition cond; const char* label; const char* help; } hide_during[] = {
+        { HideCondition::InCutscene, "Hide during cutscenes", "Suppressed while a cutscene is playing." },
+        { HideCondition::Loading,    "Hide on loading screens", "Suppressed during zone transitions." },
+        { HideCondition::MenuOpen,   "Hide with menus open", "Suppressed while a dialog or menu has focus." },
     };
     for (size_t i = 0; i < std::size(hide_during); ++i) {
-        if (i > 0) ImGui::SameLine();
         bool on = has_condition(bits, hide_during[i].cond);
-        if (ImGui::Checkbox(hide_during[i].label, &on)) {
+        if (setting_toggle(hide_during[i].label, hide_during[i].help, &on)) {
             bits = with_condition(bits, hide_during[i].cond, on);
         }
     }
 
     if (!conditions_active) {
         ImGui::EndDisabled();
-        ImGui::TextColored(kMutedText, "Lock the overlay to apply visibility conditions.");
+    }
+
+    ImGui::Dummy(ImVec2(0.0f, m(2.0f)));
+    if (!conditions_active) {
+        icon_chip(ICON_WARNING, colors::Warning, 20.0f);
+        ImGui::SameLine(0.0f, m(8.0f));
+        text_colored_u32(colors::TextDim, "Lock the overlay to apply visibility conditions.");
     } else {
-        ImGui::TextColored(kMutedText, "Currently: %s",
-                           describe_game_state(app_state.game_state_flags()).c_str());
+        icon_chip(ICON_TARGET, colors::Success, 20.0f);
+        ImGui::SameLine(0.0f, m(8.0f));
+        text_colored_u32(colors::TextDim, "Currently: %s",
+                         describe_game_state(app_state.game_state_flags()).c_str());
     }
 
     if (bits != original_bits) {

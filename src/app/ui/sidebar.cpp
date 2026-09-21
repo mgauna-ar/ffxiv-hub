@@ -1,48 +1,83 @@
 #include "app/ui/sidebar.hpp"
+#include "app/ui/icons.hpp"
 #include "app/ui/theme.hpp"
-
-#ifdef _WIN32
-#if __has_include("third_party/imgui/imgui.h")
-#include "third_party/imgui/imgui.h"
-#define HAVE_IMGUI 1
-#elif __has_include("imgui.h")
-#include "imgui.h"
-#define HAVE_IMGUI 1
-#endif
-#endif
+#include "app/ui/widgets.hpp"
 
 namespace hub::app::ui {
 
 #ifdef HAVE_IMGUI
 namespace {
 
-bool render_nav_item(const char* icon_label, bool is_selected) {
-    if (is_selected) {
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.231f, 0.510f, 0.965f, 0.25f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.231f, 0.510f, 0.965f, 0.35f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.231f, 0.510f, 0.965f, 0.45f));
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.96f, 0.98f, 1.0f));
-    } else {
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 1.0f, 1.0f, 0.06f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1.0f, 1.0f, 1.0f, 0.10f));
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.70f, 0.74f, 0.82f, 1.0f));
-    }
+struct NavItem {
+    const char* label;
+    const char* icon;
+    DesktopView view;
+    const char* group; ///< non-null starts a new labelled group above this item
+};
 
+constexpr NavItem kNavItems[] = {
+    { "Dashboard",         ICON_DASHBOARD, DesktopView::Dashboard,        "WORKSPACE" },
+    { "Combat Meter",      ICON_SWORDS,    DesktopView::CombatMeter,      "PLUGINS"   },
+    { "Latency Mitigator", ICON_ACTIVITY,  DesktopView::LatencyMitigator, nullptr     },
+    { "Hub Settings",      ICON_SETTINGS,  DesktopView::Settings,         "SYSTEM"    },
+};
+
+void nav_group_label(const char* text) {
+    ImGui::Dummy(ImVec2(0.0f, m(6.0f)));
+    ImGui::Indent(m(14.0f));
+    text_colored_u32(colors::TextFaint, "%s", text);
+    ImGui::Unindent(m(14.0f));
+    ImGui::Dummy(ImVec2(0.0f, m(1.0f)));
+}
+
+bool nav_item(const NavItem& item, bool selected) {
+    const float height = m(metrics::NavItemH);
+    const ImVec2 p = ImGui::GetCursorScreenPos();
     const float width = ImGui::GetContentRegionAvail().x;
-    bool clicked = ImGui::Button(icon_label, ImVec2(width, 38.0f * ui_scale()));
 
+    ImGui::PushStyleColor(ImGuiCol_Button, v4(colors::with_alpha(colors::Canvas, 0.0f)));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, v4(colors::with_alpha(colors::White, 0.05f)));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, v4(colors::with_alpha(colors::White, 0.09f)));
+    ImGui::PushStyleColor(ImGuiCol_Border, v4(colors::with_alpha(colors::Canvas, 0.0f)));
+    // Label-less: the button is only the hit box and the hover fill, because the
+    // icon and the text are drawn separately below so they can differ in color.
+    ImGui::PushID(item.label);
+    const bool clicked = ImGui::Button("##nav", ImVec2(width, height));
+    const bool hovered = ImGui::IsItemHovered();
+    ImGui::PopID();
     ImGui::PopStyleColor(4);
 
-    // Accent line on left if selected
-    if (is_selected) {
-        ImDrawList* draw_list = ImGui::GetWindowDrawList();
-        ImVec2 p_min = ImGui::GetItemRectMin();
-        ImVec2 p_max = ImVec2(p_min.x + 3.0f, ImGui::GetItemRectMax().y);
-        draw_list->AddRectFilled(p_min, p_max, 0xFFF6823B); // #3B82F6 in ABGR
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 p_max(p.x + width, p.y + height);
+    if (selected) {
+        dl->AddRectFilledMultiColor(p, p_max,
+                                    colors::with_alpha(colors::Accent, 0.20f),
+                                    colors::with_alpha(colors::Accent, 0.04f),
+                                    colors::with_alpha(colors::Accent, 0.04f),
+                                    colors::with_alpha(colors::Accent, 0.20f));
+        dl->AddRectFilled(ImVec2(p.x, p.y + m(6.0f)), ImVec2(p.x + m(3.0f), p_max.y - m(6.0f)),
+                          colors::Accent, m(2.0f));
     }
 
+    const uint32_t icon_color = selected ? colors::AccentHover
+                                         : (hovered ? colors::TextMuted : colors::TextDim);
+    const uint32_t text_color = selected ? colors::TextPrimary
+                                         : (hovered ? colors::TextBody : colors::TextMuted);
+    const float text_y = p.y + (height - ImGui::GetTextLineHeight()) * 0.5f;
+    dl->AddText(ImVec2(p.x + m(13.0f), text_y), icon_color, item.icon);
+    dl->AddText(ImVec2(p.x + m(41.0f), text_y), text_color, item.label);
+
     return clicked;
+}
+
+uint32_t status_color_for(ConnectionState state) {
+    switch (state) {
+        case ConnectionState::Connected:           return colors::SuccessLight;
+        case ConnectionState::Injecting:
+        case ConnectionState::InjectedWaitingPipe: return colors::WarningLight;
+        case ConnectionState::WaitingForGame:      break;
+    }
+    return colors::TextDim;
 }
 
 } // namespace
@@ -50,78 +85,77 @@ bool render_nav_item(const char* icon_label, bool is_selected) {
 
 void render_sidebar(AppState& app_state) {
 #ifdef HAVE_IMGUI
-    const float sidebar_width = 220.0f * ui_scale();
+    const float sidebar_width = m(metrics::SidebarW);
+    const ImVec2 panel_min = ImGui::GetCursorScreenPos();
+
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 0.0f);
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.063f, 0.078f, 0.110f, 1.0f)); // Darker sidebar
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(m(8.0f), 0.0f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, v4(colors::with_alpha(colors::Canvas, 0.0f)));
+    ImGui::BeginChild("##SidebarPanel", ImVec2(sidebar_width, 0.0f), ImGuiChildFlags_None,
+                      ImGuiWindowFlags_NoScrollbar);
 
-    ImGui::BeginChild("##SidebarPanel", ImVec2(sidebar_width, 0.0f), false);
+    // Vertical gradient plus a hairline seam against the content area: the sidebar
+    // has to read as a distinct surface, not as more page.
+    const ImVec2 panel_max(panel_min.x + sidebar_width, panel_min.y + ImGui::GetWindowSize().y);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilledMultiColor(panel_min, panel_max,
+                                colors::SidebarTop, colors::SidebarTop,
+                                colors::SidebarBottom, colors::SidebarBottom);
+    dl->AddLine(ImVec2(panel_max.x - m(1.0f), panel_min.y),
+                ImVec2(panel_max.x - m(1.0f), panel_max.y), colors::BorderSubtle, m(1.0f));
 
-    // Branding Header
-    ImGui::Spacing();
-    ImGui::Indent(12.0f);
+    // ---- branding ----
+    ImGui::Dummy(ImVec2(0.0f, m(10.0f)));
+    ImGui::Indent(m(6.0f));
+    const float brand_y = ImGui::GetCursorPosY();
+    icon_chip(ICON_LAYERS, colors::Accent, metrics::ChipSizeLg);
+    ImGui::SameLine(0.0f, m(10.0f));
+    ImGui::BeginGroup();
+    ImGui::SetCursorPosY(brand_y + m(1.0f));
     ImGui::PushFont(bold_font());
-    ImGui::TextColored(ImVec4(0.95f, 0.96f, 0.98f, 1.0f), "FFXIV HUB");
+    text_colored_u32(colors::TextPrimary, "FFXIV HUB");
     ImGui::PopFont();
-    ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "Dawntrail 7.x • v1.0.0");
-    ImGui::Unindent(12.0f);
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
+    text_colored_u32(colors::TextDim, "Dawntrail 7.x - v1.0.0");
+    ImGui::EndGroup();
+    ImGui::Unindent(m(6.0f));
+    ImGui::Dummy(ImVec2(0.0f, m(6.0f)));
 
-    // Navigation Items
+    // ---- navigation ----
     const DesktopView current = app_state.current_view();
-
-    if (render_nav_item("   Dashboard", current == DesktopView::Dashboard)) {
-        app_state.set_current_view(DesktopView::Dashboard);
+    for (const NavItem& item : kNavItems) {
+        if (item.group != nullptr) {
+            nav_group_label(item.group);
+        }
+        if (nav_item(item, current == item.view)) {
+            app_state.set_current_view(item.view);
+        }
     }
 
-    if (render_nav_item("   Combat Meter", current == DesktopView::CombatMeter)) {
-        app_state.set_current_view(DesktopView::CombatMeter);
+    // ---- footer ----
+    const float footer_height = m(62.0f);
+    const float remaining = ImGui::GetContentRegionAvail().y;
+    if (remaining > footer_height) {
+        ImGui::Dummy(ImVec2(0.0f, remaining - footer_height));
     }
 
-    if (render_nav_item("   Latency Mitigator", current == DesktopView::LatencyMitigator)) {
-        app_state.set_current_view(DesktopView::LatencyMitigator);
+    const ImVec2 rule = ImGui::GetCursorScreenPos();
+    dl->AddLine(rule, ImVec2(rule.x + ImGui::GetContentRegionAvail().x, rule.y),
+                colors::BorderSubtle, m(1.0f));
+    ImGui::Dummy(ImVec2(0.0f, m(9.0f)));
+
+    ImGui::Indent(m(6.0f));
+    pill(app_state.connection_status_string().c_str(), status_color_for(app_state.connection_state()));
+    const uint32_t pid = app_state.game_pid();
+    if (pid != 0) {
+        text_colored_u32(colors::TextFaint, "ffxiv_dx11.exe - PID %u", pid);
+    } else {
+        text_colored_u32(colors::TextFaint, "no game process");
     }
-
-    if (render_nav_item("   Settings", current == DesktopView::Settings)) {
-        app_state.set_current_view(DesktopView::Settings);
-    }
-
-    // Bottom Connection Status Pill
-    const float footer_height = 50.0f * ui_scale();
-    const float avail_y = ImGui::GetContentRegionAvail().y;
-    if (avail_y > footer_height) {
-        ImGui::Dummy(ImVec2(0.0f, avail_y - footer_height));
-    }
-
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    ImVec2 pos = ImGui::GetCursorScreenPos();
-    ImDrawList* draw_list = ImGui::GetWindowDrawList();
-
-    uint32_t status_color = 0xFF6B7280; // Gray
-    switch (app_state.connection_state()) {
-        case ConnectionState::Connected:
-            status_color = 0xFF10B981; // Green
-            break;
-        case ConnectionState::Injecting:
-        case ConnectionState::InjectedWaitingPipe:
-            status_color = 0xFF0B9EF5; // Amber / Orange
-            break;
-        case ConnectionState::WaitingForGame:
-            status_color = 0xFF6B7280; // Gray
-            break;
-    }
-
-    draw_list->AddCircleFilled(ImVec2(pos.x + 16.0f, pos.y + 12.0f), 5.0f, status_color);
-
-    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 28.0f);
-    ImGui::TextColored(ImVec4(0.70f, 0.74f, 0.82f, 1.0f), "%s", app_state.connection_status_string().c_str());
+    ImGui::Unindent(m(6.0f));
 
     ImGui::EndChild();
     ImGui::PopStyleColor();
-    ImGui::PopStyleVar();
+    ImGui::PopStyleVar(2);
 #else
     (void)app_state;
 #endif

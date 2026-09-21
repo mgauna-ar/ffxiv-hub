@@ -329,7 +329,15 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
         hub::os::Logger::warn("Segoe UI not found; falling back to ImGui's built-in font.");
         io.Fonts->AddFontDefault();
     }
-    hub::app::ui::set_bold_font(io.Fonts->AddFontFromFileTTF(bold_font_path.c_str(), base_font_size));
+    // Icons merge into whichever font was added last, so each font that renders them
+    // needs its own merge pass.
+    hub::app::ui::load_icon_font(base_font_size);
+
+    ImFont* bold = io.Fonts->AddFontFromFileTTF(bold_font_path.c_str(), base_font_size);
+    if (bold != nullptr) {
+        hub::app::ui::load_icon_font(base_font_size);
+    }
+    hub::app::ui::set_bold_font(bold);
 
     hub::app::ui::set_ui_scale(dpi_scale);
     hub::app::ui::apply_slate_theme();
@@ -416,8 +424,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
         ImGui::SameLine();
 
         // 2. Main Content View Area
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f, 16.0f));
-        ImGui::BeginChild("##MainContentViewArea", ImVec2(0.0f, 0.0f), false);
+        const float page_pad = hub::app::ui::m(hub::app::ui::metrics::PagePad);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(page_pad, page_pad));
+        ImGui::BeginChild("##MainContentViewArea", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None);
 
         switch (app_state.current_view()) {
             case hub::app::DesktopView::Dashboard:
