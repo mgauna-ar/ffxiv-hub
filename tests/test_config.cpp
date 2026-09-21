@@ -195,10 +195,16 @@ TEST_CASE(Config, SaveIsAtomicOnExistingFile) {
     TEST_ASSERT(std::filesystem::exists(tmp));
     TEST_ASSERT_FALSE(std::filesystem::exists(sidecar));
 
-    std::ifstream in(tmp);
-    std::stringstream buf;
-    buf << in.rdbuf();
-    auto parsed = JsonValue::parse(buf.str());
+    // Scoped: Windows refuses to remove a file that still has an open handle, so
+    // leaving the stream open until the end of the test fails the cleanup below.
+    std::string contents;
+    {
+        std::ifstream in(tmp);
+        std::stringstream buf;
+        buf << in.rdbuf();
+        contents = buf.str();
+    }
+    auto parsed = JsonValue::parse(contents);
     TEST_ASSERT(parsed.has_value());
     TEST_ASSERT(parsed->is_object());
     TEST_ASSERT_EQ((*parsed)["hub"]["marker"].as_string(), "second");
