@@ -4,37 +4,68 @@
 #include "mitigator/latency_plugin.hpp"
 #include "mitigator/latency_overlay.hpp"
 #include "common/config/config_manager.hpp"
+#include "common/ui/overlay_base.hpp"
 
 namespace hub::payload {
 
 namespace {
 
-void dispatch_combat_meter(const CommandDispatchTargets& t, const ipc::CommandPayload& cmd) {
+/// Handles the commands every overlay shares. Returns true when consumed, so a
+/// plugin's own switch only has to cover what is specific to it.
+bool dispatch_overlay_command(ui::OverlayBase* overlay, const ipc::CommandPayload& cmd) {
     const auto id = static_cast<CommandId>(cmd.command_id);
     switch (id) {
         case CommandId::ToggleOverlay:
         case CommandId::SetOverlayVisible:
-            if (t.combat_overlay) t.combat_overlay->set_visible(cmd.param_uint != 0);
-            break;
+            if (overlay) overlay->set_visible(cmd.param_uint != 0);
+            return true;
         case CommandId::LockOverlay:
         case CommandId::SetLocked:
-            if (t.combat_overlay) t.combat_overlay->set_locked(cmd.param_uint != 0);
-            break;
+            if (overlay) overlay->set_locked(cmd.param_uint != 0);
+            return true;
         case CommandId::ClickThrough:
         case CommandId::SetClickThrough:
-            if (t.combat_overlay) t.combat_overlay->set_click_through(cmd.param_uint != 0);
-            break;
+            if (overlay) overlay->set_click_through(cmd.param_uint != 0);
+            return true;
+        case CommandId::SetOpacity:
+            if (overlay) overlay->set_opacity(cmd.param_float);
+            return true;
+        case CommandId::SetScale:
+            if (overlay) overlay->set_scale(cmd.param_float);
+            return true;
+        case CommandId::SetHideConditions:
+            if (overlay) overlay->set_hide_conditions(cmd.param_uint);
+            return true;
         case CommandId::AutoHide:
-            if (t.combat_overlay) t.combat_overlay->set_auto_hide(cmd.param_uint != 0);
-            break;
+            // Older clients only knew about hiding out of combat.
+            if (overlay) {
+                overlay->set_hide_conditions(ui::with_condition(
+                    overlay->hide_conditions(), ui::HideCondition::OutOfCombat, cmd.param_uint != 0));
+            }
+            return true;
+        case CommandId::ResetOverlayGeometry:
+            if (overlay) overlay->set_geometry(overlay->default_geometry());
+            return true;
+        case CommandId::SetOverlayPosition:
+            if (overlay) {
+                Rect geom = overlay->get_geometry();
+                geom.x = cmd.param_float;
+                geom.y = cmd.param_float2;
+                overlay->set_geometry(geom);
+            }
+            return true;
+        default:
+            return false;
+    }
+}
+
+void dispatch_combat_meter(const CommandDispatchTargets& t, const ipc::CommandPayload& cmd) {
+    if (dispatch_overlay_command(t.combat_overlay, cmd)) return;
+
+    const auto id = static_cast<CommandId>(cmd.command_id);
+    switch (id) {
         case CommandId::FilterPartyOnly:
             if (t.combat_overlay) t.combat_overlay->set_party_only(cmd.param_uint != 0);
-            break;
-        case CommandId::SetOpacity:
-            if (t.combat_overlay) t.combat_overlay->set_opacity(cmd.param_float);
-            break;
-        case CommandId::SetScale:
-            if (t.combat_overlay) t.combat_overlay->set_scale(cmd.param_float);
             break;
         case CommandId::ResetEncounter:
             if (t.combat_plugin) t.combat_plugin->engine().reset_current();
@@ -49,19 +80,6 @@ void dispatch_combat_meter(const CommandDispatchTargets& t, const ipc::CommandPa
             // Archives the pull instead of discarding it, unlike ResetEncounter.
             if (t.combat_plugin) {
                 t.combat_plugin->engine().end_encounter(meter::EncounterEndReason::Manual);
-            }
-            break;
-        case CommandId::ResetOverlayGeometry:
-            if (t.combat_overlay) {
-                t.combat_overlay->set_geometry(Rect{-1.0f, -1.0f, 800.0f, 480.0f});
-            }
-            break;
-        case CommandId::SetOverlayPosition:
-            if (t.combat_overlay) {
-                Rect geom = t.combat_overlay->get_geometry();
-                geom.x = cmd.param_float;
-                geom.y = cmd.param_float2;
-                t.combat_overlay->set_geometry(geom);
             }
             break;
         case CommandId::SetShowBars:
@@ -102,26 +120,10 @@ void dispatch_combat_meter(const CommandDispatchTargets& t, const ipc::CommandPa
 }
 
 void dispatch_latency_mitigator(const CommandDispatchTargets& t, const ipc::CommandPayload& cmd) {
+    if (dispatch_overlay_command(t.latency_overlay, cmd)) return;
+
     const auto id = static_cast<CommandId>(cmd.command_id);
     switch (id) {
-        case CommandId::ToggleOverlay:
-        case CommandId::SetOverlayVisible:
-            if (t.latency_overlay) t.latency_overlay->set_visible(cmd.param_uint != 0);
-            break;
-        case CommandId::LockOverlay:
-        case CommandId::SetLocked:
-            if (t.latency_overlay) t.latency_overlay->set_locked(cmd.param_uint != 0);
-            break;
-        case CommandId::ClickThrough:
-        case CommandId::SetClickThrough:
-            if (t.latency_overlay) t.latency_overlay->set_click_through(cmd.param_uint != 0);
-            break;
-        case CommandId::SetOpacity:
-            if (t.latency_overlay) t.latency_overlay->set_opacity(cmd.param_float);
-            break;
-        case CommandId::SetScale:
-            if (t.latency_overlay) t.latency_overlay->set_scale(cmd.param_float);
-            break;
         case CommandId::SetOverlayMode:
             if (t.latency_overlay) {
                 t.latency_overlay->set_display_mode(static_cast<mitigator::OverlayDisplayMode>(cmd.param_uint));
@@ -148,19 +150,6 @@ void dispatch_latency_mitigator(const CommandDispatchTargets& t, const ipc::Comm
             break;
         case CommandId::ResetStats:
             if (t.latency_plugin) t.latency_plugin->mitigator().reset();
-            break;
-        case CommandId::ResetOverlayGeometry:
-            if (t.latency_overlay) {
-                t.latency_overlay->set_geometry(Rect{30.0f, 30.0f, 120.0f, 32.0f});
-            }
-            break;
-        case CommandId::SetOverlayPosition:
-            if (t.latency_overlay) {
-                Rect geom = t.latency_overlay->get_geometry();
-                geom.x = cmd.param_float;
-                geom.y = cmd.param_float2;
-                t.latency_overlay->set_geometry(geom);
-            }
             break;
         case CommandId::ReloadConfig:
             if (t.latency_plugin) {

@@ -62,11 +62,13 @@ file(GLOB COMMON_SOURCES
     src/common/ipc/*.cpp
     src/common/config/*.cpp
     src/common/os/*.cpp
+    src/common/ui/*.cpp
     src/payload/overlay_host.cpp
     src/payload/dx11_hook.cpp
     src/payload/wndproc_hook.cpp
     src/payload/hook_manager.cpp
     src/payload/object_reader.cpp
+    src/payload/game_state_reader.cpp
     src/payload/command_dispatcher.cpp
     plugins/latency_mitigator/src/*.cpp
     plugins/combat_meter/src/*.cpp

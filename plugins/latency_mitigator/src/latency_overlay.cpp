@@ -3,6 +3,20 @@
 #include <algorithm>
 #include <cstdio>
 
+namespace hub::mitigator {
+
+LatencyOverlay::LatencyOverlay() {
+    set_geometry(default_geometry());
+}
+LatencyOverlay::~LatencyOverlay() = default;
+
+Rect LatencyOverlay::default_geometry() const noexcept {
+    return Rect{constants::DEFAULT_OVERLAY_X, constants::DEFAULT_OVERLAY_Y,
+                constants::DEFAULT_OVERLAY_WIDTH, constants::DEFAULT_OVERLAY_HEIGHT};
+}
+
+} // namespace hub::mitigator
+
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -11,11 +25,6 @@
 #include "imgui.h"
 
 namespace hub::mitigator {
-
-LatencyOverlay::LatencyOverlay() {
-    set_geometry(Rect{20.0f, 20.0f, 120.0f, 32.0f});
-}
-LatencyOverlay::~LatencyOverlay() = default;
 
 void LatencyOverlay::update_rtt(double smoothed_rtt_ms, bool has_samples) noexcept {
     m_smoothed_rtt_ms.store(smoothed_rtt_ms);
@@ -32,8 +41,6 @@ void LatencyOverlay::notify_spike_filtered() noexcept {
 }
 
 void LatencyOverlay::render() {
-    if (!m_visible.load()) return;
-
     if (m_spike_active.load()) {
         auto now = std::chrono::steady_clock::now();
         if (std::chrono::duration_cast<std::chrono::milliseconds>(now - m_last_spike_time).count() > 1500) {
@@ -220,11 +227,6 @@ void LatencyOverlay::render() {
 #else // !_WIN32 - Cross-platform mock implementation
 
 namespace hub::mitigator {
-
-LatencyOverlay::LatencyOverlay() {
-    set_geometry(Rect{20.0f, 20.0f, 120.0f, 32.0f});
-}
-LatencyOverlay::~LatencyOverlay() = default;
 
 void LatencyOverlay::update_rtt(double smoothed_rtt_ms, bool has_samples) noexcept {
     m_smoothed_rtt_ms.store(smoothed_rtt_ms);

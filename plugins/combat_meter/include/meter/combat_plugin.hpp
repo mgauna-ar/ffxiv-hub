@@ -62,6 +62,10 @@ public:
 
     /// Non-owning pointer to the in-game overlay this plugin drives via config load/commands.
     void set_overlay(CombatOverlay* overlay) noexcept { m_overlay = overlay; }
+
+    /// The meter derives combat from packets, which survives a signature break
+    /// after a game patch, so it feeds that bit back for every overlay to use.
+    void set_game_state(GameStateProvider* provider) noexcept { m_game_state = provider; }
     [[nodiscard]] CombatOverlay* overlay() const noexcept { return m_overlay; }
 
 private:
@@ -71,6 +75,7 @@ private:
     ipc::PacketRingBuffer* m_ring_buffer{nullptr};
     std::function<void(uint32_t)> m_actor_resolver;
     CombatOverlay* m_overlay{nullptr};
+    GameStateProvider* m_game_state{nullptr};
     uint32_t m_sequence{0};
 };
 

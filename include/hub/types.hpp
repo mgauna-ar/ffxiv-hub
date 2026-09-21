@@ -21,6 +21,7 @@ enum class MessageType : uint16_t {
     StatusNotification  = 0x0006,
     Status              = StatusNotification,
     OverlayGeometry     = 0x0007,
+    GameState           = 0x0008,
 
     // Latency Mitigator Messages (0x0100 - 0x01FF)
     MitigatorTelemetry  = 0x0101,
@@ -46,6 +47,7 @@ enum class CommandId : uint32_t {
     SetDryRun           = 7,
     LockOverlay         = 8,
     ClickThrough        = 9,
+    /// Legacy alias kept for wire compatibility: toggles HideCondition::OutOfCombat
     AutoHide            = 10,
     FilterPartyOnly     = 11,
     SetOpacity          = 12,
@@ -70,6 +72,8 @@ enum class CommandId : uint32_t {
     EndEncounter        = 31,
     SetOverlayPosition  = 32,
     UnhookAndExit       = 33,
+    /// param_uint is a hub::ui::HideCondition bitmask
+    SetHideConditions   = 34,
 };
 
 /// 2D Floating-point rectangle coordinates for overlay geometry

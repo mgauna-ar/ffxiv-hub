@@ -1,5 +1,7 @@
 #pragma once
 
+#include "common/ui/overlay_config.hpp"
+#include "hub/game_state.hpp"
 #include "hub/plugin_api.hpp"
 #include "hub/types.hpp"
 #include <atomic>
@@ -27,6 +29,12 @@ public:
         m_needs_geometry_restore.store(true);
     }
 
+    /// Placement to fall back on when the player has never positioned the
+    /// overlay, and the target of a geometry reset.
+    [[nodiscard]] virtual Rect default_geometry() const noexcept {
+        return Rect{-1.0f, -1.0f, 0.0f, 0.0f};
+    }
+
     /// True once after geometry is set from outside the render loop, so the next
     /// frame can re-apply it with ImGuiCond_Always. Config loads and repositions
     /// arrive after the first frame, which FirstUseEver would discard.
@@ -51,13 +59,59 @@ public:
     void set_scale(float scale) noexcept { m_scale.store(scale); }
     [[nodiscard]] float scale() const noexcept { return m_scale.load(); }
 
+    void set_hide_conditions(uint32_t bits) noexcept { m_hide_conditions.store(bits); }
+    [[nodiscard]] uint32_t hide_conditions() const noexcept { return m_hide_conditions.load(); }
+
+    /// Non-owning. Only the in-game payload owns a provider, so this stays null
+    /// in the desktop app and in tests that don't need game state.
+    void set_game_state(const GameStateProvider* provider) noexcept override { m_game_state = provider; }
+
+    void apply_config(const OverlayConfig& cfg) noexcept {
+        m_visible.store(cfg.visible);
+        m_locked.store(cfg.locked);
+        m_click_through.store(cfg.click_through);
+        m_opacity.store(cfg.opacity);
+        m_scale.store(cfg.scale);
+        m_hide_conditions.store(cfg.hide_conditions);
+        // Clamped at render time against the live viewport instead of here: the
+        // payload has no screen metrics, and a fixed assumption would drag a
+        // correctly-placed overlay inward on anything wider.
+        set_geometry(Rect{cfg.x, cfg.y, cfg.width, cfg.height});
+    }
+
+    [[nodiscard]] OverlayConfig capture_config() const noexcept {
+        const Rect geom = get_geometry();
+        return OverlayConfig{
+            m_visible.load(),
+            m_locked.load(),
+            m_click_through.load(),
+            m_opacity.load(),
+            m_scale.load(),
+            geom.x, geom.y, geom.width, geom.height,
+            m_hide_conditions.load()
+        };
+    }
+
+    /// Hide conditions are suspended while the overlay is unlocked, so an
+    /// overlay hidden by a condition can always be unlocked and dragged back.
+    [[nodiscard]] bool should_render() const noexcept override {
+        if (!m_visible.load()) return false;
+        if (!m_locked.load()) return true;
+        const uint32_t bits = m_hide_conditions.load();
+        if (bits == 0 || m_game_state == nullptr) return true;
+        return !conditions_hide(bits, m_game_state->flags());
+    }
+
 protected:
     std::atomic<bool> m_visible{true};
     std::atomic<bool> m_locked{false};
     std::atomic<bool> m_click_through{false};
     std::atomic<float> m_opacity{0.85f};
     std::atomic<float> m_scale{1.0f};
+    std::atomic<uint32_t> m_hide_conditions{0};
     std::atomic<bool> m_needs_geometry_restore{true};
+
+    const GameStateProvider* m_game_state{nullptr};
 
     float m_pos_x{0.0f};
     float m_pos_y{0.0f};

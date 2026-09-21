@@ -14,15 +14,20 @@ ConfigManager::ConfigManager() {
         {"show_notifications", JsonValue(true)},
         {"refresh_interval_ms", JsonValue(500)}
     };
+    // Overlay keys are the canonical set shared by every plugin - see
+    // hub::ui::serialize_overlay. A negative position means "never placed", so
+    // the overlay falls back to its own default.
     m_root["combat_meter"] = JsonValue::ObjectType{
         {"overlay_visible", JsonValue(true)},
-        {"window_x", JsonValue(100.0f)},
-        {"window_y", JsonValue(100.0f)},
-        {"window_width", JsonValue(440.0f)},
-        {"window_height", JsonValue(260.0f)},
-        {"window_opacity", JsonValue(0.85f)},
-        {"ui_scale", JsonValue(1.0f)},
-        {"window_locked", JsonValue(false)},
+        {"overlay_x", JsonValue(-1.0f)},
+        {"overlay_y", JsonValue(-1.0f)},
+        {"overlay_width", JsonValue(800.0f)},
+        {"overlay_height", JsonValue(480.0f)},
+        {"overlay_opacity", JsonValue(0.88f)},
+        {"overlay_scale", JsonValue(1.0f)},
+        {"overlay_locked", JsonValue(false)},
+        {"overlay_click_through", JsonValue(false)},
+        {"overlay_hide_conditions", JsonValue(0)},
         {"party_only", JsonValue(false)},
         {"hide_inactive", JsonValue(false)},
         {"inactivity_timeout_seconds", JsonValue(7.0f)}
@@ -35,11 +40,15 @@ ConfigManager::ConfigManager() {
         {"max_animation_lock_ms", JsonValue(2500.0f)},
         {"spike_multiplier", JsonValue(2.5f)},
         {"overlay_visible", JsonValue(true)},
-        {"overlay_x", JsonValue(50.0f)},
-        {"overlay_y", JsonValue(50.0f)},
+        {"overlay_x", JsonValue(20.0f)},
+        {"overlay_y", JsonValue(20.0f)},
+        {"overlay_width", JsonValue(120.0f)},
+        {"overlay_height", JsonValue(32.0f)},
         {"overlay_opacity", JsonValue(0.90f)},
         {"overlay_scale", JsonValue(1.0f)},
         {"overlay_locked", JsonValue(false)},
+        {"overlay_click_through", JsonValue(false)},
+        {"overlay_hide_conditions", JsonValue(0)},
         {"overlay_mode", JsonValue(0)}
     };
 }

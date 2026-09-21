@@ -86,12 +86,22 @@ TEST_CASE(Payload, CombatOverlayInterfaceAndTabs) {
     overlay.set_party_only(false);
     TEST_ASSERT(!overlay.party_only());
 
-    overlay.set_auto_hide(true);
-    TEST_ASSERT(overlay.auto_hide());
-    // In idle state out of combat and locked -> should_render returns false
+    // Hide conditions only bite while locked, so the overlay can always be
+    // unlocked and dragged back.
+    hub::GameStateProvider game_state;
+    overlay.set_game_state(&game_state);
+    overlay.set_hide_conditions(hub::ui::to_bits(hub::ui::HideCondition::OutOfCombat));
     TEST_ASSERT(!overlay.should_render());
 
-    overlay.set_auto_hide(false);
+    game_state.set_packet_combat(true);
+    TEST_ASSERT(overlay.should_render());
+
+    game_state.set_packet_combat(false);
+    overlay.set_locked(false);
+    TEST_ASSERT(overlay.should_render());
+
+    overlay.set_locked(true);
+    overlay.set_hide_conditions(0);
     TEST_ASSERT(overlay.should_render());
 }
 
@@ -477,4 +487,119 @@ TEST_CASE(Payload, EndEncounterArchivesRatherThanDiscards) {
     TEST_ASSERT(!plugin.engine().in_combat());
     // ResetEncounter throws the pull away; EndEncounter has to keep it.
     TEST_ASSERT(plugin.engine().pull_history().size() > history_before);
+}
+
+TEST_CASE(Payload, SharedOverlayCommandsReachBothPlugins) {
+    // One handler now serves every overlay, so the same command IDs have to
+    // land on whichever plugin the packet is addressed to.
+    meter::CombatOverlay combat;
+    mitigator::LatencyOverlay latency;
+
+    payload::CommandDispatchTargets targets;
+    targets.combat_overlay = &combat;
+    targets.latency_overlay = &latency;
+
+    const struct { PluginId plugin; hub::ui::OverlayBase* overlay; } cases[] = {
+        { PluginId::CombatMeter, &combat },
+        { PluginId::LatencyMitigator, &latency },
+    };
+
+    for (const auto& c : cases) {
+        ipc::CommandPayload cmd{};
+        cmd.target_plugin_id = static_cast<uint32_t>(c.plugin);
+
+        cmd.command_id = static_cast<uint32_t>(CommandId::SetOverlayVisible);
+        cmd.param_uint = 0;
+        payload::dispatch_command(targets, cmd);
+        TEST_ASSERT_FALSE(c.overlay->is_visible());
+
+        cmd.command_id = static_cast<uint32_t>(CommandId::SetClickThrough);
+        cmd.param_uint = 1;
+        payload::dispatch_command(targets, cmd);
+        TEST_ASSERT_TRUE(c.overlay->click_through());
+
+        cmd.command_id = static_cast<uint32_t>(CommandId::SetOpacity);
+        cmd.param_uint = 0;
+        cmd.param_float = 0.5f;
+        payload::dispatch_command(targets, cmd);
+        TEST_ASSERT_NEAR(c.overlay->opacity(), 0.5f, 0.001f);
+
+        cmd.command_id = static_cast<uint32_t>(CommandId::SetScale);
+        cmd.param_float = 1.5f;
+        payload::dispatch_command(targets, cmd);
+        TEST_ASSERT_NEAR(c.overlay->scale(), 1.5f, 0.001f);
+
+        cmd.command_id = static_cast<uint32_t>(CommandId::SetHideConditions);
+        cmd.param_uint = hub::ui::to_bits(hub::ui::HideCondition::InCutscene);
+        payload::dispatch_command(targets, cmd);
+        TEST_ASSERT_EQ(c.overlay->hide_conditions(),
+                       hub::ui::to_bits(hub::ui::HideCondition::InCutscene));
+    }
+}
+
+TEST_CASE(Payload, AutoHideMapsOntoOutOfCombatCondition) {
+    // Older desktop builds still send AutoHide, and it must only touch that one
+    // bit rather than replacing whatever else the player configured.
+    meter::CombatOverlay overlay;
+    overlay.set_hide_conditions(hub::ui::to_bits(hub::ui::HideCondition::InCutscene));
+
+    payload::CommandDispatchTargets targets;
+    targets.combat_overlay = &overlay;
+
+    ipc::CommandPayload cmd{};
+    cmd.target_plugin_id = static_cast<uint32_t>(PluginId::CombatMeter);
+    cmd.command_id = static_cast<uint32_t>(CommandId::AutoHide);
+    cmd.param_uint = 1;
+    payload::dispatch_command(targets, cmd);
+
+    TEST_ASSERT_TRUE(hub::ui::has_condition(overlay.hide_conditions(),
+                                            hub::ui::HideCondition::OutOfCombat));
+    TEST_ASSERT_TRUE(hub::ui::has_condition(overlay.hide_conditions(),
+                                            hub::ui::HideCondition::InCutscene));
+
+    cmd.param_uint = 0;
+    payload::dispatch_command(targets, cmd);
+    TEST_ASSERT_FALSE(hub::ui::has_condition(overlay.hide_conditions(),
+                                             hub::ui::HideCondition::OutOfCombat));
+    TEST_ASSERT_TRUE(hub::ui::has_condition(overlay.hide_conditions(),
+                                            hub::ui::HideCondition::InCutscene));
+}
+
+TEST_CASE(Payload, ResetGeometryUsesEachOverlaysOwnDefault) {
+    // The shared handler has no per-plugin knowledge, so each overlay supplies
+    // its own default rather than the dispatcher hardcoding two rectangles.
+    mitigator::LatencyOverlay latency;
+    latency.set_geometry(Rect{900.0f, 900.0f, 500.0f, 500.0f});
+
+    payload::CommandDispatchTargets targets;
+    targets.latency_overlay = &latency;
+
+    ipc::CommandPayload cmd{};
+    cmd.target_plugin_id = static_cast<uint32_t>(PluginId::LatencyMitigator);
+    cmd.command_id = static_cast<uint32_t>(CommandId::ResetOverlayGeometry);
+    payload::dispatch_command(targets, cmd);
+
+    const auto geom = latency.get_geometry();
+    const auto expected = latency.default_geometry();
+    TEST_ASSERT_NEAR(geom.x, expected.x, 0.001f);
+    TEST_ASSERT_NEAR(geom.y, expected.y, 0.001f);
+    TEST_ASSERT_NEAR(geom.width, expected.width, 0.001f);
+}
+
+TEST_CASE(Payload, OverlayHostForwardsGameStateOnRegistration) {
+    auto& host = payload::OverlayHost::instance();
+    GameStateProvider provider;
+    provider.publish(to_bits(GameStateFlag::Valid) | to_bits(GameStateFlag::InCutscene));
+    host.set_game_state(&provider);
+
+    auto overlay = std::make_shared<mitigator::LatencyOverlay>();
+    overlay->set_locked(true);
+    overlay->set_hide_conditions(hub::ui::to_bits(hub::ui::HideCondition::InCutscene));
+    host.register_overlay(overlay);
+
+    // Registration alone is enough to wire the state source.
+    TEST_ASSERT_FALSE(overlay->should_render());
+
+    host.unregister_overlay(overlay->overlay_id());
+    host.set_game_state(nullptr);
 }

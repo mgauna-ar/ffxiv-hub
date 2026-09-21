@@ -88,15 +88,10 @@ void LatencyPlugin::serialize_config(config::JsonValue& out) const {
     out["safety_margin_ms"] = config::JsonValue(cfg.safety_margin_ms);
     out["spike_multiplier"] = config::JsonValue(cfg.spike_multiplier);
 
+    // The overlay owns anything the player changes live in-game, so read the
+    // live state back out whenever there is one.
+    ui::serialize_overlay(m_overlay ? m_overlay->capture_config() : m_overlay_config, out);
     if (m_overlay) {
-        out["overlay_visible"] = config::JsonValue(m_overlay->is_visible());
-        out["overlay_locked"] = config::JsonValue(m_overlay->is_locked());
-        out["click_through"] = config::JsonValue(m_overlay->click_through());
-        out["overlay_opacity"] = config::JsonValue(static_cast<double>(m_overlay->opacity()));
-        out["overlay_scale"] = config::JsonValue(static_cast<double>(m_overlay->scale()));
-        const auto geom = m_overlay->get_geometry();
-        out["overlay_x"] = config::JsonValue(static_cast<double>(geom.x));
-        out["overlay_y"] = config::JsonValue(static_cast<double>(geom.y));
         out["overlay_mode"] = config::JsonValue(static_cast<int>(m_overlay->display_mode()));
     }
 }
@@ -116,18 +111,10 @@ void LatencyPlugin::deserialize_config(const config::JsonValue& in) {
 
     m_mitigator.set_config(cfg);
 
+    m_overlay_config = ui::deserialize_overlay(in, m_overlay_config);
+
     if (m_overlay) {
-        if (in.contains("overlay_visible")) m_overlay->set_visible(in["overlay_visible"].as_bool(m_overlay->is_visible()));
-        if (in.contains("overlay_locked")) m_overlay->set_locked(in["overlay_locked"].as_bool(m_overlay->is_locked()));
-        if (in.contains("click_through")) m_overlay->set_click_through(in["click_through"].as_bool(m_overlay->click_through()));
-        if (in.contains("overlay_opacity")) m_overlay->set_opacity(static_cast<float>(in["overlay_opacity"].as_double(m_overlay->opacity())));
-        if (in.contains("overlay_scale")) m_overlay->set_scale(static_cast<float>(in["overlay_scale"].as_double(m_overlay->scale())));
-        if (in.contains("overlay_x") || in.contains("overlay_y")) {
-            auto geom = m_overlay->get_geometry();
-            if (in.contains("overlay_x")) geom.x = static_cast<float>(in["overlay_x"].as_double(geom.x));
-            if (in.contains("overlay_y")) geom.y = static_cast<float>(in["overlay_y"].as_double(geom.y));
-            m_overlay->set_geometry(geom);
-        }
+        m_overlay->apply_config(m_overlay_config);
         if (in.contains("overlay_mode")) {
             m_overlay->set_display_mode(static_cast<OverlayDisplayMode>(in["overlay_mode"].as_int(static_cast<int>(m_overlay->display_mode()))));
         }

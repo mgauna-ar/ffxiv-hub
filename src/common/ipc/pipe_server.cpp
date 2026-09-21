@@ -222,6 +222,13 @@ bool PipeServer::process_raw_packet(std::span<const uint8_t> data) {
                 m_on_overlay_geometry(payload);
             }
             break;
+        case MessageType::GameState:
+            if (payload_span.size() >= sizeof(GameStatePayload) && m_on_game_state) {
+                GameStatePayload payload{};
+                std::memcpy(&payload, payload_span.data(), sizeof(payload));
+                m_on_game_state(payload);
+            }
+            break;
         default:
             break;
     }

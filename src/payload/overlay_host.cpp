@@ -3,6 +3,80 @@
 #include <initializer_list>
 #include <string>
 
+namespace hub::payload {
+
+OverlayHost& OverlayHost::instance() noexcept {
+    static OverlayHost s_instance;
+    return s_instance;
+}
+
+void OverlayHost::register_overlay(std::shared_ptr<IOverlay> overlay) {
+    if (!overlay) return;
+    std::lock_guard<std::mutex> lock(m_mutex);
+    auto it = std::find_if(m_overlays.begin(), m_overlays.end(), [&](const auto& o) {
+        return o && std::string_view(o->overlay_id()) == std::string_view(overlay->overlay_id());
+    });
+    if (it != m_overlays.end()) return;
+    // Wired here rather than at every construction site, so a new overlay picks
+    // up visibility conditions just by registering.
+    overlay->set_game_state(m_game_state);
+    m_overlays.push_back(std::move(overlay));
+}
+
+void OverlayHost::unregister_overlay(std::string_view overlay_id) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_overlays.erase(
+        std::remove_if(m_overlays.begin(), m_overlays.end(), [&](const auto& o) {
+            return o && std::string_view(o->overlay_id()) == overlay_id;
+        }),
+        m_overlays.end());
+}
+
+std::shared_ptr<IOverlay> OverlayHost::find_overlay(std::string_view overlay_id) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (const auto& o : m_overlays) {
+        if (o && std::string_view(o->overlay_id()) == overlay_id) {
+            return o;
+        }
+    }
+    return nullptr;
+}
+
+const std::vector<std::shared_ptr<IOverlay>>& OverlayHost::overlays() const noexcept {
+    return m_overlays;
+}
+
+void OverlayHost::set_game_state(const GameStateProvider* provider) noexcept {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_game_state = provider;
+    for (auto& o : m_overlays) {
+        if (o) o->set_game_state(provider);
+    }
+}
+
+void OverlayHost::set_all_overlays_visible(bool visible) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (auto& o : m_overlays) {
+        if (o) o->set_visible(visible);
+    }
+}
+
+void OverlayHost::toggle_all_overlays_visible() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    bool any_visible = false;
+    for (const auto& o : m_overlays) {
+        if (o && o->is_visible()) {
+            any_visible = true;
+            break;
+        }
+    }
+    for (auto& o : m_overlays) {
+        if (o) o->set_visible(!any_visible);
+    }
+}
+
+} // namespace hub::payload
+
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -15,11 +89,6 @@
 #include "backends/imgui_impl_dx11.h"
 
 namespace hub::payload {
-
-OverlayHost& OverlayHost::instance() noexcept {
-    static OverlayHost s_instance;
-    return s_instance;
-}
 
 void OverlayHost::setup_style(float alpha) {
     ImGuiStyle& style = ImGui::GetStyle();
@@ -189,7 +258,7 @@ void OverlayHost::render_frame() {
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         for (auto& overlay : m_overlays) {
-            if (overlay && overlay->is_visible()) {
+            if (overlay && overlay->should_render()) {
                 overlay->render();
             }
         }
@@ -197,40 +266,6 @@ void OverlayHost::render_frame() {
 
     ImGui::Render();
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-}
-
-void OverlayHost::register_overlay(std::shared_ptr<IOverlay> overlay) {
-    if (!overlay) return;
-    std::lock_guard<std::mutex> lock(m_mutex);
-    auto it = std::find_if(m_overlays.begin(), m_overlays.end(), [&](const auto& o) {
-        return o && std::string_view(o->overlay_id()) == std::string_view(overlay->overlay_id());
-    });
-    if (it == m_overlays.end()) {
-        m_overlays.push_back(std::move(overlay));
-    }
-}
-
-void OverlayHost::unregister_overlay(std::string_view overlay_id) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    m_overlays.erase(
-        std::remove_if(m_overlays.begin(), m_overlays.end(), [&](const auto& o) {
-            return o && std::string_view(o->overlay_id()) == overlay_id;
-        }),
-        m_overlays.end());
-}
-
-std::shared_ptr<IOverlay> OverlayHost::find_overlay(std::string_view overlay_id) const {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    for (const auto& o : m_overlays) {
-        if (o && std::string_view(o->overlay_id()) == overlay_id) {
-            return o;
-        }
-    }
-    return nullptr;
-}
-
-const std::vector<std::shared_ptr<IOverlay>>& OverlayHost::overlays() const noexcept {
-    return m_overlays;
 }
 
 bool OverlayHost::is_point_inside_ui(int screen_x, int screen_y) const {
@@ -263,37 +298,11 @@ bool OverlayHost::is_point_inside_ui(int screen_x, int screen_y) const {
     return false;
 }
 
-void OverlayHost::set_all_overlays_visible(bool visible) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    for (auto& o : m_overlays) {
-        if (o) o->set_visible(visible);
-    }
-}
-
-void OverlayHost::toggle_all_overlays_visible() {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    bool any_visible = false;
-    for (const auto& o : m_overlays) {
-        if (o && o->is_visible()) {
-            any_visible = true;
-            break;
-        }
-    }
-    for (auto& o : m_overlays) {
-        if (o) o->set_visible(!any_visible);
-    }
-}
-
 } // namespace hub::payload
 
 #else // !_WIN32 - Cross-platform mock implementation for macOS / Linux testing
 
 namespace hub::payload {
-
-OverlayHost& OverlayHost::instance() noexcept {
-    static OverlayHost s_instance;
-    return s_instance;
-}
 
 void OverlayHost::setup_style(float) {}
 void OverlayHost::setup_fonts() {}
@@ -313,69 +322,14 @@ void OverlayHost::render_frame() {
     if (!m_initialized) return;
     std::lock_guard<std::mutex> lock(m_mutex);
     for (auto& overlay : m_overlays) {
-        if (overlay && overlay->is_visible()) {
+        if (overlay && overlay->should_render()) {
             overlay->render();
         }
     }
 }
 
-void OverlayHost::register_overlay(std::shared_ptr<IOverlay> overlay) {
-    if (!overlay) return;
-    std::lock_guard<std::mutex> lock(m_mutex);
-    auto it = std::find_if(m_overlays.begin(), m_overlays.end(), [&](const auto& o) {
-        return o && std::string_view(o->overlay_id()) == std::string_view(overlay->overlay_id());
-    });
-    if (it == m_overlays.end()) {
-        m_overlays.push_back(std::move(overlay));
-    }
-}
-
-void OverlayHost::unregister_overlay(std::string_view overlay_id) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    m_overlays.erase(
-        std::remove_if(m_overlays.begin(), m_overlays.end(), [&](const auto& o) {
-            return o && std::string_view(o->overlay_id()) == overlay_id;
-        }),
-        m_overlays.end());
-}
-
-std::shared_ptr<IOverlay> OverlayHost::find_overlay(std::string_view overlay_id) const {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    for (const auto& o : m_overlays) {
-        if (o && std::string_view(o->overlay_id()) == overlay_id) {
-            return o;
-        }
-    }
-    return nullptr;
-}
-
-const std::vector<std::shared_ptr<IOverlay>>& OverlayHost::overlays() const noexcept {
-    return m_overlays;
-}
-
 bool OverlayHost::is_point_inside_ui(int, int) const {
     return false;
-}
-
-void OverlayHost::set_all_overlays_visible(bool visible) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    for (auto& o : m_overlays) {
-        if (o) o->set_visible(visible);
-    }
-}
-
-void OverlayHost::toggle_all_overlays_visible() {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    bool any_visible = false;
-    for (const auto& o : m_overlays) {
-        if (o && o->is_visible()) {
-            any_visible = true;
-            break;
-        }
-    }
-    for (auto& o : m_overlays) {
-        if (o) o->set_visible(!any_visible);
-    }
 }
 
 } // namespace hub::payload

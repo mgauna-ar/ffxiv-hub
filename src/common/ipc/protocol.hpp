@@ -76,6 +76,13 @@ struct OverlayGeometryPayload {
 };
 static_assert(sizeof(OverlayGeometryPayload) == 32, "OverlayGeometryPayload must be 32 bytes");
 
+/// 0x0008: Coarse game state the overlays gate their visibility on. A
+/// hub::GameStateFlag bitmask.
+struct GameStatePayload {
+    uint32_t flags{0};
+};
+static_assert(sizeof(GameStatePayload) == 4, "GameStatePayload must be 4 bytes");
+
 /// 0x0101: Latency Mitigator Telemetry payload
 struct MitigatorTelemetryPayload {
     uint32_t action_id{0};

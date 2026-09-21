@@ -5,6 +5,19 @@
 
 namespace hub::meter {
 
+CombatOverlay::CombatOverlay(EncounterEngine* engine)
+    : m_engine(engine) {
+    set_geometry(default_geometry());
+}
+
+CombatOverlay::~CombatOverlay() = default;
+
+Rect CombatOverlay::default_geometry() const noexcept {
+    return Rect{-1.0f, -1.0f,
+                static_cast<float>(constants::DEFAULT_WINDOW_WIDTH),
+                static_cast<float>(constants::DEFAULT_WINDOW_HEIGHT)};
+}
+
 std::vector<const CombatantStats*> CombatOverlay::sorted_combatants(
     const EncounterSummary& summary, bool party_only, bool by_healing, bool hide_inactive
 ) {
@@ -170,22 +183,7 @@ float CombatOverlay::row_height() const {
     return std::clamp(ImGui::GetTextLineHeightWithSpacing() + 6.0f, 24.0f, 34.0f);
 }
 
-CombatOverlay::CombatOverlay(EncounterEngine* engine)
-    : m_engine(engine) {
-    set_geometry(Rect{-1.0f, -1.0f, 800.0f, 480.0f});
-}
 
-CombatOverlay::~CombatOverlay() = default;
-
-bool CombatOverlay::should_render() const noexcept {
-    if (!m_visible.load()) return false;
-    if (m_auto_hide.load() && m_locked.load()) {
-        if (m_engine && !m_engine->in_combat()) {
-            return false;
-        }
-    }
-    return true;
-}
 
 void CombatOverlay::render_row_progress_bar(float fraction, uint32_t color_u32) {
     if (!m_show_progress_bars.load()) return;
@@ -587,8 +585,6 @@ void CombatOverlay::render_history_tab() {
 }
 
 void CombatOverlay::render() {
-    if (!should_render()) return;
-
     const float opacity = std::clamp(m_opacity.load(), 0.2f, 1.0f);
     const float scale = std::clamp(m_scale.load(), 0.7f, 2.0f);
 
@@ -683,23 +679,6 @@ void CombatOverlay::render() {
 #else // !_WIN32 - Cross-platform mock implementation
 
 namespace hub::meter {
-
-CombatOverlay::CombatOverlay(EncounterEngine* engine)
-    : m_engine(engine) {
-    set_geometry(Rect{-1.0f, -1.0f, 800.0f, 480.0f});
-}
-
-CombatOverlay::~CombatOverlay() = default;
-
-bool CombatOverlay::should_render() const noexcept {
-    if (!m_visible.load()) return false;
-    if (m_auto_hide.load() && m_locked.load()) {
-        if (m_engine && !m_engine->in_combat()) {
-            return false;
-        }
-    }
-    return true;
-}
 
 void CombatOverlay::render() {}
 

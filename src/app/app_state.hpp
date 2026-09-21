@@ -99,12 +99,6 @@ public:
     void clear_pull_history();
 
     // Combat Overlay in-game controls
-    void send_combat_overlay_visible(bool visible);
-    void send_combat_overlay_locked(bool locked);
-    void send_combat_overlay_click_through(bool ct);
-    void send_combat_overlay_auto_hide(bool auto_hide);
-    void send_combat_overlay_opacity(float opacity);
-    void send_combat_overlay_scale(float scale);
     void send_combat_overlay_party_only(bool party_only);
     void send_combat_show_bars(bool show);
     void send_combat_hide_inactive(bool hide);
@@ -139,11 +133,6 @@ public:
     void send_mitigator_min_lock(float min_lock_ms);
     void send_mitigator_spike_multiplier(float mult);
     void send_mitigator_dry_run(bool dry_run);
-    void send_mitigator_hud_visible(bool visible);
-    void send_mitigator_hud_locked(bool locked);
-    void send_mitigator_hud_click_through(bool click_through);
-    void send_mitigator_hud_opacity(float opacity);
-    void send_mitigator_hud_scale(float scale);
     void send_mitigator_hud_display_mode(uint32_t mode);
     void send_mitigator_enabled(bool enabled);
     void send_mitigator_reset_stats();
@@ -171,6 +160,15 @@ public:
     [[nodiscard]] std::optional<ipc::OverlayGeometryPayload> overlay_geometry(PluginId id) const;
     void send_overlay_position(PluginId id, float x, float y);
 
+    /// Every overlay answers to the same command IDs, so the shared settings
+    /// controls send through here rather than a wrapper per plugin per control.
+    void send_overlay_command(PluginId id, CommandId cmd, uint32_t param_uint = 0,
+                              float param_float = 0.0f, float param_float2 = 0.0f);
+
+    /// Coarse game state the payload last reported, as a hub::GameStateFlag
+    /// bitmask. Zero until the payload connects, or if its scan failed.
+    [[nodiscard]] uint32_t game_state_flags() const noexcept { return m_game_state_flags.load(); }
+
 private:
     void register_ipc_callbacks();
     void check_game_process();
@@ -182,6 +180,7 @@ private:
     std::atomic<uint32_t> m_game_pid{0};
     std::atomic<bool> m_access_denied{false};
     std::atomic<bool> m_hooks_installed{false};
+    std::atomic<uint32_t> m_game_state_flags{0};
     std::atomic<uint64_t> m_last_heartbeat_ms{0};
     mutable std::mutex m_status_mutex;
     std::string m_payload_status_message;

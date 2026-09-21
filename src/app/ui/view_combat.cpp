@@ -1,6 +1,7 @@
 #include "app/ui/view_combat.hpp"
 #include "app/ui/theme.hpp"
 #include "app/ui/config_binding.hpp"
+#include "app/ui/overlay_settings.hpp"
 #include <algorithm>
 #include <vector>
 
@@ -328,52 +329,23 @@ void render_view_combat(AppState& app_state) {
         ImGui::TextColored(ImVec4(0.55f, 0.59f, 0.67f, 1.0f), "Adjust display settings synced directly with hub_payload.dll");
         ImGui::Spacing();
 
-        bool show_overlay = cfg_bool(METER, "overlay_visible", true);
-        if (ImGui::Checkbox("Show In-Game Overlay", &show_overlay)) {
-            cfg_store(METER, "overlay_visible", show_overlay);
-            app_state.send_combat_overlay_visible(show_overlay);
-        }
+        OverlaySettingsOptions overlay_opts{};
+        overlay_opts.section = METER;
+        overlay_opts.plugin = PluginId::CombatMeter;
+        overlay_opts.locked_label = "Lock Overlay Position & Size";
+        overlay_opts.min_opacity = meter::constants::MIN_WINDOW_OPACITY;
+        overlay_opts.max_opacity = meter::constants::MAX_WINDOW_OPACITY;
+        overlay_opts.min_scale = meter::constants::MIN_UI_SCALE;
+        overlay_opts.max_scale = meter::constants::MAX_UI_SCALE;
+        overlay_opts.defaults = meter::CombatConfig{}.overlay;
+        render_overlay_settings(app_state, overlay_opts);
 
-        bool lock_overlay = cfg_bool(METER, "window_locked", false);
-        if (ImGui::Checkbox("Lock Overlay Position & Size", &lock_overlay)) {
-            cfg_store(METER, "window_locked", lock_overlay);
-            app_state.send_combat_overlay_locked(lock_overlay);
-        }
-
-        bool click_through = cfg_bool(METER, "click_through", false);
-        if (ImGui::Checkbox("Click-Through Mode (Ctrl+\\)", &click_through)) {
-            cfg_store(METER, "click_through", click_through);
-            app_state.send_combat_overlay_click_through(click_through);
-        }
-
-        bool auto_hide = cfg_bool(METER, "auto_hide", false);
-        if (ImGui::Checkbox("Auto-Hide When Inactive", &auto_hide)) {
-            cfg_store(METER, "auto_hide", auto_hide);
-            app_state.send_combat_overlay_auto_hide(auto_hide);
-        }
+        ImGui::Spacing();
 
         bool party_only = cfg_bool(METER, "party_only", true);
         if (ImGui::Checkbox("Filter Party Members Only", &party_only)) {
             cfg_store(METER, "party_only", party_only);
             app_state.send_combat_overlay_party_only(party_only);
-        }
-
-        ImGui::Spacing();
-
-        float opacity = cfg_float(METER, "window_opacity", meter::constants::DEFAULT_WINDOW_OPACITY);
-        if (ImGui::SliderFloat("Background Opacity", &opacity,
-                               meter::constants::MIN_WINDOW_OPACITY,
-                               meter::constants::MAX_WINDOW_OPACITY, "%.2f")) {
-            cfg_store(METER, "window_opacity", opacity);
-            app_state.send_combat_overlay_opacity(opacity);
-        }
-
-        float scale = cfg_float(METER, "ui_scale", meter::constants::DEFAULT_UI_SCALE);
-        if (ImGui::SliderFloat("UI Scale", &scale,
-                               meter::constants::MIN_UI_SCALE,
-                               meter::constants::MAX_UI_SCALE, "%.2fx")) {
-            cfg_store(METER, "ui_scale", scale);
-            app_state.send_combat_overlay_scale(scale);
         }
 
         ImGui::Spacing();

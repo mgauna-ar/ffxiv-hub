@@ -44,10 +44,8 @@ public:
     void set_active_tab(OverlayTab tab) noexcept { m_active_tab = tab; }
     [[nodiscard]] OverlayTab active_tab() const noexcept { return m_active_tab; }
 
-    // Overlay controls (visible/locked/click_through/opacity/scale/geometry inherited from OverlayBase)
-    void set_auto_hide(bool auto_hide) noexcept { m_auto_hide.store(auto_hide); }
-    [[nodiscard]] bool auto_hide() const noexcept { return m_auto_hide.load(); }
-
+    // Overlay controls (visible/locked/click_through/opacity/scale/geometry/
+    // hide conditions inherited from OverlayBase)
     void set_show_progress_bars(bool show) noexcept { m_show_progress_bars.store(show); }
     [[nodiscard]] bool show_progress_bars() const noexcept { return m_show_progress_bars.load(); }
 
@@ -73,7 +71,7 @@ public:
     void set_selected_history_pull(int index) noexcept { m_selected_history_pull = index; }
     [[nodiscard]] int selected_history_pull() const noexcept { return m_selected_history_pull; }
 
-    [[nodiscard]] bool should_render() const noexcept;
+    [[nodiscard]] Rect default_geometry() const noexcept override;
 
     /// Ranked view of a summary's combatants: pets merged into owners, zero-stat
     /// entities dropped, ties broken on the underlying total. `hide_inactive`
@@ -85,7 +83,6 @@ public:
 private:
     EncounterEngine* m_engine{nullptr};
 
-    std::atomic<bool> m_auto_hide{false};
     std::atomic<bool> m_show_progress_bars{true};
     std::atomic<bool> m_party_only{true};
     std::atomic<bool> m_hide_inactive{false};

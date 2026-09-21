@@ -2,6 +2,7 @@
 #include "payload/dx11_hook.hpp"
 #include "hub/game_definitions.hpp"
 #include "payload/overlay_host.hpp"
+#include "payload/game_state_reader.hpp"
 #include "payload/object_reader.hpp"
 #include "payload/command_dispatcher.hpp"
 #include "common/ipc/ring_buffer.hpp"
@@ -75,6 +76,12 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
     latency_plugin->set_overlay(latency_overlay.get());
     combat_plugin->set_overlay(combat_overlay.get());
 
+    // Published by the orchestration loop below, read by the render thread when
+    // an overlay evaluates its visibility conditions.
+    hub::GameStateProvider game_state;
+    combat_plugin->set_game_state(&game_state);
+    hub::payload::OverlayHost::instance().set_game_state(&game_state);
+
     hub::payload::OverlayHost::instance().register_overlay(latency_overlay);
     hub::payload::OverlayHost::instance().register_overlay(combat_overlay);
 
@@ -125,6 +132,13 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
     const bool object_reader_ok = object_reader->initialize();
     hub::os::Logger::info(std::string("ObjectReader::initialize() -> ") + (object_reader_ok ? "ok" : "FAILED"));
 
+    // 6b. Resolve the Conditions array that drives overlay visibility conditions.
+    hub::payload::GameStateReader game_state_reader;
+    const bool game_state_ok = game_state_reader.initialize();
+    hub::os::Logger::info(
+        std::string("GameStateReader::initialize() -> ") +
+        (game_state_ok ? "ok" : std::string("FAILED (") + game_state_reader.last_error() + ")"));
+
     combat_plugin->set_actor_resolver(
         [reader = object_reader.get(), plugin = combat_plugin.get()](uint32_t entity_id) {
             reader->inspect_and_sync_actor(entity_id, &plugin->engine().registry());
@@ -143,6 +157,8 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
     auto last_meter_report = std::chrono::steady_clock::now();
     auto last_heartbeat = std::chrono::steady_clock::now();
     auto last_geometry_sync = std::chrono::steady_clock::now();
+    auto last_game_state_push = std::chrono::steady_clock::now();
+    uint32_t last_game_state_flags = 0;
     const auto payload_start = std::chrono::steady_clock::now();
     uint32_t heartbeat_sequence = 0;
     size_t last_combatant_count = 0;
@@ -185,6 +201,9 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
             object_reader->sync_party(&combat_plugin->engine().registry());
             last_party_sync = now;
         }
+
+        // One 112-byte read; 50 ms of lag on a cutscene transition is invisible.
+        game_state_reader.poll(game_state);
 
         // Update plugin logic
         combat_plugin->update(0.05);
@@ -232,15 +251,36 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
             status.active_plugins_mask =
                 (combat_plugin ? static_cast<uint32_t>(hub::PluginId::CombatMeter) : 0u) |
                 (latency_plugin ? static_cast<uint32_t>(hub::PluginId::LatencyMitigator) : 0u);
-            const std::string msg = hook_mgr.is_installed()
+            std::string msg = hook_mgr.is_installed()
                 ? std::string("Hooks installed (") + hook_mgr.last_error() + ")"
                 : std::string("Hooks NOT installed: ") + hook_mgr.last_error();
+            if (!game_state_reader.is_initialized()) {
+                msg += std::string(" | ") + game_state_reader.last_error();
+            }
             std::snprintf(status.status_message, sizeof(status.status_message), "%s", msg.c_str());
             auto status_packet = hub::ipc::serialize_typed_packet(
                 hub::PluginId::Core, hub::MessageType::Status, hb.sequence, status);
             pipe_client->ring_buffer().push(std::move(status_packet));
 
             last_heartbeat = now;
+        }
+
+        // Game state, so the desktop app can show what the overlays are currently
+        // gating on. Pushed on change, plus a keepalive so a late-connecting app
+        // isn't left with a blank indicator.
+        if (connected) {
+            const uint32_t flags = game_state.flags();
+            const bool changed = flags != last_game_state_flags;
+            if (changed ||
+                std::chrono::duration_cast<std::chrono::milliseconds>(now - last_game_state_push).count() > 1000) {
+                hub::ipc::GameStatePayload gs{};
+                gs.flags = flags;
+                auto packet = hub::ipc::serialize_typed_packet(
+                    hub::PluginId::Core, hub::MessageType::GameState, heartbeat_sequence, gs);
+                pipe_client->ring_buffer().push(std::move(packet));
+                last_game_state_flags = flags;
+                last_game_state_push = now;
+            }
         }
 
         // Overlay geometry, so the desktop app can show where an overlay actually

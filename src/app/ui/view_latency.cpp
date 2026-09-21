@@ -1,6 +1,7 @@
 #include "app/ui/view_latency.hpp"
 #include "app/ui/theme.hpp"
 #include "app/ui/config_binding.hpp"
+#include "app/ui/overlay_settings.hpp"
 #include <algorithm>
 #include <ctime>
 #include <iomanip>
@@ -323,35 +324,21 @@ void render_view_latency(AppState& app_state) {
     ImGui::Separator();
     ImGui::Spacing();
 
-    bool hud_visible = cfg_bool(MITI, "overlay_visible", true);
-    if (ImGui::Checkbox("Show Micro Ping HUD In-Game", &hud_visible)) {
-        cfg_store(MITI, "overlay_visible", hud_visible);
-        app_state.send_mitigator_hud_visible(hud_visible);
-    }
+    OverlaySettingsOptions overlay_opts{};
+    overlay_opts.section = MITI;
+    overlay_opts.plugin = PluginId::LatencyMitigator;
+    overlay_opts.visible_label = "Show Micro Ping HUD In-Game";
+    overlay_opts.locked_label = "Lock Micro Ping HUD Position";
+    overlay_opts.opacity_label = "HUD Opacity";
+    overlay_opts.scale_label = "HUD Scale";
+    overlay_opts.min_opacity = mitigator::constants::MIN_OVERLAY_OPACITY;
+    overlay_opts.max_opacity = mitigator::constants::MAX_OVERLAY_OPACITY;
+    overlay_opts.min_scale = mitigator::constants::MIN_OVERLAY_SCALE;
+    overlay_opts.max_scale = mitigator::constants::MAX_OVERLAY_SCALE;
+    overlay_opts.defaults = mitigator::default_overlay_config();
+    render_overlay_settings(app_state, overlay_opts);
 
-    bool hud_locked = cfg_bool(MITI, "overlay_locked", false);
-    if (ImGui::Checkbox("Lock Micro Ping HUD Position", &hud_locked)) {
-        cfg_store(MITI, "overlay_locked", hud_locked);
-        app_state.send_mitigator_hud_locked(hud_locked);
-    }
-
-    float hud_opacity = cfg_float(MITI, "overlay_opacity", 0.90f);
-    if (ImGui::SliderFloat("HUD Opacity", &hud_opacity, 0.1f, 1.0f, "%.2f")) {
-        cfg_store(MITI, "overlay_opacity", hud_opacity);
-        app_state.send_mitigator_hud_opacity(hud_opacity);
-    }
-
-    float hud_scale = cfg_float(MITI, "overlay_scale", 1.0f);
-    if (ImGui::SliderFloat("HUD Scale", &hud_scale, 0.5f, 3.0f, "%.2fx")) {
-        cfg_store(MITI, "overlay_scale", hud_scale);
-        app_state.send_mitigator_hud_scale(hud_scale);
-    }
-
-    bool hud_click_through = cfg_bool(MITI, "click_through", false);
-    if (ImGui::Checkbox("Click-Through HUD", &hud_click_through)) {
-        cfg_store(MITI, "click_through", hud_click_through);
-        app_state.send_mitigator_hud_click_through(hud_click_through);
-    }
+    ImGui::Spacing();
 
     int hud_mode = cfg_int(MITI, "overlay_mode", 0);
     static const char* hud_mode_names[] = { "Compact Inline", "Two Row", "Ping Only" };

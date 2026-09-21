@@ -30,6 +30,10 @@ public:
     [[nodiscard]] std::shared_ptr<IOverlay> find_overlay(std::string_view overlay_id) const;
     [[nodiscard]] const std::vector<std::shared_ptr<IOverlay>>& overlays() const noexcept;
 
+    /// Hands every registered overlay, and every one registered afterwards, the
+    /// game state its visibility conditions are evaluated against. Non-owning.
+    void set_game_state(const GameStateProvider* provider) noexcept;
+
     [[nodiscard]] bool is_point_inside_ui(int screen_x, int screen_y) const;
     [[nodiscard]] bool is_initialized() const noexcept { return m_initialized; }
 
@@ -86,6 +90,7 @@ private:
     std::vector<std::shared_ptr<IOverlay>> m_overlays;
     bool m_initialized{false};
     void* m_hwnd{nullptr};  ///< Needed to map screen points into ImGui's client space.
+    const GameStateProvider* m_game_state{nullptr};
 
     ImFont* m_font_regular{nullptr};
     ImFont* m_font_bold{nullptr};

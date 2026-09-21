@@ -23,6 +23,7 @@ public:
     // IOverlay implementation
     const char* overlay_id() const noexcept override { return "##LatencyHUDOverlay"; }
     void render() override;
+    [[nodiscard]] Rect default_geometry() const noexcept override;
 
     // State & telemetry
     void update_rtt(double smoothed_rtt_ms, bool has_samples = true) noexcept;

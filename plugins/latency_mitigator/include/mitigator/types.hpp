@@ -1,5 +1,6 @@
 #pragma once
 
+#include "common/ui/overlay_config.hpp"
 #include <cstdint>
 #include <chrono>
 #include <string>
@@ -37,6 +38,18 @@ namespace constants {
     constexpr size_t MIN_SAMPLES_FOR_MEDIAN_FILTER = 5;
     constexpr double MIN_OUTLIER_TOLERANCE_MS = 50.0;
     constexpr double JITTER_SPIKE_MULTIPLIER = 3.0;
+
+    /// Default HUD placement and appearance. Also the target of a geometry reset.
+    constexpr float DEFAULT_OVERLAY_X = 20.0f;
+    constexpr float DEFAULT_OVERLAY_Y = 20.0f;
+    constexpr float DEFAULT_OVERLAY_WIDTH = 120.0f;
+    constexpr float DEFAULT_OVERLAY_HEIGHT = 32.0f;
+    constexpr float DEFAULT_OVERLAY_OPACITY = 0.90f;
+    constexpr float MIN_OVERLAY_OPACITY = 0.10f;
+    constexpr float MAX_OVERLAY_OPACITY = 1.0f;
+    constexpr float DEFAULT_OVERLAY_SCALE = 1.0f;
+    constexpr float MIN_OVERLAY_SCALE = 0.50f;
+    constexpr float MAX_OVERLAY_SCALE = 3.0f;
 }
 
 /// Configuration parameters for latency mitigation
@@ -50,6 +63,19 @@ struct MitigationConfig {
     bool   dry_run{false};
     bool   enabled{true};
 };
+
+/// Starting point for the HUD's shared overlay settings, and the fallback when
+/// no overlay instance exists to read live state from.
+[[nodiscard]] constexpr ui::OverlayConfig default_overlay_config() noexcept {
+    return ui::OverlayConfig{
+        .opacity = constants::DEFAULT_OVERLAY_OPACITY,
+        .scale = constants::DEFAULT_OVERLAY_SCALE,
+        .x = constants::DEFAULT_OVERLAY_X,
+        .y = constants::DEFAULT_OVERLAY_Y,
+        .width = constants::DEFAULT_OVERLAY_WIDTH,
+        .height = constants::DEFAULT_OVERLAY_HEIGHT,
+    };
+}
 
 /// In-game micro ping HUD layout mode
 enum class OverlayDisplayMode : uint32_t {

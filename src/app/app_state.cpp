@@ -103,6 +103,10 @@ void AppState::register_ipc_callbacks() {
         }
     });
 
+    m_pipe_server.set_game_state_callback([this](const ipc::GameStatePayload& gs) {
+        m_game_state_flags.store(gs.flags);
+    });
+
     m_pipe_server.set_mitigator_telemetry_callback([this](const ipc::MitigatorTelemetryPayload& telem) {
         std::lock_guard<std::mutex> lock(m_telemetry_mutex);
         m_telemetry_history.push_back(telem);
@@ -301,6 +305,11 @@ void AppState::send_overlay_position(PluginId id, float x, float y) {
     m_pipe_server.send_command(id, CommandId::SetOverlayPosition, 0, x, y);
 }
 
+void AppState::send_overlay_command(PluginId id, CommandId cmd, uint32_t param_uint,
+                                    float param_float, float param_float2) {
+    m_pipe_server.send_command(id, cmd, param_uint, param_float, param_float2);
+}
+
 // Combat Meter Integration
 meter::EncounterSummary AppState::get_live_summary() {
     std::lock_guard<std::mutex> lock(m_combat_mutex);
@@ -323,30 +332,6 @@ void AppState::reset_encounter() {
 void AppState::clear_pull_history() {
     std::lock_guard<std::mutex> lock(m_combat_mutex);
     m_engine.clear_history();
-}
-
-void AppState::send_combat_overlay_visible(bool visible) {
-    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::ToggleOverlay, visible ? 1 : 0);
-}
-
-void AppState::send_combat_overlay_locked(bool locked) {
-    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::LockOverlay, locked ? 1 : 0);
-}
-
-void AppState::send_combat_overlay_click_through(bool ct) {
-    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::ClickThrough, ct ? 1 : 0);
-}
-
-void AppState::send_combat_overlay_auto_hide(bool auto_hide) {
-    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::AutoHide, auto_hide ? 1 : 0);
-}
-
-void AppState::send_combat_overlay_opacity(float opacity) {
-    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::SetOpacity, 0, opacity);
-}
-
-void AppState::send_combat_overlay_scale(float scale) {
-    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::SetScale, 0, scale);
 }
 
 void AppState::send_combat_overlay_party_only(bool party_only) {
@@ -386,26 +371,6 @@ void AppState::send_mitigator_spike_multiplier(float mult) {
 
 void AppState::send_mitigator_dry_run(bool dry_run) {
     m_pipe_server.send_command(PluginId::LatencyMitigator, CommandId::ToggleDryRun, dry_run ? 1 : 0);
-}
-
-void AppState::send_mitigator_hud_visible(bool visible) {
-    m_pipe_server.send_command(PluginId::LatencyMitigator, CommandId::ToggleOverlay, visible ? 1 : 0);
-}
-
-void AppState::send_mitigator_hud_locked(bool locked) {
-    m_pipe_server.send_command(PluginId::LatencyMitigator, CommandId::LockOverlay, locked ? 1 : 0);
-}
-
-void AppState::send_mitigator_hud_opacity(float opacity) {
-    m_pipe_server.send_command(PluginId::LatencyMitigator, CommandId::SetOpacity, 0, opacity);
-}
-
-void AppState::send_mitigator_hud_scale(float scale) {
-    m_pipe_server.send_command(PluginId::LatencyMitigator, CommandId::SetScale, 0, scale);
-}
-
-void AppState::send_mitigator_hud_click_through(bool click_through) {
-    m_pipe_server.send_command(PluginId::LatencyMitigator, CommandId::ClickThrough, click_through ? 1 : 0);
 }
 
 void AppState::send_mitigator_hud_display_mode(uint32_t mode) {

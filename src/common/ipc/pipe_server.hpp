@@ -22,6 +22,7 @@ using CombatControlCallback = std::function<void(const CombatControlPayload&)>;
 using MitigatorTelemetryCallback = std::function<void(const MitigatorTelemetryPayload&)>;
 
 using OverlayGeometryCallback = std::function<void(const OverlayGeometryPayload&)>;
+using GameStateCallback = std::function<void(const GameStatePayload&)>;
 using HeartbeatCallback = std::function<void(const HeartbeatPayload&)>;
 using StatusCallback = std::function<void(const StatusPayload&)>;
 
@@ -79,6 +80,7 @@ public:
     void set_mitigator_telemetry_callback(MitigatorTelemetryCallback cb) { m_on_mitigator_telemetry = std::move(cb); }
 
     void set_overlay_geometry_callback(OverlayGeometryCallback cb) { m_on_overlay_geometry = std::move(cb); }
+    void set_game_state_callback(GameStateCallback cb) { m_on_game_state = std::move(cb); }
     void set_heartbeat_callback(HeartbeatCallback cb) { m_on_heartbeat = std::move(cb); }
     void set_status_callback(StatusCallback cb) { m_on_status = std::move(cb); }
     void set_raw_packet_callback(RawPacketCallback cb) { m_on_raw_packet = std::move(cb); }
@@ -113,6 +115,7 @@ private:
     MitigatorTelemetryCallback m_on_mitigator_telemetry;
 
     OverlayGeometryCallback m_on_overlay_geometry;
+    GameStateCallback m_on_game_state;
     HeartbeatCallback m_on_heartbeat;
     StatusCallback m_on_status;
     RawPacketCallback m_on_raw_packet;

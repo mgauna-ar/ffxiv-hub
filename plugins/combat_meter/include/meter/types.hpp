@@ -1,5 +1,6 @@
 #pragma once
 
+#include "common/ui/overlay_config.hpp"
 #include "hub/game/job.hpp"
 #include "hub/game/actions.hpp"
 #include <cstdint>
@@ -272,14 +273,13 @@ struct CombatConfig {
     bool   show_col_crit{true};
     bool   show_col_dh{true};
     bool   show_col_cdh{true};
-    bool   overlay_visible{true};
-    bool   window_locked{false};
-    float  window_opacity{constants::DEFAULT_WINDOW_OPACITY};
-    float  ui_scale{constants::DEFAULT_UI_SCALE};
-    int    window_x{100};
-    int    window_y{100};
-    int    window_width{constants::DEFAULT_WINDOW_WIDTH};
-    int    window_height{constants::DEFAULT_WINDOW_HEIGHT};
+    /// Position, size, lock, click-through, opacity, scale, hide conditions.
+    ui::OverlayConfig overlay{
+        .opacity = constants::DEFAULT_WINDOW_OPACITY,
+        .scale = constants::DEFAULT_UI_SCALE,
+        .width = static_cast<float>(constants::DEFAULT_WINDOW_WIDTH),
+        .height = static_cast<float>(constants::DEFAULT_WINDOW_HEIGHT),
+    };
 
     bool operator==(const CombatConfig&) const = default;
 };

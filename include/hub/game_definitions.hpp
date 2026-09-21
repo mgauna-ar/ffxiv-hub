@@ -39,7 +39,37 @@ namespace definitions {
 
     /// Maximum entries in the game's ObjectTable array
     constexpr size_t OBJECT_TABLE_MAX_ENTRIES = 424;
+
+    /// Instruction displacement and length for the Conditions singleton LEA (48 8D 0D [disp32])
+    constexpr size_t CONDITIONS_RIP_DISP_OFFSET = 3;
+    constexpr size_t CONDITIONS_RIP_INSN_LEN = 7;
+
+    /// Size of the Conditions flag array: 112 contiguous bools, one per condition
+    constexpr size_t CONDITIONS_FLAG_COUNT = 112;
 } // namespace definitions
+
+/// Byte indices into the game's Conditions flag array. Each entry is a bool.
+namespace conditions {
+    constexpr size_t OCCUPIED = 25;
+    constexpr size_t IN_COMBAT = 26;
+    constexpr size_t OCCUPIED_30 = 30;
+    constexpr size_t OCCUPIED_IN_EVENT = 31;
+    constexpr size_t OCCUPIED_IN_QUEST_EVENT = 32;
+    constexpr size_t OCCUPIED_33 = 33;
+    constexpr size_t BOUND_BY_DUTY = 34;
+    constexpr size_t OCCUPIED_IN_CUTSCENE_EVENT = 35;
+    constexpr size_t TRADE_OPEN = 37;
+    constexpr size_t BETWEEN_AREAS = 45;
+    constexpr size_t OCCUPIED_SUMMONING_BELL = 50;
+    constexpr size_t BETWEEN_AREAS_51 = 51;
+    constexpr size_t LOGGING_OUT = 53;
+    constexpr size_t BOUND_BY_DUTY_56 = 56;
+    constexpr size_t WATCHING_CUTSCENE = 58;
+    constexpr size_t CREATING_CHARACTER = 60;
+    constexpr size_t PVP_DISPLAY_ACTIVE = 62;
+    constexpr size_t WATCHING_CUTSCENE_78 = 78;
+    constexpr size_t BOUND_BY_DUTY_95 = 95;
+} // namespace conditions
 
 /// Memory offsets within the game's structures (FFXIV dx11 x64 Dawntrail 7.x)
 namespace offsets {
@@ -114,6 +144,11 @@ namespace signatures {
     // 6. Party list resolution: GroupManager::Instance
     constexpr std::string_view GROUP_MANAGER_INSTANCE =
         "33 D2 48 8D 0D ? ? ? ? 33 DB";
+
+    // 7. Conditions static instance: LEA rcx, [rip + disp32] followed by sub bx, ax.
+    // Unique in .text; resolves into .data.
+    constexpr std::string_view CONDITIONS_INSTANCE =
+        "48 8D 0D ? ? ? ? 66 2B D8";
 } // namespace signatures
 
 #pragma pack(push, 1)

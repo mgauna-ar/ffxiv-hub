@@ -71,6 +71,8 @@ private:
     bool m_initialized{false};
     ipc::PacketRingBuffer* m_ring_buffer{nullptr};
     LatencyOverlay* m_overlay{nullptr};
+    /// Last-loaded overlay state, used when no overlay instance is attached.
+    ui::OverlayConfig m_overlay_config{default_overlay_config()};
     std::atomic<void*> m_action_manager{nullptr};
     std::atomic<float> m_pre_lock_snapshot{0.0f};
     std::atomic<bool> m_connected{false};

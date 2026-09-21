@@ -1,5 +1,6 @@
 #pragma once
 
+#include "hub/game_state.hpp"
 #include "hub/types.hpp"
 #include <memory>
 #include <string_view>
@@ -50,6 +51,14 @@ public:
 
     /// Set visibility state
     virtual void set_visible(bool visible) noexcept = 0;
+
+    /// Whether the host should draw this overlay in the current frame. Layers
+    /// the configured visibility conditions on top of plain visibility.
+    [[nodiscard]] virtual bool should_render() const noexcept { return is_visible(); }
+
+    /// Supplies the game state that visibility conditions are evaluated against.
+    /// Non-owning, and only the in-game payload has one.
+    virtual void set_game_state(const GameStateProvider* /*provider*/) noexcept {}
 
     /// Query current screen geometry (x, y, width, height)
     virtual Rect get_geometry() const noexcept = 0;

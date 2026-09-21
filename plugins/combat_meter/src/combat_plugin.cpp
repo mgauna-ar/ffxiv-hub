@@ -36,6 +36,9 @@ void CombatPlugin::update(double /*delta_seconds*/) {
         return;
     }
     m_engine.update(std::chrono::steady_clock::now());
+    if (m_game_state) {
+        m_game_state->set_packet_combat(m_engine.in_combat());
+    }
 }
 
 void CombatPlugin::shutdown() {
@@ -55,33 +58,14 @@ void CombatPlugin::serialize_config(config::JsonValue& out) const {
     out["show_col_dh"] = config::JsonValue(m_config.show_col_dh);
     out["show_col_cdh"] = config::JsonValue(m_config.show_col_cdh);
 
+    // The overlay is the source of truth for anything the player can change live
+    // in-game (dragging/resizing the window, the padlock icon, opacity/scale
+    // commands from the desktop app) - m_config only holds the last-loaded values
+    // for these until they're synced here, so read the live state back out.
     if (m_overlay) {
-        // The overlay is the source of truth for anything the player can change live
-        // in-game (dragging/resizing the window, the padlock icon, opacity/scale
-        // commands from the desktop app) - m_config only holds the last-loaded values
-        // for these until they're synced here, so read the live state back out.
-        out["overlay_visible"] = config::JsonValue(m_overlay->is_visible());
-        out["window_locked"] = config::JsonValue(m_overlay->is_locked());
-        out["click_through"] = config::JsonValue(m_overlay->click_through());
-        out["window_opacity"] = config::JsonValue(static_cast<double>(m_overlay->opacity()));
-        out["ui_scale"] = config::JsonValue(static_cast<double>(m_overlay->scale()));
         out["party_only"] = config::JsonValue(m_overlay->party_only());
-        out["auto_hide"] = config::JsonValue(m_overlay->auto_hide());
-        const auto geom = m_overlay->get_geometry();
-        out["window_x"] = config::JsonValue(static_cast<double>(geom.x));
-        out["window_y"] = config::JsonValue(static_cast<double>(geom.y));
-        out["window_width"] = config::JsonValue(static_cast<double>(geom.width));
-        out["window_height"] = config::JsonValue(static_cast<double>(geom.height));
-    } else {
-        out["overlay_visible"] = config::JsonValue(m_config.overlay_visible);
-        out["window_locked"] = config::JsonValue(m_config.window_locked);
-        out["window_opacity"] = config::JsonValue(m_config.window_opacity);
-        out["ui_scale"] = config::JsonValue(m_config.ui_scale);
-        out["window_x"] = config::JsonValue(m_config.window_x);
-        out["window_y"] = config::JsonValue(m_config.window_y);
-        out["window_width"] = config::JsonValue(m_config.window_width);
-        out["window_height"] = config::JsonValue(m_config.window_height);
     }
+    ui::serialize_overlay(m_overlay ? m_overlay->capture_config() : m_config.overlay, out);
 }
 
 void CombatPlugin::deserialize_config(const config::JsonValue& in) {
@@ -100,20 +84,9 @@ void CombatPlugin::deserialize_config(const config::JsonValue& in) {
     if (in.contains("show_col_crit")) m_config.show_col_crit = in["show_col_crit"].as_bool(m_config.show_col_crit);
     if (in.contains("show_col_dh")) m_config.show_col_dh = in["show_col_dh"].as_bool(m_config.show_col_dh);
     if (in.contains("show_col_cdh")) m_config.show_col_cdh = in["show_col_cdh"].as_bool(m_config.show_col_cdh);
-    if (in.contains("overlay_visible")) m_config.overlay_visible = in["overlay_visible"].as_bool(m_config.overlay_visible);
-    if (in.contains("window_locked")) m_config.window_locked = in["window_locked"].as_bool(m_config.window_locked);
-    if (in.contains("window_opacity")) m_config.window_opacity = static_cast<float>(in["window_opacity"].as_double(m_config.window_opacity));
-    if (in.contains("ui_scale")) m_config.ui_scale = static_cast<float>(in["ui_scale"].as_double(m_config.ui_scale));
-    if (in.contains("window_x")) m_config.window_x = in["window_x"].as_int(m_config.window_x);
-    if (in.contains("window_y")) m_config.window_y = in["window_y"].as_int(m_config.window_y);
-    if (in.contains("window_width")) m_config.window_width = in["window_width"].as_int(m_config.window_width);
-    if (in.contains("window_height")) m_config.window_height = in["window_height"].as_int(m_config.window_height);
+    m_config.overlay = ui::deserialize_overlay(in, m_config.overlay);
 
     if (m_overlay) {
-        m_overlay->set_visible(m_config.overlay_visible);
-        m_overlay->set_locked(m_config.window_locked);
-        m_overlay->set_opacity(m_config.window_opacity);
-        m_overlay->set_scale(m_config.ui_scale);
         m_overlay->set_party_only(m_config.party_only);
         m_overlay->set_show_progress_bars(m_config.show_bars);
         m_overlay->set_hide_inactive(m_config.hide_inactive);
@@ -122,17 +95,7 @@ void CombatPlugin::deserialize_config(const config::JsonValue& in) {
         m_overlay->set_show_col_crit(m_config.show_col_crit);
         m_overlay->set_show_col_dh(m_config.show_col_dh);
         m_overlay->set_show_col_cdh(m_config.show_col_cdh);
-        if (in.contains("click_through")) m_overlay->set_click_through(in["click_through"].as_bool(m_overlay->click_through()));
-        if (in.contains("auto_hide")) m_overlay->set_auto_hide(in["auto_hide"].as_bool(m_overlay->auto_hide()));
-        // Clamped at render time against the live viewport instead of here: the
-        // payload has no screen metrics, and a fixed assumption would drag a
-        // correctly-placed overlay inward on anything wider.
-        m_overlay->set_geometry(hub::Rect{
-            static_cast<float>(m_config.window_x),
-            static_cast<float>(m_config.window_y),
-            static_cast<float>(m_config.window_width),
-            static_cast<float>(m_config.window_height)
-        });
+        m_overlay->apply_config(m_config.overlay);
     }
 }
 

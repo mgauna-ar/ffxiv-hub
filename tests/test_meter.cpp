@@ -596,13 +596,13 @@ TEST_CASE(MeterPlugin, PluginLifecycleAndConfig) {
     // Modify and deserialize back
     json["inactivity_timeout_seconds"] = hub::config::JsonValue(10.0);
     json["party_only"] = hub::config::JsonValue(false);
-    json["window_width"] = hub::config::JsonValue(950);
+    json["overlay_width"] = hub::config::JsonValue(950);
     plugin.deserialize_config(json);
 
     TEST_ASSERT_NEAR(plugin.config().inactivity_timeout_seconds, 10.0, 0.01);
     TEST_ASSERT_NEAR(plugin.engine().inactivity_timeout(), 10.0, 0.01);
     TEST_ASSERT_FALSE(plugin.config().party_only);
-    TEST_ASSERT_EQ(plugin.config().window_width, 950);
+    TEST_ASSERT_NEAR(plugin.config().overlay.width, 950.0f, 0.01f);
 
     plugin.shutdown();
 }
