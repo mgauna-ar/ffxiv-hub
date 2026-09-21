@@ -39,6 +39,18 @@ public:
         return true;
     }
 
+    bool push(T&& item) noexcept {
+        const size_t head = m_head.load(std::memory_order_relaxed);
+        const size_t tail = m_tail.load(std::memory_order_acquire);
+        if (head - tail >= Capacity) {
+            m_dropped_count.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+        (*m_buffer)[head & (Capacity - 1)] = std::move(item);
+        m_head.store(head + 1, std::memory_order_release);
+        return true;
+    }
+
     bool pop(T& item) noexcept {
         const size_t tail = m_tail.load(std::memory_order_relaxed);
         const size_t head = m_head.load(std::memory_order_acquire);

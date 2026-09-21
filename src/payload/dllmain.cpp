@@ -225,7 +225,7 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
                 std::chrono::duration_cast<std::chrono::seconds>(now - payload_start).count());
             auto hb_packet = hub::ipc::serialize_typed_packet(
                 hub::PluginId::Core, hub::MessageType::Heartbeat, hb.sequence, hb);
-            pipe_client->ring_buffer().push(hb_packet.data(), hb_packet.size());
+            pipe_client->ring_buffer().push(std::move(hb_packet));
 
             hub::ipc::StatusPayload status{};
             status.game_pid = static_cast<uint32_t>(GetCurrentProcessId());
@@ -238,7 +238,7 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
             std::snprintf(status.status_message, sizeof(status.status_message), "%s", msg.c_str());
             auto status_packet = hub::ipc::serialize_typed_packet(
                 hub::PluginId::Core, hub::MessageType::Status, hb.sequence, status);
-            pipe_client->ring_buffer().push(status_packet.data(), status_packet.size());
+            pipe_client->ring_buffer().push(std::move(status_packet));
 
             last_heartbeat = now;
         }
@@ -262,7 +262,7 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
                 g.scale = overlay.scale();
                 auto packet = hub::ipc::serialize_typed_packet(
                     id, hub::MessageType::OverlayGeometry, heartbeat_sequence, g);
-                pipe_client->ring_buffer().push(packet.data(), packet.size());
+                pipe_client->ring_buffer().push(std::move(packet));
             };
             push_geometry(hub::PluginId::CombatMeter, *combat_overlay);
             push_geometry(hub::PluginId::LatencyMitigator, *latency_overlay);
