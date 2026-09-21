@@ -5,11 +5,13 @@
 #include "app/ui/theme.hpp"
 #include "app/ui/widgets.hpp"
 #include "mitigator/types.hpp"
+#include "hub/game/actions.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <cmath>
 #include <ctime>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace hub::app::ui {
@@ -203,7 +205,7 @@ void render_action_feed(const std::vector<ipc::MitigatorTelemetryPayload>& telem
     }
 
     ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthFixed, m(66.0f));
-    ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, m(70.0f));
+    ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, m(150.0f));
     ImGui::TableSetupColumn("Seq", ImGuiTableColumnFlags_WidthFixed, m(45.0f));
     ImGui::TableSetupColumn("RTT", ImGuiTableColumnFlags_WidthFixed, m(56.0f));
     ImGui::TableSetupColumn("Raw lock", ImGuiTableColumnFlags_WidthFixed, m(68.0f));
@@ -230,7 +232,18 @@ void render_action_feed(const std::vector<ipc::MitigatorTelemetryPayload>& telem
         text_colored_u32(colors::TextDim, "%02d:%02d:%02d", tm_buf.tm_hour, tm_buf.tm_min, tm_buf.tm_sec);
 
         ImGui::TableSetColumnIndex(1);
-        text_colored_u32(colors::TextMuted, "#%u", it->action_id);
+        // string_view accessor rather than action_name(): this runs for every
+        // visible row every frame and the latter builds a std::string per call.
+        const std::string_view action = hub::game::action_sheet_name(it->action_id);
+        if (action.empty()) {
+            text_colored_u32(colors::TextMuted, "#%u", it->action_id);
+        } else {
+            text_colored_u32(colors::TextBody, "%.*s", static_cast<int>(action.size()),
+                             action.data());
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Action #%u", it->action_id);
+            }
+        }
 
         ImGui::TableSetColumnIndex(2);
         text_colored_u32(colors::TextDim, "%u", it->sequence);

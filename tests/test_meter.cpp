@@ -1275,6 +1275,11 @@ TEST_CASE(MeterGameData, ActionAndStatusNamesComeFromTheSheets) {
     // Ids the sheets do not carry still degrade to the readable fallback.
     TEST_ASSERT(hub::game::action_name(999999) == "Action 999999");
     TEST_ASSERT(hub::game::status_name(999999) == "Status 999999");
+
+    // The mitigator's action feed branches on the raw accessor being empty rather
+    // than on that fallback text, so pin the empty-view contract directly.
+    TEST_ASSERT_TRUE(hub::game::action_sheet_name(999999).empty());
+    TEST_ASSERT(hub::game::action_sheet_name(36954) == "Lance Barrage");
 }
 
 TEST_CASE(MeterRegistry, PrimalBossIsNotAPet) {
