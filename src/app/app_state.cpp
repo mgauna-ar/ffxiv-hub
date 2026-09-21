@@ -1,4 +1,5 @@
 #include "app/app_state.hpp"
+#include "common/ui/overlay_config.hpp"
 #include "common/os/process_finder.hpp"
 #include "common/os/injector.hpp"
 #include "common/os/logger.hpp"
@@ -103,10 +104,11 @@ void AppState::register_ipc_callbacks() {
     });
 
     m_pipe_server.set_overlay_geometry_callback([this](const ipc::OverlayGeometryPayload& geom) {
+        const auto id = static_cast<PluginId>(geom.plugin_id);
         std::lock_guard<std::mutex> lock(m_status_mutex);
-        if (static_cast<PluginId>(geom.plugin_id) == PluginId::CombatMeter) {
+        if (id == PluginId::CombatMeter) {
             m_combat_geometry = geom;
-        } else if (static_cast<PluginId>(geom.plugin_id) == PluginId::LatencyMitigator) {
+        } else if (id == PluginId::LatencyMitigator) {
             m_latency_geometry = geom;
         }
     });
@@ -136,8 +138,39 @@ void AppState::register_ipc_callbacks() {
     });
 }
 
+void AppState::mirror_geometry_to_config() {
+    const auto fold = [](const char* section,
+                         const std::optional<ipc::OverlayGeometryPayload>& geom) {
+        if (!geom) return;
+        auto& root = config::ConfigManager::instance().root();
+        if (!root.contains(section) || !root[section].is_object()) {
+            root[section] = config::JsonValue(config::JsonValue::ObjectType{});
+        }
+        // Geometry only. The payload also reports visible/locked/opacity/scale,
+        // but those are driven by desktop app controls and this push lags them
+        // by up to a second, so echoing them back would revert a toggle
+        // mid-click.
+        ui::store_overlay_geometry(root[section], geom->pos_x, geom->pos_y,
+                                   geom->width, geom->height);
+    };
+
+    // Copy under the lock, then write. root() hands out an unguarded reference
+    // and the UI reads it every frame, so the config tree is only ever touched
+    // from this thread.
+    std::optional<ipc::OverlayGeometryPayload> combat;
+    std::optional<ipc::OverlayGeometryPayload> latency;
+    {
+        std::lock_guard<std::mutex> lock(m_status_mutex);
+        combat = m_combat_geometry;
+        latency = m_latency_geometry;
+    }
+    fold("combat_meter", combat);
+    fold("latency_mitigator", latency);
+}
+
 void AppState::update() {
     check_game_process();
+    mirror_geometry_to_config();
     {
         std::lock_guard<std::mutex> lock(m_combat_mutex);
         m_engine.update();

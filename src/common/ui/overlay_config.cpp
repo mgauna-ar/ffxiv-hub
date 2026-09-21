@@ -17,6 +17,14 @@ void serialize_overlay(const OverlayConfig& cfg, config::JsonValue& out) {
     out["overlay_hide_conditions"] = config::JsonValue(cfg.hide_conditions);
 }
 
+void store_overlay_geometry(config::JsonValue& section,
+                            float x, float y, float width, float height) {
+    section["overlay_x"] = config::JsonValue(static_cast<double>(x));
+    section["overlay_y"] = config::JsonValue(static_cast<double>(y));
+    section["overlay_width"] = config::JsonValue(static_cast<double>(width));
+    section["overlay_height"] = config::JsonValue(static_cast<double>(height));
+}
+
 OverlayConfig deserialize_overlay(const config::JsonValue& in, const OverlayConfig& defaults) {
     OverlayConfig cfg = defaults;
     if (!in.is_object()) return cfg;

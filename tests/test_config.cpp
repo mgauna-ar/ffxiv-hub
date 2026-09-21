@@ -2,7 +2,9 @@
 #include "common/config/json.hpp"
 #include "common/config/config_manager.hpp"
 #include "app/ui/config_binding.hpp"
+#include "common/ui/overlay_config.hpp"
 #include <filesystem>
+#include <fstream>
 
 using namespace hub::config;
 
@@ -121,5 +123,101 @@ TEST_CASE(Config, BindingHelpersRoundTripAndPersist) {
     TEST_ASSERT(!cfg_bool("hub", "minimize_to_tray", true));
 
     std::filesystem::remove(tmp);
+    cfg.set_custom_path_for_testing({});
+}
+
+TEST_CASE(Config, AppSaveDoesNotClobberMirroredGeometry) {
+    // The desktop app loads config.json once and then rewrites the whole
+    // document on every toggle and on exit. Before the payload's geometry was
+    // mirrored into the root, those saves wrote back the position the overlay
+    // had at app startup, so dragging an overlay in-game never survived.
+    auto& cfg = hub::config::ConfigManager::instance();
+    const auto tmp = std::filesystem::temp_directory_path() / "hub_geometry_test.json";
+    std::filesystem::remove(tmp);
+    cfg.set_custom_path_for_testing(tmp);
+
+    auto& root = cfg.root();
+    root["combat_meter"]["overlay_x"] = JsonValue(-1.0);
+    root["combat_meter"]["overlay_y"] = JsonValue(-1.0);
+
+    // What the 1 Hz push from the payload delivers after an in-game drag.
+    hub::ui::store_overlay_geometry(root["combat_meter"], 1200.0f, 340.0f, 800.0f, 480.0f);
+
+    TEST_ASSERT(cfg.save());
+
+    // Wipe in memory, then read back what actually landed on disk.
+    root["combat_meter"]["overlay_x"] = JsonValue(-1.0);
+    TEST_ASSERT(cfg.load());
+    TEST_ASSERT_NEAR(cfg.root()["combat_meter"]["overlay_x"].as_float(), 1200.0f, 0.01f);
+    TEST_ASSERT_NEAR(cfg.root()["combat_meter"]["overlay_y"].as_float(), 340.0f, 0.01f);
+    TEST_ASSERT_NEAR(cfg.root()["combat_meter"]["overlay_width"].as_float(), 800.0f, 0.01f);
+    TEST_ASSERT_NEAR(cfg.root()["combat_meter"]["overlay_height"].as_float(), 480.0f, 0.01f);
+
+    std::filesystem::remove(tmp);
+    cfg.set_custom_path_for_testing({});
+}
+
+TEST_CASE(Config, StoreOverlayGeometryLeavesOtherFieldsAlone) {
+    // Geometry is the only field the payload owns. Mirroring the rest of its
+    // push back into the config would undo a toggle the user just flipped in
+    // the desktop app, since that push lags the control by up to a second.
+    JsonValue section{JsonValue::ObjectType{}};
+    section["overlay_locked"] = JsonValue(true);
+    section["overlay_opacity"] = JsonValue(0.5);
+    section["overlay_hide_conditions"] = JsonValue(3.0);
+
+    hub::ui::store_overlay_geometry(section, 10.0f, 20.0f, 30.0f, 40.0f);
+
+    TEST_ASSERT_NEAR(section["overlay_x"].as_float(), 10.0f, 0.01f);
+    TEST_ASSERT_TRUE(section["overlay_locked"].as_bool(false));
+    TEST_ASSERT_NEAR(section["overlay_opacity"].as_float(), 0.5f, 0.01f);
+    TEST_ASSERT_EQ(section["overlay_hide_conditions"].as_int(0), 3);
+    TEST_ASSERT_FALSE(section.contains("overlay_visible"));
+    TEST_ASSERT_FALSE(section.contains("overlay_scale"));
+}
+
+TEST_CASE(Config, SaveIsAtomicOnExistingFile) {
+    // The payload and the app both write this document on their own cadence, so
+    // a truncating write can be read half-finished by the other process.
+    auto& cfg = hub::config::ConfigManager::instance();
+    const auto tmp = std::filesystem::temp_directory_path() / "hub_atomic_test.json";
+    auto sidecar = tmp;
+    sidecar += ".tmp";
+    std::filesystem::remove(tmp);
+    std::filesystem::remove(sidecar);
+    cfg.set_custom_path_for_testing(tmp);
+
+    cfg.root()["hub"]["marker"] = JsonValue("first");
+    TEST_ASSERT(cfg.save());
+    cfg.root()["hub"]["marker"] = JsonValue("second");
+    TEST_ASSERT(cfg.save());
+
+    TEST_ASSERT(std::filesystem::exists(tmp));
+    TEST_ASSERT_FALSE(std::filesystem::exists(sidecar));
+
+    std::ifstream in(tmp);
+    std::stringstream buf;
+    buf << in.rdbuf();
+    auto parsed = JsonValue::parse(buf.str());
+    TEST_ASSERT(parsed.has_value());
+    TEST_ASSERT(parsed->is_object());
+    TEST_ASSERT_EQ((*parsed)["hub"]["marker"].as_string(), "second");
+
+    std::filesystem::remove(tmp);
+    cfg.set_custom_path_for_testing({});
+}
+
+TEST_CASE(Config, SaveReportsFailureInsteadOfClaimingSuccess) {
+    // save() used to return true even when the stream never reached disk.
+    auto& cfg = hub::config::ConfigManager::instance();
+    const auto blocker = std::filesystem::temp_directory_path() / "hub_blocker_file";
+    std::filesystem::remove_all(blocker);
+    { std::ofstream touch(blocker); touch << "not a directory"; }
+
+    // Parent of the target is a regular file, so the write cannot succeed.
+    cfg.set_custom_path_for_testing(blocker / "config.json");
+    TEST_ASSERT_FALSE(cfg.save());
+
+    std::filesystem::remove(blocker);
     cfg.set_custom_path_for_testing({});
 }

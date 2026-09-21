@@ -175,6 +175,12 @@ public:
 
 private:
     void register_ipc_callbacks();
+
+    /// Folds geometry pushed by the payload into the config root. The app loads
+    /// config.json once and rewrites the whole document on every save, so
+    /// without this a settings toggle or app exit writes back the position the
+    /// overlay had at app startup and undoes an in-game drag.
+    void mirror_geometry_to_config();
     void check_game_process();
 
     DesktopView m_current_view{DesktopView::Dashboard};

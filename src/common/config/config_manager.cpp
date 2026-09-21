@@ -120,14 +120,36 @@ bool ConfigManager::save() {
             std::filesystem::create_directories(dir);
         }
 
-        std::ofstream file(path);
-        if (!file.is_open()) {
-            return false;
+        // Write to a sibling temp file and rename over the target. The payload
+        // and the desktop app both write this document, so a truncating write
+        // can be observed half-finished by the other process.
+        auto tmp = path;
+        tmp += ".tmp";
+
+        {
+            std::ofstream file(tmp, std::ios::binary | std::ios::trunc);
+            if (!file.is_open()) {
+                return false;
+            }
+
+            file << m_root.stringify(2);
+            file.flush();
+            file.close();
+
+            if (!file.good()) {
+                std::error_code ec;
+                std::filesystem::remove(tmp, ec);
+                return false;
+            }
         }
 
-        file << m_root.stringify(2);
+        std::filesystem::rename(tmp, path);
         return true;
     } catch (...) {
+        std::error_code ec;
+        auto tmp = path;
+        tmp += ".tmp";
+        std::filesystem::remove(tmp, ec);
         return false;
     }
 }

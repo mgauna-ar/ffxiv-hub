@@ -58,6 +58,13 @@ struct OverlayConfig {
 /// config section alongside its domain keys.
 void serialize_overlay(const OverlayConfig& cfg, config::JsonValue& out);
 
+/// Writes only the four geometry keys into an existing config section, creating
+/// none of the others. The in-game payload owns geometry because dragging is the
+/// only way it changes; every other overlay field is owned by a desktop app
+/// control, so mirroring those back would undo a toggle the user just flipped.
+void store_overlay_geometry(config::JsonValue& section,
+                            float x, float y, float width, float height);
+
 /// Missing keys fall back to `defaults`, so each overlay keeps its own default
 /// geometry without this code knowing about any of them.
 [[nodiscard]] OverlayConfig deserialize_overlay(const config::JsonValue& in,
