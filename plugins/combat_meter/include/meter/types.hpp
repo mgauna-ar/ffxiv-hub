@@ -3,6 +3,7 @@
 #include "common/ui/overlay_config.hpp"
 #include "hub/game/job.hpp"
 #include "hub/game/actions.hpp"
+#include "hub/game/limit_break.hpp"
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -48,7 +49,9 @@ enum class ActorType : uint8_t {
     Player = 1,
     Pet = 2,
     Monster = 3,
-    NPC = 4
+    NPC = 4,
+    /// Synthetic actor holding Limit Break damage, which belongs to no single player.
+    LimitBreak = 5
 };
 
 enum class HitSeverity : uint8_t {
@@ -170,22 +173,36 @@ struct HitCounts {
     uint64_t miss_hits{0};
     uint64_t blocked_hits{0};
     uint64_t parried_hits{0};
+    /// DoT/HoT ticks. The game's tick hook reports no crit flag, so these are
+    /// counted but kept out of the rate denominators below.
+    uint64_t tick_hits{0};
+
+    /// Hits whose severity is known, i.e. the only ones the rates can describe.
+    /// Misses, blocks, parries and ticks carry no severity and are excluded.
+    [[nodiscard]] uint64_t rated_hits() const noexcept {
+        return normal_hits + crit_hits + dh_hits + cdh_hits;
+    }
 
     [[nodiscard]] double crit_rate() const noexcept {
-        return total_hits > 0 ? (static_cast<double>(crit_hits + cdh_hits) / static_cast<double>(total_hits)) * 100.0 : 0.0;
+        const uint64_t rated = rated_hits();
+        return rated > 0 ? (static_cast<double>(crit_hits + cdh_hits) / static_cast<double>(rated)) * 100.0 : 0.0;
     }
 
     [[nodiscard]] double dh_rate() const noexcept {
-        return total_hits > 0 ? (static_cast<double>(dh_hits + cdh_hits) / static_cast<double>(total_hits)) * 100.0 : 0.0;
+        const uint64_t rated = rated_hits();
+        return rated > 0 ? (static_cast<double>(dh_hits + cdh_hits) / static_cast<double>(rated)) * 100.0 : 0.0;
     }
 
     [[nodiscard]] double cdh_rate() const noexcept {
-        return total_hits > 0 ? (static_cast<double>(cdh_hits) / static_cast<double>(total_hits)) * 100.0 : 0.0;
+        const uint64_t rated = rated_hits();
+        return rated > 0 ? (static_cast<double>(cdh_hits) / static_cast<double>(rated)) * 100.0 : 0.0;
     }
 };
 
 struct ActionSummary {
     ActionId action_id{0};
+    /// True when action_id is a status id from a DoT/HoT tick rather than an action.
+    bool is_status{false};
     std::string name;
     uint64_t hit_count{0};
     uint64_t damage_hits{0};
@@ -199,6 +216,8 @@ struct ActionSummary {
     uint64_t min_heal{0};
     uint64_t max_heal{0};
     HitCounts hits;
+    /// Heal hits are counted apart from `hits` so they cannot dilute the crit rates.
+    HitCounts heal_hit_counts;
 
     [[nodiscard]] double average_damage() const noexcept {
         return damage_hits > 0 ? static_cast<double>(total_damage) / static_cast<double>(damage_hits) : 0.0;
@@ -214,8 +233,16 @@ struct ActionSummary {
     }
 };
 
+/// Status ticks share the per-action map with actions, so their keys are offset to
+/// keep a status id from colliding with an action id that happens to match.
+constexpr ActionId STATUS_ACTION_KEY_OFFSET = 0x8000'0000u;
+
 [[nodiscard]] inline std::string action_id_to_name(ActionId action_id) {
     return hub::game::action_name(action_id);
+}
+
+[[nodiscard]] inline std::string status_id_to_name(ActionId status_id) {
+    return "Status " + std::to_string(status_id);
 }
 
 struct CombatantStats {
@@ -235,6 +262,8 @@ struct CombatantStats {
     double hps{0.0};
     double damage_share_pct{0.0};
     HitCounts hits;
+    /// Heal hits are counted apart from `hits` so they cannot dilute the crit rates.
+    HitCounts heal_hit_counts;
     std::unordered_map<ActionId, ActionSummary> actions;
     bool is_pet{false};
     bool is_party_member{false};
@@ -242,7 +271,9 @@ struct CombatantStats {
     bool is_alive{true};
 
     [[nodiscard]] bool is_friendly() const noexcept {
-        return is_party_member || is_local_player || is_pet || actor_type == ActorType::Player || role != Role::None;
+        return is_party_member || is_local_player || is_pet
+            || actor_type == ActorType::Player || actor_type == ActorType::LimitBreak
+            || role != Role::None;
     }
 
     [[nodiscard]] double overheal_pct() const noexcept {

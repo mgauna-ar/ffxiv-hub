@@ -569,7 +569,12 @@ void render_drilldown(const meter::EncounterSummary& summary) {
             text_colored_u32(colors::TextMuted, "%s", format_damage(act.max_damage).c_str());
 
             ImGui::TableSetColumnIndex(6);
-            text_colored_u32(colors::TextMuted, "%s", format_percentage(act.hits.crit_rate()).c_str());
+            // DoT ticks carry no severity, so a status row has no crit rate to show.
+            if (act.hits.rated_hits() == 0) {
+                text_colored_u32(colors::TextMuted, "%s", "-");
+            } else {
+                text_colored_u32(colors::TextMuted, "%s", format_percentage(act.hits.crit_rate()).c_str());
+            }
         }
 
         ImGui::EndTable();

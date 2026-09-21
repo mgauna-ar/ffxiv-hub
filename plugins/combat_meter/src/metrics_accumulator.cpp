@@ -1,8 +1,25 @@
 #include "meter/metrics_accumulator.hpp"
 #include "hub/game/entity.hpp"
+#include "hub/game/limit_break.hpp"
 #include <algorithm>
 
 namespace hub::meter {
+
+namespace {
+
+void add_hit_counts(HitCounts& to, const HitCounts& from) {
+    to.total_hits += from.total_hits;
+    to.normal_hits += from.normal_hits;
+    to.crit_hits += from.crit_hits;
+    to.dh_hits += from.dh_hits;
+    to.cdh_hits += from.cdh_hits;
+    to.miss_hits += from.miss_hits;
+    to.blocked_hits += from.blocked_hits;
+    to.parried_hits += from.parried_hits;
+    to.tick_hits += from.tick_hits;
+}
+
+} // namespace
 
 CombatantStats& MetricsAccumulator::get_or_create_stats(EntityId entity_id, const CombatantRegistry& registry) {
     auto it = m_combatants.find(entity_id);
@@ -38,6 +55,9 @@ CombatantStats& MetricsAccumulator::get_or_create_stats(EntityId entity_id, cons
         stats.is_party_member = actor->is_party_member;
         stats.is_local_player = actor->is_local_player;
         stats.is_alive = (actor->current_hp > 0 || actor->max_hp == 0);
+    } else if (entity_id == hub::game::LIMIT_BREAK_ENTITY_ID) {
+        stats.name = "Limit Break";
+        stats.actor_type = ActorType::LimitBreak;
     } else {
         stats.name = "Entity_" + std::to_string(entity_id);
         stats.actor_type = hub::game::is_monster_entity_id(entity_id) ? ActorType::Monster : ActorType::Player;
@@ -46,15 +66,76 @@ CombatantStats& MetricsAccumulator::get_or_create_stats(EntityId entity_id, cons
     return m_combatants.emplace(entity_id, std::move(stats)).first->second;
 }
 
+void MetricsAccumulator::record_damage_hit(
+    CombatantStats& stats,
+    const ipc::CombatActionPacket& packet,
+    HitSeverity severity,
+    bool is_pet_hit,
+    bool source_friendly,
+    const CombatantRegistry& registry
+) {
+    stats.total_damage += packet.damage;
+    if (is_pet_hit) {
+        stats.pet_damage += packet.damage;
+    }
+    if (source_friendly) {
+        m_total_damage += packet.damage;
+    }
+
+    stats.hits.total_hits++;
+    switch (severity) {
+        case HitSeverity::Normal: stats.hits.normal_hits++; break;
+        case HitSeverity::Critical: stats.hits.crit_hits++; break;
+        case HitSeverity::DirectHit: stats.hits.dh_hits++; break;
+        case HitSeverity::CritDirectHit: stats.hits.cdh_hits++; break;
+    }
+
+    ActionSummary& act = stats.actions[packet.action_id];
+    act.action_id = packet.action_id;
+    if (act.name.empty()) {
+        act.name = action_id_to_name(packet.action_id);
+    }
+    act.hit_count++;
+    act.damage_hits++;
+    act.total_damage += packet.damage;
+    if (act.damage_hits == 1 || packet.damage < act.min_damage) {
+        act.min_damage = packet.damage;
+    }
+    if (packet.damage > act.max_damage) {
+        act.max_damage = packet.damage;
+    }
+    act.hits.total_hits++;
+    switch (severity) {
+        case HitSeverity::Normal: act.hits.normal_hits++; break;
+        case HitSeverity::Critical: act.hits.crit_hits++; break;
+        case HitSeverity::DirectHit: act.hits.dh_hits++; break;
+        case HitSeverity::CritDirectHit: act.hits.cdh_hits++; break;
+    }
+
+    const EntityId target_id = static_cast<EntityId>(packet.target_id);
+    if (target_id != 0) {
+        CombatantStats& target_stats = get_or_create_stats(target_id, registry);
+        target_stats.damage_taken += packet.damage;
+    }
+}
+
 void MetricsAccumulator::record_action(const ipc::CombatActionPacket& packet, const CombatantRegistry& registry) {
     const EntityId raw_source_id = static_cast<EntityId>(packet.source_id);
     if (raw_source_id == 0) {
         return;
     }
 
-    const EntityId owner_id = registry.resolve_owner(raw_source_id);
-    const bool is_pet_hit = (raw_source_id != owner_id) || registry.is_pet(raw_source_id);
-    const bool source_friendly = registry.is_friendly(owner_id);
+    // Limit Break belongs to the party, not to whoever pressed it, so it gets its own
+    // row instead of inflating that player's personal DPS and damage share.
+    const bool is_limit_break = (raw_source_id == hub::game::LIMIT_BREAK_ENTITY_ID)
+        || hub::game::is_limit_break_action(packet.action_id);
+
+    const EntityId owner_id = is_limit_break
+        ? static_cast<EntityId>(hub::game::LIMIT_BREAK_ENTITY_ID)
+        : registry.resolve_owner(raw_source_id);
+    const bool is_pet_hit = !is_limit_break
+        && ((raw_source_id != owner_id) || registry.is_pet(raw_source_id));
+    const bool source_friendly = is_limit_break || registry.is_friendly(owner_id);
 
     CombatantStats& stats = get_or_create_stats(owner_id, registry);
 
@@ -66,49 +147,16 @@ void MetricsAccumulator::record_action(const ipc::CombatActionPacket& packet, co
     const EffectType effect = static_cast<EffectType>(packet.effect_type);
 
     if (effect == EffectType::Damage) {
-        stats.total_damage += packet.damage;
-        if (is_pet_hit) {
-            stats.pet_damage += packet.damage;
-        }
-        if (source_friendly) {
-            m_total_damage += packet.damage;
-        }
-
-        stats.hits.total_hits++;
-        switch (severity) {
-            case HitSeverity::Normal: stats.hits.normal_hits++; break;
-            case HitSeverity::Critical: stats.hits.crit_hits++; break;
-            case HitSeverity::DirectHit: stats.hits.dh_hits++; break;
-            case HitSeverity::CritDirectHit: stats.hits.cdh_hits++; break;
-        }
-
-        ActionSummary& act = stats.actions[packet.action_id];
-        act.action_id = packet.action_id;
-        if (act.name.empty()) {
-            act.name = action_id_to_name(packet.action_id);
-        }
-        act.hit_count++;
-        act.damage_hits++;
-        act.total_damage += packet.damage;
-        if (act.damage_hits == 1 || packet.damage < act.min_damage) {
-            act.min_damage = packet.damage;
-        }
-        if (packet.damage > act.max_damage) {
-            act.max_damage = packet.damage;
-        }
-        act.hits.total_hits++;
-        switch (severity) {
-            case HitSeverity::Normal: act.hits.normal_hits++; break;
-            case HitSeverity::Critical: act.hits.crit_hits++; break;
-            case HitSeverity::DirectHit: act.hits.dh_hits++; break;
-            case HitSeverity::CritDirectHit: act.hits.cdh_hits++; break;
-        }
-
-        const EntityId target_id = static_cast<EntityId>(packet.target_id);
-        if (target_id != 0) {
-            CombatantStats& target_stats = get_or_create_stats(target_id, registry);
-            target_stats.damage_taken += packet.damage;
-        }
+        record_damage_hit(stats, packet, severity, is_pet_hit, source_friendly, registry);
+    } else if (effect == EffectType::Blocked) {
+        // Partially mitigated, but the value that survived is still damage dealt.
+        record_damage_hit(stats, packet, severity, is_pet_hit, source_friendly, registry);
+        stats.hits.blocked_hits++;
+        stats.actions[packet.action_id].hits.blocked_hits++;
+    } else if (effect == EffectType::Parried) {
+        record_damage_hit(stats, packet, severity, is_pet_hit, source_friendly, registry);
+        stats.hits.parried_hits++;
+        stats.actions[packet.action_id].hits.parried_hits++;
     } else if (effect == EffectType::Heal) {
         uint32_t raw_heal = packet.damage;
         uint32_t eff_heal = packet.effective_heal;
@@ -134,15 +182,12 @@ void MetricsAccumulator::record_action(const ipc::CombatActionPacket& packet, co
             m_total_overhealing += over_heal;
         }
 
-        stats.hits.total_hits++;
-        switch (severity) {
-            case HitSeverity::Critical:
-            case HitSeverity::CritDirectHit:
-                stats.hits.crit_hits++;
-                break;
-            default:
-                stats.hits.normal_hits++;
-                break;
+        const bool heal_crit = (severity == HitSeverity::Critical || severity == HitSeverity::CritDirectHit);
+        stats.heal_hit_counts.total_hits++;
+        if (heal_crit) {
+            stats.heal_hit_counts.crit_hits++;
+        } else {
+            stats.heal_hit_counts.normal_hits++;
         }
 
         ActionSummary& act = stats.actions[packet.action_id];
@@ -161,15 +206,11 @@ void MetricsAccumulator::record_action(const ipc::CombatActionPacket& packet, co
         if (eff_heal > act.max_heal) {
             act.max_heal = eff_heal;
         }
-        act.hits.total_hits++;
-        switch (severity) {
-            case HitSeverity::Critical:
-            case HitSeverity::CritDirectHit:
-                act.hits.crit_hits++;
-                break;
-            default:
-                act.hits.normal_hits++;
-                break;
+        act.heal_hit_counts.total_hits++;
+        if (heal_crit) {
+            act.heal_hit_counts.crit_hits++;
+        } else {
+            act.heal_hit_counts.normal_hits++;
         }
     } else if (effect == EffectType::Miss) {
         stats.hits.total_hits++;
@@ -182,28 +223,6 @@ void MetricsAccumulator::record_action(const ipc::CombatActionPacket& packet, co
         act.hit_count++;
         act.hits.total_hits++;
         act.hits.miss_hits++;
-    } else if (effect == EffectType::Blocked) {
-        stats.hits.total_hits++;
-        stats.hits.blocked_hits++;
-        ActionSummary& act = stats.actions[packet.action_id];
-        act.action_id = packet.action_id;
-        if (act.name.empty()) {
-            act.name = action_id_to_name(packet.action_id);
-        }
-        act.hit_count++;
-        act.hits.total_hits++;
-        act.hits.blocked_hits++;
-    } else if (effect == EffectType::Parried) {
-        stats.hits.total_hits++;
-        stats.hits.parried_hits++;
-        ActionSummary& act = stats.actions[packet.action_id];
-        act.action_id = packet.action_id;
-        if (act.name.empty()) {
-            act.name = action_id_to_name(packet.action_id);
-        }
-        act.hit_count++;
-        act.hits.total_hits++;
-        act.hits.parried_hits++;
     }
 }
 
@@ -216,14 +235,22 @@ void MetricsAccumulator::record_status_tick(const ipc::StatusTickPacket& packet,
         return;
     }
 
-    const EntityId owner_id = registry.resolve_owner(raw_source_id);
-    const bool is_pet_hit = (raw_source_id != owner_id) || registry.is_pet(raw_source_id);
-    const bool source_friendly = registry.is_friendly(owner_id);
+    const bool is_limit_break = (raw_source_id == hub::game::LIMIT_BREAK_ENTITY_ID);
+    const EntityId owner_id = is_limit_break
+        ? static_cast<EntityId>(hub::game::LIMIT_BREAK_ENTITY_ID)
+        : registry.resolve_owner(raw_source_id);
+    const bool is_pet_hit = !is_limit_break
+        && ((raw_source_id != owner_id) || registry.is_pet(raw_source_id));
+    const bool source_friendly = is_limit_break || registry.is_friendly(owner_id);
 
     CombatantStats& stats = get_or_create_stats(owner_id, registry);
     const EffectType effect = static_cast<EffectType>(packet.effect_type);
 
-    if (effect == EffectType::Damage || effect == EffectType::None) {
+    // Ticks carry no severity: ProcessHotDot reports no crit flag, so they are counted
+    // separately rather than booked as guaranteed non-crits.
+    const ActionId action_key = packet.status_id | STATUS_ACTION_KEY_OFFSET;
+
+    if (effect == EffectType::Damage) {
         stats.total_damage += packet.damage_or_heal;
         if (is_pet_hit) {
             stats.pet_damage += packet.damage_or_heal;
@@ -232,17 +259,13 @@ void MetricsAccumulator::record_status_tick(const ipc::StatusTickPacket& packet,
             m_total_damage += packet.damage_or_heal;
         }
 
-        stats.hits.total_hits++;
-        if (packet.is_crit != 0) {
-            stats.hits.crit_hits++;
-        } else {
-            stats.hits.normal_hits++;
-        }
+        stats.hits.tick_hits++;
 
-        ActionSummary& act = stats.actions[packet.status_id];
+        ActionSummary& act = stats.actions[action_key];
         act.action_id = packet.status_id;
+        act.is_status = true;
         if (act.name.empty()) {
-            act.name = action_id_to_name(packet.status_id);
+            act.name = status_id_to_name(packet.status_id);
         }
         act.hit_count++;
         act.damage_hits++;
@@ -253,12 +276,7 @@ void MetricsAccumulator::record_status_tick(const ipc::StatusTickPacket& packet,
         if (packet.damage_or_heal > act.max_damage) {
             act.max_damage = packet.damage_or_heal;
         }
-        act.hits.total_hits++;
-        if (packet.is_crit != 0) {
-            act.hits.crit_hits++;
-        } else {
-            act.hits.normal_hits++;
-        }
+        act.hits.tick_hits++;
 
         if (packet.target_id != 0) {
             CombatantStats& target_stats = get_or_create_stats(packet.target_id, registry);
@@ -272,17 +290,13 @@ void MetricsAccumulator::record_status_tick(const ipc::StatusTickPacket& packet,
             m_total_effective_healing += packet.damage_or_heal;
         }
 
-        stats.hits.total_hits++;
-        if (packet.is_crit != 0) {
-            stats.hits.crit_hits++;
-        } else {
-            stats.hits.normal_hits++;
-        }
+        stats.heal_hit_counts.tick_hits++;
 
-        ActionSummary& act = stats.actions[packet.status_id];
+        ActionSummary& act = stats.actions[action_key];
         act.action_id = packet.status_id;
+        act.is_status = true;
         if (act.name.empty()) {
-            act.name = action_id_to_name(packet.status_id);
+            act.name = status_id_to_name(packet.status_id);
         }
         act.hit_count++;
         act.heal_hits++;
@@ -294,12 +308,7 @@ void MetricsAccumulator::record_status_tick(const ipc::StatusTickPacket& packet,
         if (packet.damage_or_heal > act.max_heal) {
             act.max_heal = packet.damage_or_heal;
         }
-        act.hits.total_hits++;
-        if (packet.is_crit != 0) {
-            act.hits.crit_hits++;
-        } else {
-            act.hits.normal_hits++;
-        }
+        act.heal_hit_counts.tick_hits++;
     }
 }
 
@@ -333,14 +342,8 @@ void MetricsAccumulator::merge_combatants(EntityId from_id, EntityId to_id) {
     to.effective_healing += from_stats.effective_healing;
     to.overhealing += from_stats.overhealing;
 
-    to.hits.total_hits += from_stats.hits.total_hits;
-    to.hits.normal_hits += from_stats.hits.normal_hits;
-    to.hits.crit_hits += from_stats.hits.crit_hits;
-    to.hits.dh_hits += from_stats.hits.dh_hits;
-    to.hits.cdh_hits += from_stats.hits.cdh_hits;
-    to.hits.miss_hits += from_stats.hits.miss_hits;
-    to.hits.blocked_hits += from_stats.hits.blocked_hits;
-    to.hits.parried_hits += from_stats.hits.parried_hits;
+    add_hit_counts(to.hits, from_stats.hits);
+    add_hit_counts(to.heal_hit_counts, from_stats.heal_hit_counts);
 
     for (const auto& [act_id, from_act] : from_stats.actions) {
         auto [it_act, inserted] = to.actions.try_emplace(act_id, from_act);
@@ -371,14 +374,8 @@ void MetricsAccumulator::merge_combatants(EntityId from_id, EntityId to_id) {
                 }
             }
 
-            to_act.hits.total_hits += from_act.hits.total_hits;
-            to_act.hits.normal_hits += from_act.hits.normal_hits;
-            to_act.hits.crit_hits += from_act.hits.crit_hits;
-            to_act.hits.dh_hits += from_act.hits.dh_hits;
-            to_act.hits.cdh_hits += from_act.hits.cdh_hits;
-            to_act.hits.miss_hits += from_act.hits.miss_hits;
-            to_act.hits.blocked_hits += from_act.hits.blocked_hits;
-            to_act.hits.parried_hits += from_act.hits.parried_hits;
+            add_hit_counts(to_act.hits, from_act.hits);
+            add_hit_counts(to_act.heal_hit_counts, from_act.heal_hit_counts);
         }
     }
 }
@@ -424,7 +421,9 @@ void MetricsAccumulator::recalculate(double duration_seconds, const CombatantReg
     for (auto& [id, stats] : m_combatants) {
         stats.dps = static_cast<double>(stats.total_damage) / safe_duration;
         stats.hps = static_cast<double>(stats.effective_healing) / safe_duration;
-        stats.damage_share_pct = (m_total_damage > 0)
+        // m_total_damage counts friendly sources only, so an enemy row measured against
+        // it would report a share of a total it never contributed to.
+        stats.damage_share_pct = (m_total_damage > 0 && stats.is_friendly())
             ? (static_cast<double>(stats.total_damage) * 100.0 / static_cast<double>(m_total_damage))
             : 0.0;
     }

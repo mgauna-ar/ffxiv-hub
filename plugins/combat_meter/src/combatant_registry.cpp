@@ -1,5 +1,6 @@
 #include "meter/combatant_registry.hpp"
 #include "hub/game/entity.hpp"
+#include "hub/game/limit_break.hpp"
 #include "hub/game/pets.hpp"
 #include <cstring>
 #include <algorithm>
@@ -270,6 +271,10 @@ bool CombatantRegistry::is_party_member(EntityId entity_id) const {
 bool CombatantRegistry::is_friendly(EntityId entity_id) const {
     if (entity_id == 0) {
         return false;
+    }
+    // Checked before the monster-bit test below, which the pseudo-entity id matches.
+    if (entity_id == hub::game::LIMIT_BREAK_ENTITY_ID) {
+        return true;
     }
     if (is_party_member(entity_id)) {
         return true;

@@ -57,6 +57,17 @@ public:
 private:
     CombatantStats& get_or_create_stats(EntityId entity_id, const CombatantRegistry& registry);
 
+    /// Shared body for the effect types that carry a damage value: full hits, and the
+    /// partially mitigated Blocked/Parried variants.
+    void record_damage_hit(
+        CombatantStats& stats,
+        const ipc::CombatActionPacket& packet,
+        HitSeverity severity,
+        bool is_pet_hit,
+        bool source_friendly,
+        const CombatantRegistry& registry
+    );
+
     std::unordered_map<EntityId, CombatantStats> m_combatants;
     uint64_t m_total_damage{0};
     uint64_t m_total_healing{0};

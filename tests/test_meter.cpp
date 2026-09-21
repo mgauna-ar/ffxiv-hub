@@ -879,3 +879,270 @@ TEST_CASE(MeterEngine, ConcurrentProducersAndReaders) {
 
     TEST_ASSERT(engine.current_summary().total_damage > 0u);
 }
+
+TEST_CASE(MeterAccumulator, LimitBreakIsNotPersonalDamage) {
+    // Limit Break belongs to the party, so it must not inflate the DPS of whoever
+    // happened to press it.
+    MetricsAccumulator acc;
+    CombatantRegistry reg;
+
+    reg.register_actor(10, "Monk", Job::MNK, 0, ActorType::Player);
+    reg.set_local_player(10);
+
+    hub::ipc::CombatActionPacket normal{};
+    normal.source_id = 10;
+    normal.target_id = 0x400001;
+    normal.action_id = 31;
+    normal.damage = 20000;
+    normal.effect_type = static_cast<uint16_t>(EffectType::Damage);
+    acc.record_action(normal, reg);
+
+    hub::ipc::CombatActionPacket lb = normal;
+    lb.action_id = 200; // Braver
+    lb.damage = 180000;
+    acc.record_action(lb, reg);
+
+    acc.recalculate(10.0, &reg);
+
+    const auto* monk = acc.find_stats(10);
+    TEST_ASSERT(monk != nullptr);
+    TEST_ASSERT_EQ(monk->total_damage, 20000u);
+    TEST_ASSERT_NEAR(monk->dps, 2000.0, 0.01);
+
+    const auto* lb_row = acc.find_stats(hub::game::LIMIT_BREAK_ENTITY_ID);
+    TEST_ASSERT(lb_row != nullptr);
+    TEST_ASSERT(lb_row->name == "Limit Break");
+    TEST_ASSERT_EQ(lb_row->actor_type, ActorType::LimitBreak);
+    TEST_ASSERT_EQ(lb_row->total_damage, 180000u);
+    TEST_ASSERT_FALSE(lb_row->is_pet);
+
+    // Raid totals still account for every point of damage dealt.
+    TEST_ASSERT_EQ(acc.total_damage(), 200000u);
+    TEST_ASSERT_NEAR(acc.total_dps(), 20000.0, 0.01);
+
+    // And the boss took all of it.
+    const auto* boss = acc.find_stats(0x400001);
+    TEST_ASSERT(boss != nullptr);
+    TEST_ASSERT_EQ(boss->damage_taken, 200000u);
+}
+
+TEST_CASE(MeterAccumulator, LimitBreakPseudoEntitySource) {
+    // 0xE0000000 has the monster bit set, so without a special case the LB would be
+    // read as an enemy and dropped from raid DPS.
+    MetricsAccumulator acc;
+    CombatantRegistry reg;
+
+    TEST_ASSERT_TRUE(reg.is_friendly(hub::game::LIMIT_BREAK_ENTITY_ID));
+
+    hub::ipc::CombatActionPacket lb{};
+    lb.source_id = hub::game::LIMIT_BREAK_ENTITY_ID;
+    lb.target_id = 0x400001;
+    lb.action_id = 4238; // Not in the shared 197-208 block.
+    lb.damage = 150000;
+    lb.effect_type = static_cast<uint16_t>(EffectType::Damage);
+    acc.record_action(lb, reg);
+    acc.recalculate(10.0, &reg);
+
+    const auto* lb_row = acc.find_stats(hub::game::LIMIT_BREAK_ENTITY_ID);
+    TEST_ASSERT(lb_row != nullptr);
+    TEST_ASSERT_EQ(lb_row->actor_type, ActorType::LimitBreak);
+    TEST_ASSERT_TRUE(lb_row->is_friendly());
+    TEST_ASSERT_EQ(acc.total_damage(), 150000u);
+    TEST_ASSERT_NEAR(lb_row->damage_share_pct, 100.0, 0.01);
+
+    // It survives the party-only filter that hides monsters.
+    const auto rows = acc.sorted_by_dps(/*friendly_only=*/true);
+    TEST_ASSERT_EQ(rows.size(), 1u);
+    TEST_ASSERT(rows.front().name == "Limit Break");
+}
+
+TEST_CASE(MeterAccumulator, BlockedAndParriedDamageCounts) {
+    // Blocked and parried hits are mitigated, not nullified: the value that got
+    // through is damage dealt and belongs in the totals.
+    MetricsAccumulator acc;
+    CombatantRegistry reg;
+    reg.register_actor(10, "Samurai", Job::SAM, 0, ActorType::Player);
+
+    hub::ipc::CombatActionPacket p{};
+    p.source_id = 10;
+    p.target_id = 0x400001;
+    p.action_id = 31;
+    p.damage = 9000;
+    p.effect_type = static_cast<uint16_t>(EffectType::Damage);
+    acc.record_action(p, reg);
+
+    p.damage = 4000;
+    p.effect_type = static_cast<uint16_t>(EffectType::Blocked);
+    acc.record_action(p, reg);
+
+    p.damage = 3000;
+    p.effect_type = static_cast<uint16_t>(EffectType::Parried);
+    acc.record_action(p, reg);
+
+    const auto* sam = acc.find_stats(10);
+    TEST_ASSERT(sam != nullptr);
+    TEST_ASSERT_EQ(sam->total_damage, 16000u);
+    TEST_ASSERT_EQ(acc.total_damage(), 16000u);
+    TEST_ASSERT_EQ(sam->hits.blocked_hits, 1u);
+    TEST_ASSERT_EQ(sam->hits.parried_hits, 1u);
+    TEST_ASSERT_EQ(sam->hits.total_hits, 3u);
+
+    const auto act = sam->actions.find(31);
+    TEST_ASSERT(act != sam->actions.end());
+    TEST_ASSERT_EQ(act->second.total_damage, 16000u);
+    TEST_ASSERT_EQ(act->second.damage_hits, 3u);
+    TEST_ASSERT_EQ(act->second.hits.blocked_hits, 1u);
+
+    const auto* boss = acc.find_stats(0x400001);
+    TEST_ASSERT(boss != nullptr);
+    TEST_ASSERT_EQ(boss->damage_taken, 16000u);
+}
+
+TEST_CASE(MeterAccumulator, CritRateExcludesNonDamageHits) {
+    // Misses and heals have no severity, so counting them in the denominator
+    // understated every crit rate.
+    MetricsAccumulator acc;
+    CombatantRegistry reg;
+    reg.register_actor(10, "Sage", Job::SGE, 0, ActorType::Player);
+
+    hub::ipc::CombatActionPacket crit{};
+    crit.source_id = 10;
+    crit.target_id = 0x400001;
+    crit.action_id = 24283;
+    crit.damage = 10000;
+    crit.severity = static_cast<uint8_t>(HitSeverity::Critical);
+    crit.effect_type = static_cast<uint16_t>(EffectType::Damage);
+    acc.record_action(crit, reg);
+
+    hub::ipc::CombatActionPacket normal = crit;
+    normal.damage = 5000;
+    normal.severity = static_cast<uint8_t>(HitSeverity::Normal);
+    acc.record_action(normal, reg);
+
+    hub::ipc::CombatActionPacket miss = normal;
+    miss.damage = 0;
+    miss.effect_type = static_cast<uint16_t>(EffectType::Miss);
+    acc.record_action(miss, reg);
+
+    hub::ipc::CombatActionPacket heal{};
+    heal.source_id = 10;
+    heal.target_id = 10;
+    heal.action_id = 24284;
+    heal.effective_heal = 8000;
+    heal.effect_type = static_cast<uint16_t>(EffectType::Heal);
+    acc.record_action(heal, reg);
+
+    const auto* sge = acc.find_stats(10);
+    TEST_ASSERT(sge != nullptr);
+    TEST_ASSERT_EQ(sge->hits.rated_hits(), 2u);
+    TEST_ASSERT_NEAR(sge->hits.crit_rate(), 50.0, 0.01);
+    // Heals are counted, just not against the damage rates.
+    TEST_ASSERT_EQ(sge->heal_hit_counts.total_hits, 1u);
+    TEST_ASSERT_EQ(sge->effective_healing, 8000u);
+}
+
+TEST_CASE(MeterAccumulator, DotTicksDoNotDiluteCritRate) {
+    // ProcessHotDot reports no crit flag, so a tick must not be booked as a
+    // guaranteed non-crit.
+    MetricsAccumulator acc;
+    CombatantRegistry reg;
+    reg.register_actor(10, "Black Mage", Job::BLM, 0, ActorType::Player);
+
+    hub::ipc::CombatActionPacket crit{};
+    crit.source_id = 10;
+    crit.target_id = 0x400001;
+    crit.action_id = 16505;
+    crit.damage = 30000;
+    crit.severity = static_cast<uint8_t>(HitSeverity::Critical);
+    crit.effect_type = static_cast<uint16_t>(EffectType::Damage);
+    acc.record_action(crit, reg);
+
+    hub::ipc::StatusTickPacket tick{};
+    tick.source_id = 10;
+    tick.target_id = 0x400001;
+    tick.status_id = 1871;
+    tick.damage_or_heal = 4500;
+    tick.effect_type = static_cast<uint8_t>(EffectType::Damage);
+    acc.record_status_tick(tick, reg);
+    acc.record_status_tick(tick, reg);
+
+    const auto* blm = acc.find_stats(10);
+    TEST_ASSERT(blm != nullptr);
+    TEST_ASSERT_EQ(blm->total_damage, 39000u);
+    TEST_ASSERT_EQ(blm->hits.tick_hits, 2u);
+    TEST_ASSERT_EQ(blm->hits.rated_hits(), 1u);
+    TEST_ASSERT_NEAR(blm->hits.crit_rate(), 100.0, 0.01);
+}
+
+TEST_CASE(MeterAccumulator, StatusIdDoesNotCollideWithActionId) {
+    // Statuses and actions are separate id spaces, so sharing one map merged a DoT
+    // into an unrelated ability's row.
+    MetricsAccumulator acc;
+    CombatantRegistry reg;
+    reg.register_actor(10, "Ninja", Job::NIN, 0, ActorType::Player);
+
+    constexpr uint32_t kSharedId = 1205;
+
+    hub::ipc::CombatActionPacket p{};
+    p.source_id = 10;
+    p.target_id = 0x400001;
+    p.action_id = kSharedId;
+    p.damage = 7000;
+    p.effect_type = static_cast<uint16_t>(EffectType::Damage);
+    acc.record_action(p, reg);
+
+    hub::ipc::StatusTickPacket tick{};
+    tick.source_id = 10;
+    tick.target_id = 0x400001;
+    tick.status_id = static_cast<uint16_t>(kSharedId);
+    tick.damage_or_heal = 2000;
+    tick.effect_type = static_cast<uint8_t>(EffectType::Damage);
+    acc.record_status_tick(tick, reg);
+
+    const auto* nin = acc.find_stats(10);
+    TEST_ASSERT(nin != nullptr);
+    TEST_ASSERT_EQ(nin->actions.size(), 2u);
+
+    const auto action_row = nin->actions.find(kSharedId);
+    TEST_ASSERT(action_row != nin->actions.end());
+    TEST_ASSERT_EQ(action_row->second.total_damage, 7000u);
+    TEST_ASSERT_FALSE(action_row->second.is_status);
+
+    const auto status_row = nin->actions.find(kSharedId | STATUS_ACTION_KEY_OFFSET);
+    TEST_ASSERT(status_row != nin->actions.end());
+    TEST_ASSERT_EQ(status_row->second.total_damage, 2000u);
+    TEST_ASSERT_TRUE(status_row->second.is_status);
+    TEST_ASSERT_EQ(status_row->second.action_id, kSharedId);
+}
+
+TEST_CASE(MeterEngine, WipeDurationTrimsDeadTail) {
+    // A wipe is noticed only once the last party member's HP reads zero, which is
+    // well after the fight stopped producing damage.
+    EncounterEngine engine;
+    const auto t0 = std::chrono::steady_clock::now();
+
+    hub::ipc::PartySyncPacket sync{};
+    sync.party_count = 1;
+    sync.entity_ids[0] = 101;
+    sync.job_ids[0] = static_cast<uint32_t>(Job::WAR);
+    engine.process_party_sync(sync);
+    engine.registry().update_hp(101, 80000, 80000);
+
+    hub::ipc::CombatActionPacket act{};
+    act.source_id = 101;
+    act.damage = 5000;
+    act.effect_type = static_cast<uint16_t>(EffectType::Damage);
+    engine.process_action(act, t0);
+    engine.process_action(act, t0 + std::chrono::seconds(4));
+    TEST_ASSERT_EQ(engine.state(), EncounterState::InCombat);
+
+    engine.registry().update_hp(101, 0);
+    engine.update(t0 + std::chrono::seconds(9));
+    TEST_ASSERT_EQ(engine.state(), EncounterState::Wipe);
+
+    const auto pull = engine.latest_pull();
+    TEST_ASSERT(pull.has_value());
+    TEST_ASSERT_EQ(pull->end_reason, EncounterEndReason::Wipe);
+    TEST_ASSERT_NEAR(pull->duration_seconds, 4.0, 0.05);
+    TEST_ASSERT_NEAR(pull->total_dps, 2500.0, 1.0);
+}

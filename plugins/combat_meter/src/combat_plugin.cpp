@@ -178,7 +178,7 @@ void CombatPlugin::on_status_tick(
     tick.status_id = status_id;
     tick.damage_or_heal = damage_or_heal;
     tick.effect_type = static_cast<uint8_t>(is_heal ? EffectType::Heal : EffectType::Damage);
-    tick.is_crit = 0;
+    tick.is_crit = 0;  // ProcessHotDot carries no crit flag; ticks are counted as unrated.
     tick.timestamp_us = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now().time_since_epoch()

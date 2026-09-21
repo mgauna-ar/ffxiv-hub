@@ -133,7 +133,12 @@ void EncounterEngine::end_encounter_locked(EncounterEndReason reason, TimePoint 
         return;
     }
 
-    const double dur = (reason == EncounterEndReason::Inactivity && m_last_activity_time >= m_start_time)
+    // Everything but an explicit Manual end is detected some time after the fight
+    // actually stopped, so the clock runs to the last combat activity rather than to
+    // detection. A Manual end means "stop now" and takes the full elapsed time.
+    const bool trim_dead_tail = (reason != EncounterEndReason::Manual)
+        && (m_last_activity_time >= m_start_time);
+    const double dur = trim_dead_tail
         ? std::chrono::duration<double>(m_last_activity_time - m_start_time).count()
         : std::chrono::duration<double>(now - m_start_time).count();
 
