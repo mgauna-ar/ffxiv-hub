@@ -420,7 +420,7 @@ TEST_CASE(Payload, ResetOverlayGeometryRearmsRestoreLatch) {
 }
 
 TEST_CASE(Payload, UnhookAndExitSignalsShutdown) {
-    // The ShutdownSignal slot existed unused; the only way to unload was killing
+    // Until this command existed the only way to unload was killing
     // the game.
     std::atomic<bool> shutdown{false};
     payload::CommandDispatchTargets targets;

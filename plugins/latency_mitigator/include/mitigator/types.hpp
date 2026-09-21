@@ -13,7 +13,6 @@ using Milliseconds = std::chrono::duration<double, std::milli>;
 
 namespace constants {
     constexpr double MS_PER_SECOND = 1000.0;
-    constexpr double SECONDS_PER_MS = 0.001;
 
     constexpr double DEFAULT_TARGET_PING_MS = 15.0;
     constexpr double DEFAULT_MIN_ANIMATION_LOCK_MS = 25.0;
@@ -49,10 +48,7 @@ struct MitigationConfig {
     double safety_margin_ms{constants::DEFAULT_SAFETY_MARGIN_MS};
     double spike_multiplier{constants::JITTER_SPIKE_MULTIPLIER};
     bool   dry_run{false};
-    bool   verbose{false};
     bool   enabled{true};
-    bool   auto_start{false};
-    bool   notifications_enabled{true};
 };
 
 /// In-game micro ping HUD layout mode

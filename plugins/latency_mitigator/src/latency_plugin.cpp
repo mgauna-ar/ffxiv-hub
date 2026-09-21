@@ -87,8 +87,6 @@ void LatencyPlugin::serialize_config(config::JsonValue& out) const {
     out["rtt_sample_window"] = config::JsonValue(static_cast<uint32_t>(cfg.rtt_sample_window));
     out["safety_margin_ms"] = config::JsonValue(cfg.safety_margin_ms);
     out["spike_multiplier"] = config::JsonValue(cfg.spike_multiplier);
-    out["auto_start"] = config::JsonValue(cfg.auto_start);
-    out["notifications_enabled"] = config::JsonValue(cfg.notifications_enabled);
 
     if (m_overlay) {
         out["overlay_visible"] = config::JsonValue(m_overlay->is_visible());
@@ -115,8 +113,6 @@ void LatencyPlugin::deserialize_config(const config::JsonValue& in) {
     if (in.contains("rtt_sample_window")) cfg.rtt_sample_window = static_cast<size_t>(in["rtt_sample_window"].as_int(static_cast<int>(cfg.rtt_sample_window)));
     if (in.contains("safety_margin_ms")) cfg.safety_margin_ms = in["safety_margin_ms"].as_double(cfg.safety_margin_ms);
     if (in.contains("spike_multiplier")) cfg.spike_multiplier = in["spike_multiplier"].as_double(cfg.spike_multiplier);
-    if (in.contains("auto_start")) cfg.auto_start = in["auto_start"].as_bool(cfg.auto_start);
-    if (in.contains("notifications_enabled")) cfg.notifications_enabled = in["notifications_enabled"].as_bool(cfg.notifications_enabled);
 
     m_mitigator.set_config(cfg);
 

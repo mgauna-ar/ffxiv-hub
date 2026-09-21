@@ -152,40 +152,4 @@ public:
     }
 };
 
-/// Central registry for managing static modular plugins
-class PluginRegistry {
-public:
-    static PluginRegistry& instance() noexcept {
-        static PluginRegistry s_instance;
-        return s_instance;
-    }
-
-    void register_plugin(std::shared_ptr<IPlugin> plugin) {
-        if (plugin) {
-            m_plugins.push_back(std::move(plugin));
-        }
-    }
-
-    const std::vector<std::shared_ptr<IPlugin>>& plugins() const noexcept {
-        return m_plugins;
-    }
-
-    std::shared_ptr<IPlugin> find_by_id(PluginId id) const noexcept {
-        for (const auto& p : m_plugins) {
-            if (p && p->id() == id) {
-                return p;
-            }
-        }
-        return nullptr;
-    }
-
-    void clear() noexcept {
-        m_plugins.clear();
-    }
-
-private:
-    PluginRegistry() = default;
-    std::vector<std::shared_ptr<IPlugin>> m_plugins;
-};
-
 } // namespace hub

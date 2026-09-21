@@ -85,7 +85,7 @@ TEST_CASE(PipeServer, MultiplexedPacketDispatch) {
     TEST_ASSERT_EQ(server.packets_received(), 3u);
 }
 
-TEST_CASE(AppState, InitializationAndPluginRegistry) {
+TEST_CASE(AppState, InitializationAndRegisteredPlugins) {
     app::AppState state;
     TEST_ASSERT(state.initialize());
 

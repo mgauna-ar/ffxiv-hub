@@ -97,18 +97,6 @@ struct MitigatorTelemetryPayload {
 };
 static_assert(sizeof(MitigatorTelemetryPayload) == 48, "MitigatorTelemetryPayload must be 48 bytes");
 
-/// 0x0102: Latency Mitigator Configuration Sync
-struct MitigatorConfigPayload {
-    float   target_ping_ms{15.0f};
-    float   min_animation_lock_ms{25.0f};
-    float   max_animation_lock_ms{2500.0f};
-    float   spike_multiplier{2.5f};
-    uint8_t dry_run{0};
-    uint8_t enabled{1};
-    uint8_t pad[2]{0};
-};
-static_assert(sizeof(MitigatorConfigPayload) == 20, "MitigatorConfigPayload must be 20 bytes");
-
 /// 0x0201: Combat Meter Action Packet
 struct CombatActionPayload {
     uint64_t source_id{0};
@@ -136,21 +124,6 @@ struct CombatStatusTickPayload {
     uint64_t timestamp_us{0};
 };
 static_assert(sizeof(CombatStatusTickPayload) == 24, "CombatStatusTickPayload must be 24 bytes");
-
-/// 0x0203: Combat Meter Encounter Summary Event
-struct CombatEncounterPayload {
-    uint64_t start_time_us{0};
-    uint64_t duration_us{0};
-    uint64_t total_damage{0};
-    uint64_t total_effective_heal{0};
-    uint64_t total_overheal{0};
-    float    raid_dps{0.0f};
-    float    raid_hps{0.0f};
-    uint8_t  encounter_state{0};
-    uint8_t  is_wipe{0};
-    uint8_t  pad[6]{0};
-};
-static_assert(sizeof(CombatEncounterPayload) == 56, "CombatEncounterPayload must be 56 bytes");
 
 /// 0x0204: Combat Meter Actor Info Packet
 struct CombatActorInfoPayload {

@@ -2,6 +2,7 @@
 #include "app/ui/theme.hpp"
 #include <string>
 #include "common/os/logger.hpp"
+#include "hub/game_definitions.hpp"
 
 #ifdef _WIN32
 #if __has_include("third_party/imgui/imgui.h")
@@ -38,6 +39,10 @@ void render_view_dashboard(AppState& app_state) {
     if (pid != 0) {
         ImGui::Text("Process: Running (PID %u)", pid);
         ImGui::Text("Target Executable: ffxiv_dx11.exe");
+        // Offsets and signatures are client-version specific, so which version
+        // they target is the first thing to check when hooks stop resolving.
+        ImGui::Text("Signatures Target: %s",
+                    std::string(game::definitions::SUPPORTED_GAME_VERSION).c_str());
         if (app_state.is_access_denied()) {
             ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f), "State: Access Denied (Error 5)");
             ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.25f, 1.0f), "Please run FFXIV Hub as Administrator!");
