@@ -2,6 +2,7 @@
 #include "app/ui/theme.hpp"
 #include "app/ui/config_binding.hpp"
 #include "app/ui/overlay_settings.hpp"
+#include "mitigator/types.hpp"
 #include <algorithm>
 #include <ctime>
 #include <iomanip>
