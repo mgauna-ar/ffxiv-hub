@@ -138,6 +138,14 @@ enum class EncounterEndReason : uint8_t {
     }
 }
 
+/// Label for an encounter's territory: the name when one is known, the raw id
+/// otherwise, and empty when the zone was never observed (solo play, where the
+/// party list the id comes from is empty).
+[[nodiscard]] inline std::string zone_label(uint32_t zone_id, std::string_view zone_name) {
+    if (!zone_name.empty()) return std::string(zone_name);
+    return zone_id != 0 ? "Zone #" + std::to_string(zone_id) : std::string();
+}
+
 [[nodiscard]] constexpr HitSeverity hit_flags_to_severity(uint16_t flags) noexcept {
     const bool is_crit = (flags & HitFlags::Crit) != 0;
     const bool is_dh = (flags & HitFlags::DirectHit) != 0;

@@ -223,9 +223,12 @@ void CombatOverlay::render_top_bar(const EncounterSummary& current) {
         format_number(dmg_buf, sizeof(dmg_buf), total);
         ImGui::TextColored(ImVec4(0.70f, 0.75f, 0.85f, 1.0f), "%s", dmg_buf);
     }
-    if (roomy && !current.zone_name.empty()) {
-        ImGui::SameLine();
-        ImGui::TextDisabled("| %s", current.zone_name.c_str());
+    if (roomy) {
+        const std::string zone = zone_label(current.zone_id, current.zone_name);
+        if (!zone.empty()) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("| %s", zone.c_str());
+        }
     }
 }
 

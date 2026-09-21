@@ -2,6 +2,7 @@
 #include "meter/combatant_registry.hpp"
 #include "common/sigscan.hpp"
 #include "common/pe_scanner.hpp"
+#include <chrono>
 #include <cstring>
 
 #ifdef _WIN32
@@ -86,6 +87,7 @@ struct ExtractedPartyMember {
 
 struct ExtractedParty {
     uint8_t count{0};
+    uint16_t territory_type{0};
     ExtractedPartyMember members[game::definitions::MAX_PARTY_MEMBERS];
 };
 
@@ -108,6 +110,8 @@ static bool SafeReadParty(
         out.party_count = count;
         out_members.count = count;
 
+        uint16_t territories[game::definitions::MAX_PARTY_MEMBERS]{};
+
         for (uint8_t i = 0; i < count; ++i) {
             const auto* member = reinterpret_cast<const game::PartyMemberObject*>(
                 main_group + (i * game::offsets::PARTY_MEMBER_SIZE)
@@ -122,7 +126,27 @@ static bool SafeReadParty(
             extracted.job_id = member->class_job;
             std::memcpy(extracted.name, member->name, sizeof(extracted.name) - 1);
             extracted.name[sizeof(extracted.name) - 1] = '\0';
+
+            territories[i] = member->territory_type;
         }
+
+        // A cross-world member standing somewhere else must not redefine where
+        // the party is, so take the value most of the list agrees on.
+        uint16_t best = 0;
+        uint8_t best_votes = 0;
+        for (uint8_t i = 0; i < count; ++i) {
+            if (territories[i] == 0) continue;
+            uint8_t votes = 0;
+            for (uint8_t j = 0; j < count; ++j) {
+                if (territories[j] == territories[i]) ++votes;
+            }
+            if (votes > best_votes) {
+                best_votes = votes;
+                best = territories[i];
+            }
+        }
+        out_members.territory_type = best;
+
         return true;
     }
     __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -318,6 +342,30 @@ void ObjectReader::sync_party(meter::CombatantRegistry* registry) {
     if (party_changed && m_ring_buffer) {
         m_ring_buffer->push(ipc::serialize_typed_packet(
             PluginId::CombatMeter, MessageType::CombatPartySync, 0, sync
+        ));
+    }
+
+    // The party list is the only place the payload can see a territory id, so a
+    // zone change is only observable while grouped.
+    bool territory_changed = false;
+    {
+        std::lock_guard<std::mutex> lock(m_cache_mutex);
+        if (extracted.territory_type != 0 && extracted.territory_type != m_last_territory) {
+            m_last_territory = extracted.territory_type;
+            territory_changed = true;
+        }
+    }
+
+    if (territory_changed && m_ring_buffer) {
+        // in_combat_flag and control_command stay 0: this packet only announces
+        // the zone, it must not start or end an encounter on the app side.
+        ipc::EncounterControlPacket ctrl{};
+        ctrl.zone_id = extracted.territory_type;
+        ctrl.timestamp_us = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count());
+        m_ring_buffer->push(ipc::serialize_typed_packet(
+            PluginId::CombatMeter, MessageType::CombatControl, 0, ctrl
         ));
     }
 }

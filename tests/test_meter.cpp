@@ -558,6 +558,41 @@ TEST_CASE(MeterEngine, PartyWipeDetection) {
     TEST_ASSERT_EQ(pull->end_reason, EncounterEndReason::Wipe);
 }
 
+TEST_CASE(MeterEngine, ZoneChangeArchivesPullAndTagsSummary) {
+    EncounterEngine engine;
+    const auto t0 = std::chrono::steady_clock::now();
+
+    // A control packet only announcing a zone must not start an encounter.
+    hub::ipc::EncounterControlPacket zone{};
+    zone.zone_id = 1000;
+    engine.process_encounter_control(zone, t0);
+    TEST_ASSERT_EQ(engine.current_zone_id(), 1000u);
+    TEST_ASSERT_EQ(engine.state(), EncounterState::Idle);
+
+    hub::ipc::CombatActionPacket act{};
+    act.source_id = 1;
+    act.damage = 4200;
+    act.effect_type = static_cast<uint16_t>(EffectType::Damage);
+    engine.process_action(act, t0);
+    TEST_ASSERT_EQ(engine.state(), EncounterState::InCombat);
+
+    zone.zone_id = 1001;
+    engine.process_encounter_control(zone, t0 + std::chrono::seconds(3));
+    TEST_ASSERT_EQ(engine.current_zone_id(), 1001u);
+
+    const auto* pull = engine.latest_pull();
+    TEST_ASSERT(pull != nullptr);
+    TEST_ASSERT_EQ(pull->end_reason, EncounterEndReason::ZoneChange);
+    // The pull is filed under the zone it was fought in, not the new one.
+    TEST_ASSERT_EQ(pull->zone_id, 1000u);
+}
+
+TEST_CASE(MeterEngine, ZoneLabelPrefersNameThenId) {
+    TEST_ASSERT(zone_label(1000, "The Omega Protocol") == "The Omega Protocol");
+    TEST_ASSERT(zone_label(1000, "") == "Zone #1000");
+    TEST_ASSERT(zone_label(0, "").empty());
+}
+
 TEST_CASE(MeterEngine, PullHistoryArchive) {
     EncounterEngine engine;
     engine.set_history_capacity(3);

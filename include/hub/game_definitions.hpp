@@ -100,6 +100,7 @@ namespace offsets {
     constexpr size_t PARTY_MEMBER_ENTITY_ID = 0x400;
     constexpr size_t PARTY_MEMBER_CURRENT_HP = 0x40C;
     constexpr size_t PARTY_MEMBER_MAX_HP = 0x410;
+    constexpr size_t PARTY_MEMBER_TERRITORY_TYPE = 0x418;
     constexpr size_t PARTY_MEMBER_NAME = 0x41C;
     constexpr size_t PARTY_MEMBER_CLASS_JOB = 0x469;
 } // namespace offsets
@@ -234,6 +235,7 @@ static_assert(sizeof(PartyMemberObject) == offsets::PARTY_MEMBER_SIZE, "PartyMem
 static_assert(offsetof(PartyMemberObject, entity_id) == offsets::PARTY_MEMBER_ENTITY_ID, "PartyMemberObject::entity_id offset mismatch");
 static_assert(offsetof(PartyMemberObject, current_hp) == offsets::PARTY_MEMBER_CURRENT_HP, "PartyMemberObject::current_hp offset mismatch");
 static_assert(offsetof(PartyMemberObject, max_hp) == offsets::PARTY_MEMBER_MAX_HP, "PartyMemberObject::max_hp offset mismatch");
+static_assert(offsetof(PartyMemberObject, territory_type) == offsets::PARTY_MEMBER_TERRITORY_TYPE, "PartyMemberObject::territory_type offset mismatch");
 static_assert(offsetof(PartyMemberObject, name) == offsets::PARTY_MEMBER_NAME, "PartyMemberObject::name offset mismatch");
 static_assert(offsetof(PartyMemberObject, class_job) == offsets::PARTY_MEMBER_CLASS_JOB, "PartyMemberObject::class_job offset mismatch");
 

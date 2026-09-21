@@ -266,10 +266,11 @@ void render_history_table(AppState& app_state,
         return;
     }
 
-    if (!ImGui::BeginTable("##PullHistoryTable", 8, kTableFlags, ImVec2(0.0f, fill_h(0.0f)))) return;
+    if (!ImGui::BeginTable("##PullHistoryTable", 9, kTableFlags, ImVec2(0.0f, fill_h(0.0f)))) return;
 
     ImGui::TableSetupColumn("Pull", ImGuiTableColumnFlags_WidthFixed, m(60.0f));
     ImGui::TableSetupColumn("Ended", ImGuiTableColumnFlags_WidthFixed, m(70.0f));
+    ImGui::TableSetupColumn("Zone", ImGuiTableColumnFlags_WidthFixed, m(90.0f));
     ImGui::TableSetupColumn("Duration", ImGuiTableColumnFlags_WidthFixed, m(90.0f));
     ImGui::TableSetupColumn("Raid DPS", ImGuiTableColumnFlags_WidthFixed, m(100.0f));
     ImGui::TableSetupColumn("Raid HPS", ImGuiTableColumnFlags_WidthFixed, m(100.0f));
@@ -290,19 +291,23 @@ void render_history_table(AppState& app_state,
         text_colored_u32(colors::TextMuted, "%s", format_clock_time(pull.ended_at_unix_s).c_str());
 
         ImGui::TableSetColumnIndex(2);
+        const std::string zone = meter::zone_label(pull.zone_id, pull.zone_name);
+        text_colored_u32(colors::TextMuted, "%s", zone.empty() ? "--" : zone.c_str());
+
+        ImGui::TableSetColumnIndex(3);
         text_colored_u32(colors::TextBody, "%s",
                          format_duration(static_cast<uint64_t>(pull.duration_seconds)).c_str());
 
-        ImGui::TableSetColumnIndex(3);
+        ImGui::TableSetColumnIndex(4);
         text_colored_u32(colors::AccentHover, "%s", format_dps(pull.total_dps).c_str());
 
-        ImGui::TableSetColumnIndex(4);
+        ImGui::TableSetColumnIndex(5);
         text_colored_u32(colors::SuccessLight, "%s", format_dps(pull.total_hps).c_str());
 
-        ImGui::TableSetColumnIndex(5);
+        ImGui::TableSetColumnIndex(6);
         text_colored_u32(colors::TextBody, "%s", format_damage(pull.total_damage).c_str());
 
-        ImGui::TableSetColumnIndex(6);
+        ImGui::TableSetColumnIndex(7);
         if (pull.state == meter::EncounterState::Wipe) {
             pill("Wipe", colors::Danger);
         } else if (pull.state == meter::EncounterState::Complete) {
@@ -311,7 +316,7 @@ void render_history_table(AppState& app_state,
             pill("Timeout", colors::TextDim);
         }
 
-        ImGui::TableSetColumnIndex(7);
+        ImGui::TableSetColumnIndex(8);
         const std::string inspect_btn = std::string(ICON_SEARCH "  Inspect##") + std::to_string(i);
         if (button(inspect_btn.c_str(), ButtonKind::Secondary, ButtonSize::Small)) {
             s_selected_pull_idx = static_cast<int>(i);

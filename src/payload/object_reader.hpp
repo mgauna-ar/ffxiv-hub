@@ -33,6 +33,10 @@ public:
     void inspect_and_sync_actor_direct(void* character_ptr, meter::CombatantRegistry* registry = nullptr);
     void sync_party(meter::CombatantRegistry* registry = nullptr);
 
+    /// Territory the party is in as of the last sync_party(); 0 when unknown
+    /// (solo play leaves the party list empty).
+    [[nodiscard]] uint16_t current_territory() const noexcept { return m_last_territory; }
+
     void set_ring_buffer(RingBuffer* ring_buffer) noexcept { m_ring_buffer = ring_buffer; }
     [[nodiscard]] bool is_initialized() const noexcept { return m_initialized; }
 
@@ -55,6 +59,7 @@ private:
     std::mutex m_cache_mutex;
     std::unordered_map<uint32_t, CachedActor> m_actor_cache;
     ipc::PartySyncPacket m_last_party_sync{};
+    uint16_t m_last_territory{0};
 };
 
 } // namespace hub::payload

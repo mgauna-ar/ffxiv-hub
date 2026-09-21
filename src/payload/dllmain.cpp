@@ -199,6 +199,11 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
         // Sync party composition every 1.5 seconds
         if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_party_sync).count() > 1500) {
             object_reader->sync_party(&combat_plugin->engine().registry());
+            // Same territory id the app receives; set_zone no-ops when unchanged
+            // and closes an in-flight pull when it is not.
+            if (const uint16_t territory = object_reader->current_territory(); territory != 0) {
+                combat_plugin->engine().set_zone(territory);
+            }
             last_party_sync = now;
         }
 
