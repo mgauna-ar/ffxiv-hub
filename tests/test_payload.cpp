@@ -192,17 +192,46 @@ struct MockMeterConsumer : public IHookConsumer {
     }
 };
 
+// Records every IHookConsumer callback, so fan-out to a plugin that overrides
+// callbacks neither existing plugin does can be asserted.
+struct MockRecordingConsumer : public IHookConsumer {
+    int call_order{0};
+    int pre_calls{0};
+    int action_mgr_calls{0};
+    int status_tick_calls{0};
+    int use_action_calls{0};
+    int receive_calls{0};
+
+    void on_pre_receive_action_effect() override { pre_calls++; }
+    void on_action_manager_resolved(void*) override { action_mgr_calls++; }
+    void on_status_tick(uint32_t, uint32_t, uint16_t, uint32_t, bool) override { status_tick_calls++; }
+    void on_use_action_location(
+        void*, uint32_t, uint32_t, uint64_t, const void*, uint32_t, uint64_t
+    ) override {
+        use_action_calls++;
+    }
+    void on_receive_action_effect(
+        uint32_t, const void*, const void*, const void*, const uint64_t*
+    ) override {
+        receive_calls++;
+        call_order = ++s_mock_counter;
+    }
+};
+
 TEST_CASE(Payload, HookManagerSequentialDeterministicDispatch) {
     s_mock_counter = 0;
     MockLatencyConsumer latency_mock;
     MockMeterConsumer meter_mock;
 
     auto& hook_mgr = payload::HookManager::instance();
-    hook_mgr.set_latency_consumer(&latency_mock);
-    hook_mgr.set_meter_consumer(&meter_mock);
+    hook_mgr.clear_consumers();
 
-    TEST_ASSERT(hook_mgr.latency_consumer() == &latency_mock);
-    TEST_ASSERT(hook_mgr.meter_consumer() == &meter_mock);
+    TEST_ASSERT(hook_mgr.register_consumer(&latency_mock));
+    TEST_ASSERT(hook_mgr.register_consumer(&meter_mock));
+
+    TEST_ASSERT(hook_mgr.consumer_count() == 2);
+    TEST_ASSERT(hook_mgr.consumer_at(0) == &latency_mock);
+    TEST_ASSERT(hook_mgr.consumer_at(1) == &meter_mock);
 
     // Test UseActionLocation dispatch
     hook_mgr.dispatch_use_action_location_test(nullptr, 1, 100, 0x1234, nullptr, 0, 1);
@@ -216,6 +245,78 @@ TEST_CASE(Payload, HookManagerSequentialDeterministicDispatch) {
     TEST_ASSERT(latency_mock.call_order == 1);
     TEST_ASSERT(meter_mock.call_order == 2);
     TEST_ASSERT(latency_mock.call_order < meter_mock.call_order);
+
+    // The mocks are stack objects; never leave them in the singleton.
+    hook_mgr.clear_consumers();
+}
+
+TEST_CASE(Payload, HookManagerFansOutToThirdConsumer) {
+    s_mock_counter = 0;
+    MockLatencyConsumer latency_mock;
+    MockMeterConsumer meter_mock;
+    MockRecordingConsumer third;
+
+    auto& hook_mgr = payload::HookManager::instance();
+    hook_mgr.clear_consumers();
+    TEST_ASSERT(hook_mgr.register_consumer(&latency_mock));
+    TEST_ASSERT(hook_mgr.register_consumer(&meter_mock));
+    TEST_ASSERT(hook_mgr.register_consumer(&third));
+    TEST_ASSERT(hook_mgr.consumer_count() == 3);
+
+    // A third consumer receives UseActionLocation, which previously reached the
+    // latency slot alone.
+    hook_mgr.dispatch_use_action_location_test(nullptr, 1, 100, 0x1234, nullptr, 0, 1);
+    TEST_ASSERT(latency_mock.use_action_calls == 1);
+    TEST_ASSERT(third.use_action_calls == 1);
+
+    game::ActionEffectHeader hdr{};
+    hdr.action_id = 999;
+    hook_mgr.dispatch_receive_action_effect_test(1001, nullptr, &hdr, nullptr, nullptr);
+
+    TEST_ASSERT(third.receive_calls == 1);
+    // Registration order is dispatch order, all the way down the list.
+    TEST_ASSERT(latency_mock.call_order == 1);
+    TEST_ASSERT(meter_mock.call_order == 2);
+    TEST_ASSERT(third.call_order == 3);
+
+    hook_mgr.clear_consumers();
+}
+
+TEST_CASE(Payload, HookManagerConsumerRegistrationRules) {
+    auto& hook_mgr = payload::HookManager::instance();
+    hook_mgr.clear_consumers();
+    TEST_ASSERT(hook_mgr.consumer_count() == 0);
+
+    MockRecordingConsumer first;
+    TEST_ASSERT(!hook_mgr.register_consumer(nullptr));
+    TEST_ASSERT(hook_mgr.consumer_count() == 0);
+
+    TEST_ASSERT(hook_mgr.register_consumer(&first));
+    TEST_ASSERT(hook_mgr.consumer_count() == 1);
+
+    // Duplicates would double-dispatch every callback.
+    TEST_ASSERT(!hook_mgr.register_consumer(&first));
+    TEST_ASSERT(hook_mgr.consumer_count() == 1);
+
+    // The list is closed once the detours are live: they read it with no lock,
+    // so it must not move underneath them. install() only succeeds where the
+    // game signatures resolve, so this arm is skipped on a real Windows host.
+    MockRecordingConsumer late;
+    if (hook_mgr.install()) {
+        TEST_ASSERT(!hook_mgr.register_consumer(&late));
+        TEST_ASSERT(hook_mgr.consumer_count() == 1);
+        hook_mgr.uninstall();
+    }
+    TEST_ASSERT(hook_mgr.register_consumer(&late));
+    TEST_ASSERT(hook_mgr.consumer_count() == 2);
+
+    // Clearing empties the list and silences dispatch.
+    hook_mgr.clear_consumers();
+    TEST_ASSERT(hook_mgr.consumer_count() == 0);
+    TEST_ASSERT(hook_mgr.consumer_at(0) == nullptr);
+
+    hook_mgr.dispatch_use_action_location_test(nullptr, 1, 100, 0x1234, nullptr, 0, 1);
+    TEST_ASSERT(first.use_action_calls == 0);
 }
 
 TEST_CASE(Payload, WndProcHookClickThroughAndState) {

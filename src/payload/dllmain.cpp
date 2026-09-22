@@ -111,8 +111,14 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
 
     // 5. Initialize HookManager and attach consumers
     auto& hook_mgr = hub::payload::HookManager::instance();
-    hook_mgr.set_latency_consumer(latency_plugin.get());
-    hook_mgr.set_meter_consumer(combat_plugin.get());
+    // Registration order is dispatch order. Mitigator before meter, per
+    // AGENTS.md invariant 1.
+    if (!hook_mgr.register_consumer(latency_plugin.get())) {
+        hub::os::Logger::warn("Failed to register the latency mitigator as a hook consumer");
+    }
+    if (!hook_mgr.register_consumer(combat_plugin.get())) {
+        hub::os::Logger::warn("Failed to register the combat meter as a hook consumer");
+    }
     hook_mgr.set_ring_buffer(&pipe_client->ring_buffer());
 
     hub::os::Logger::info("Installing game hooks...");

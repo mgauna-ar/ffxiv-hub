@@ -36,7 +36,7 @@ This document defines the architectural patterns, engineering principles, memory
    - Exactly **one DirectX 11 hook** (`IDXGISwapChain::Present`, `ResizeBuffers`).
    - Exactly **one `WndProc` hook** for transparent mouse/keyboard input management.
    - Exactly **one multiplexed Named Pipe connection** (`\\.\pipe\ffxiv_hub_pipe`).
-   - Exactly **one detour for `ReceiveActionEffect`**, dispatching sequentially and deterministically to `latency_mitigator` first, then to `combat_meter`.
+   - Exactly **one detour for `ReceiveActionEffect`**, dispatching sequentially and deterministically to every registered hook consumer in registration order.
 
 6. **Mandatory Documentation Synchronization (`README.md` & `AGENTS.md`)**:
    - Whenever code is modified, the author or agent **must verify and update both `README.md` and `AGENTS.md`** if the change impacts:
@@ -76,7 +76,7 @@ This document defines the architectural patterns, engineering principles, memory
 | **Metrics Accumulator** | `plugins/combat_meter/include/meter/metrics_accumulator.hpp`<br>`plugins/combat_meter/src/metrics_accumulator.cpp` | Real-time DPS, HPS (effective vs overheal), Crit%, DH%, CDH%, and per-action breakdowns |
 | **Encounter Engine** | `plugins/combat_meter/include/meter/encounter_engine.hpp`<br>`plugins/combat_meter/src/encounter_engine.cpp` | Encounter state machine (start on action, 7.0s inactivity split, wipe detection, pull history) |
 | **Combat Meter Plugin** | `plugins/combat_meter/include/meter/combat_plugin.hpp`<br>`plugins/combat_meter/src/combat_plugin.cpp` | `IPlugin`, `IConfigurable`, and `IHookConsumer` implementation dispatching game actions to engine |
-| **Payload Hook Manager** | `src/payload/hook_manager.hpp`<br>`src/payload/hook_manager.cpp` | Central MinHook lifecycle, hooking `ReceiveActionEffect`, `UseActionLocation`, and dispatching to plugins |
+| **Payload Hook Manager** | `src/payload/hook_manager.hpp`<br>`src/payload/hook_manager.cpp` | Central MinHook lifecycle, hooking `ReceiveActionEffect`, `UseActionLocation`, and `ProcessHotDot`, fanning each out to a list of `IHookConsumer`s that is closed once `install()` makes the detours live |
 | **DX11 Hook** | `src/payload/dx11_hook.hpp`<br>`src/payload/dx11_hook.cpp` | MinHook detours for `IDXGISwapChain::Present`, `ResizeBuffers`, and transparent shutdown passthrough |
 | **WndProc Hook** | `src/payload/wndproc_hook.hpp`<br>`src/payload/wndproc_hook.cpp` | Non-destructive `SetWindowLongPtrW` window procedure detour with ImGui input capture routing |
 | **Overlay Host** | `src/payload/overlay_host.hpp`<br>`src/payload/overlay_host.cpp` | In-game Dear ImGui render loop coordinating independent floating overlay windows for active plugins |
@@ -107,11 +107,18 @@ This document defines the architectural patterns, engineering principles, memory
 When modifying detours, hooks, or timing/analytics math, the following invariants **must** be preserved:
 
 ### 1. Single `ReceiveActionEffect` Hook & Deterministic Interception Order
-- `ReceiveActionEffect` in `ffxiv_dx11.exe` is intercepted by **one single MinHook detour** in `hook_manager.cpp`.
-- Sequential execution order inside the hook:
-  1. **Latency Mitigator First**: Reads target animation lock, checks sequence, updates RTT tracker, and modifies `ActionManager::animation_lock` to remove latency.
-  2. **Combat Meter Second**: Operates in **read-only mode**, decoding `ActionEffectHeader` and target entries to accumulate damage, healing, and encounter events.
-- Never alter packet contents in either plugin.
+- `ReceiveActionEffect` in `ffxiv_dx11.exe` is intercepted by **one single MinHook detour** in `hook_manager.cpp`, which fans out to every registered `IHookConsumer`.
+
+**Phase ordering is load-bearing.** Inside the detour, in this order:
+  1. `on_pre_receive_action_effect` for every consumer, **before** the original runs.
+  2. The original engine function, which writes the server's animation lock.
+  3. `on_receive_action_effect` for every consumer, **after** the original.
+
+  The mitigator detects whether an action was its own by diffing its pre-snapshot against the value the original wrote (`lock_changed` in `latency_plugin.cpp`). Collapsing or reordering these phases silently breaks mitigation.
+
+**Consumer ordering is a convention, not a data dependency.** `dllmain.cpp` registers the mitigator before the meter, and registration order is dispatch order. The two share no mutable state - the meter never touches `ActionManager` - so the order is kept for determinism and because the mitigator's write-back is racing the client's next frame, not because swapping them would produce a wrong result. Do not rely on it for correctness in a new plugin.
+
+- Never alter packet contents in any consumer.
 
 ### 2. Frozen Latency Mitigation Rules
 - **No Client-Queued Action Skipping**: In FFXIV's client engine, `UseActionLocation` fires only once when the key is pressed. When an action is queued during the 0.5s GCD buffer window (`is_queued == true`), the game engine dequeues and transmits the packet via an internal engine routine without calling `UseActionLocation` a second time. Never skip dispatch recording or sample ingestion when `is_queued` is true or `animation_lock > 0`.

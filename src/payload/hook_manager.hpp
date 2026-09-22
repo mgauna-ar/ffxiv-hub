@@ -3,6 +3,7 @@
 #include "hub/plugin_api.hpp"
 #include "common/ipc/ring_buffer.hpp"
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -12,9 +13,23 @@ namespace hub::payload {
  * @brief Centralized MinHook lifecycle for game memory detours.
  *
  * Hooks:
- * 1. ActionManager::UseActionLocation (notifies LatencyMitigator)
- * 2. ReceiveActionEffect (executes LatencyMitigator first, then CombatMeter in read-only mode)
- * 3. ProcessHotDot (status DoT/HoT ticks for CombatMeter)
+ * 1. ActionManager::UseActionLocation
+ * 2. ReceiveActionEffect
+ * 3. ProcessHotDot
+ *
+ * Every hook fans out to all registered consumers in registration order.
+ * Consumers that don't override a callback get the no-op default from
+ * IHookConsumer, so registering for one hook costs nothing on the others.
+ *
+ * Registration order is dispatch order. The payload registers the mitigator
+ * before the meter (see AGENTS.md invariant 1); the phase ordering within
+ * ReceiveActionEffect - pre-callback, original, post-callback - is the part
+ * that is load-bearing, and it is enforced here.
+ *
+ * The consumer list is fixed once install() runs: detours read it on the
+ * game's thread with no lock, which is only safe because nothing mutates it
+ * while hooks are live. register_consumer() enforces that rather than
+ * trusting callers to remember it.
  */
 class HookManager {
 public:
@@ -31,12 +46,20 @@ public:
     /// Why install() failed, or "OK". Names the specific signature or detour.
     [[nodiscard]] const char* last_error() const noexcept { return m_last_error; }
 
-    void set_latency_consumer(IHookConsumer* consumer) noexcept { m_latency_consumer.store(consumer); }
-    void set_meter_consumer(IHookConsumer* consumer) noexcept { m_meter_consumer.store(consumer); }
-    void set_ring_buffer(RingBuffer* ring) noexcept { m_ring_buffer.store(ring); }
+    /// Append a consumer. Rejects null, duplicates, and any attempt to register
+    /// once install() has made the detours live.
+    bool register_consumer(IHookConsumer* consumer) noexcept;
 
-    [[nodiscard]] IHookConsumer* latency_consumer() const noexcept { return m_latency_consumer.load(); }
-    [[nodiscard]] IHookConsumer* meter_consumer() const noexcept { return m_meter_consumer.load(); }
+    /// Drop every consumer. Only safe once in-flight detours have drained.
+    void clear_consumers() noexcept;
+
+    [[nodiscard]] size_t consumer_count() const noexcept { return m_consumers.size(); }
+
+    [[nodiscard]] IHookConsumer* consumer_at(size_t index) const noexcept {
+        return index < m_consumers.size() ? m_consumers[index] : nullptr;
+    }
+
+    void set_ring_buffer(RingBuffer* ring) noexcept { m_ring_buffer.store(ring); }
     [[nodiscard]] RingBuffer* ring_buffer() const noexcept { return m_ring_buffer.load(); }
 
     // Dispatch simulation for unit testing
@@ -58,8 +81,9 @@ private:
 
     std::atomic<bool> m_installed{false};
     std::atomic<uint32_t> m_active_hooks{0};
-    std::atomic<IHookConsumer*> m_latency_consumer{nullptr};
-    std::atomic<IHookConsumer*> m_meter_consumer{nullptr};
+    /// Only mutated before install() and after uninstall() drains the detours,
+    /// so the read side needs no synchronization.
+    std::vector<IHookConsumer*> m_consumers;
     std::atomic<RingBuffer*> m_ring_buffer{nullptr};
     std::atomic<void*> m_action_manager{nullptr};
     const char* m_last_error{"OK"};

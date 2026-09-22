@@ -4,6 +4,26 @@
 #include <chrono>
 #include <thread>
 
+namespace hub::payload {
+namespace {
+
+/// Walks the consumer list in registration order. Allocation-free and
+/// lock-free: this runs on the game's thread inside a detour. Must stay
+/// outside any __try block - MSVC rejects unwinding objects inside SEH.
+template <typename Fn>
+void for_each_consumer(Fn&& fn) {
+    auto& mgr = HookManager::instance();
+    const size_t count = mgr.consumer_count();
+    for (size_t i = 0; i < count; ++i) {
+        if (auto* consumer = mgr.consumer_at(i)) {
+            fn(consumer);
+        }
+    }
+}
+
+} // namespace
+} // namespace hub::payload
+
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -166,10 +186,9 @@ static uint8_t FFXIV_FASTCALL hooked_use_action_location(
     );
 
     if (result != 0) {
-        auto* latency = HookManager::instance().latency_consumer();
-        if (latency) {
-            latency->on_use_action_location(self, action_type, action_id, target_id, target_location, extra_param, result);
-        }
+        for_each_consumer([&](IHookConsumer* c) {
+            c->on_use_action_location(self, action_type, action_id, target_id, target_location, extra_param, result);
+        });
     }
 
     return result;
@@ -190,12 +209,8 @@ static void FFXIV_FASTCALL hooked_receive_action_effect(
         return;
     }
 
-    auto* latency = HookManager::instance().latency_consumer();
-
     // Snapshot the animation lock before the original writes the server's value.
-    if (latency) {
-        latency->on_pre_receive_action_effect();
-    }
+    for_each_consumer([](IHookConsumer* c) { c->on_pre_receive_action_effect(); });
 
     // Original must run first - it writes the server's lock value, which a
     // mitigation write-back needs to follow, not precede.
@@ -204,14 +219,9 @@ static void FFXIV_FASTCALL hooked_receive_action_effect(
         return;
     }
 
-    if (latency) {
-        latency->on_receive_action_effect(source_id, source_character, effect_header, effect_data, reinterpret_cast<const uint64_t*>(targets));
-    }
-
-    auto* meter = HookManager::instance().meter_consumer();
-    if (meter) {
-        meter->on_receive_action_effect(source_id, source_character, effect_header, effect_data, reinterpret_cast<const uint64_t*>(targets));
-    }
+    for_each_consumer([&](IHookConsumer* c) {
+        c->on_receive_action_effect(source_id, source_character, effect_header, effect_data, reinterpret_cast<const uint64_t*>(targets));
+    });
 }
 
 // Detour 3: ProcessHotDot
@@ -239,11 +249,10 @@ static void FFXIV_FASTCALL hooked_process_hot_dot(
         return;
     }
 
-    auto* meter = HookManager::instance().meter_consumer();
-    if (meter) {
-        const bool is_heal = (tick_mode == 4 || damage_type == 0);
-        meter->on_status_tick(target_id, source_entity_id, static_cast<uint16_t>(status_id), value, is_heal);
-    }
+    const bool is_heal = (tick_mode == 4 || damage_type == 0);
+    for_each_consumer([&](IHookConsumer* c) {
+        c->on_status_tick(target_id, source_entity_id, static_cast<uint16_t>(status_id), value, is_heal);
+    });
 }
 
 } // namespace
@@ -331,9 +340,9 @@ bool HookManager::install() {
         );
         if (action_mgr) {
             m_action_manager.store(reinterpret_cast<void*>(action_mgr));
-            if (auto* latency = m_latency_consumer.load()) {
-                latency->on_action_manager_resolved(reinterpret_cast<void*>(action_mgr));
-            }
+            for_each_consumer([&](IHookConsumer* c) {
+                c->on_action_manager_resolved(reinterpret_cast<void*>(action_mgr));
+            });
         }
     }
 
@@ -404,8 +413,7 @@ void HookManager::uninstall() {
     fp_original_use_action_location = nullptr;
     fp_original_process_hot_dot = nullptr;
 
-    m_latency_consumer.store(nullptr);
-    m_meter_consumer.store(nullptr);
+    clear_consumers();
     m_action_manager.store(nullptr);
     m_active_hooks.store(0);
 }
@@ -414,27 +422,18 @@ void HookManager::dispatch_use_action_location_test(
     void* action_mgr, uint32_t action_type, uint32_t action_id,
     uint64_t target_id, const void* loc, uint32_t extra, uint64_t res
 ) {
-    auto* latency = m_latency_consumer.load();
-    if (latency) {
-        latency->on_use_action_location(action_mgr, action_type, action_id, target_id, loc, extra, res);
-    }
+    for_each_consumer([&](IHookConsumer* c) {
+        c->on_use_action_location(action_mgr, action_type, action_id, target_id, loc, extra, res);
+    });
 }
 
 void HookManager::dispatch_receive_action_effect_test(
     uint32_t source_id, const void* source_char,
     const void* effect_header, const void* effect_data, const uint64_t* targets
 ) {
-    // Latency Mitigator first
-    auto* latency = m_latency_consumer.load();
-    if (latency) {
-        latency->on_receive_action_effect(source_id, source_char, effect_header, effect_data, targets);
-    }
-
-    // Combat Meter second
-    auto* meter = m_meter_consumer.load();
-    if (meter) {
-        meter->on_receive_action_effect(source_id, source_char, effect_header, effect_data, targets);
-    }
+    for_each_consumer([&](IHookConsumer* c) {
+        c->on_receive_action_effect(source_id, source_char, effect_header, effect_data, targets);
+    });
 }
 
 } // namespace hub::payload
@@ -463,29 +462,45 @@ void HookManager::dispatch_use_action_location_test(
     void* action_mgr, uint32_t action_type, uint32_t action_id,
     uint64_t target_id, const void* loc, uint32_t extra, uint64_t res
 ) {
-    auto* latency = m_latency_consumer.load();
-    if (latency) {
-        latency->on_use_action_location(action_mgr, action_type, action_id, target_id, loc, extra, res);
-    }
+    for_each_consumer([&](IHookConsumer* c) {
+        c->on_use_action_location(action_mgr, action_type, action_id, target_id, loc, extra, res);
+    });
 }
 
 void HookManager::dispatch_receive_action_effect_test(
     uint32_t source_id, const void* source_char,
     const void* effect_header, const void* effect_data, const uint64_t* targets
 ) {
-    // Latency Mitigator first
-    auto* latency = m_latency_consumer.load();
-    if (latency) {
-        latency->on_receive_action_effect(source_id, source_char, effect_header, effect_data, targets);
-    }
-
-    // Combat Meter second
-    auto* meter = m_meter_consumer.load();
-    if (meter) {
-        meter->on_receive_action_effect(source_id, source_char, effect_header, effect_data, targets);
-    }
+    for_each_consumer([&](IHookConsumer* c) {
+        c->on_receive_action_effect(source_id, source_char, effect_header, effect_data, targets);
+    });
 }
 
 } // namespace hub::payload
 
 #endif
+
+// Consumer registry. Platform independent, so it lives outside the branch above
+// rather than being duplicated into the Win32 and mock implementations.
+namespace hub::payload {
+
+bool HookManager::register_consumer(IHookConsumer* consumer) noexcept {
+    if (consumer == nullptr) return false;
+
+    // Detours read the list without a lock. Growing it underneath them would
+    // move it in memory, so registration closes when the hooks go live.
+    if (m_installed.load()) return false;
+
+    for (IHookConsumer* existing : m_consumers) {
+        if (existing == consumer) return false;
+    }
+
+    m_consumers.push_back(consumer);
+    return true;
+}
+
+void HookManager::clear_consumers() noexcept {
+    m_consumers.clear();
+}
+
+} // namespace hub::payload
