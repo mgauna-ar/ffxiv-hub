@@ -24,12 +24,12 @@ namespace {
 
 constexpr const char* MITI = "latency_mitigator";
 
-/// Same grading thresholds as the in-game HUD dot.
+/// Same grading bands as the in-game HUD dot.
 uint32_t ping_grade_color(double ping_ms) {
-    if (ping_ms < 0.0)    return colors::TextDim;
-    if (ping_ms < 180.0)  return colors::SuccessLight;
-    if (ping_ms <= 260.0) return colors::Success;
-    if (ping_ms <= 340.0) return colors::WarningLight;
+    if (ping_ms < 0.0) return colors::TextDim;
+    if (ping_ms < mitigator::constants::PING_GRADE_GOOD_MS)  return colors::SuccessLight;
+    if (ping_ms <= mitigator::constants::PING_GRADE_FAIR_MS) return colors::Success;
+    if (ping_ms <= mitigator::constants::PING_GRADE_POOR_MS) return colors::WarningLight;
     return colors::Danger;
 }
 
@@ -155,12 +155,17 @@ void legend_entry(const char* label, uint32_t color) {
 void render_metric_tiles(AppState& app_state, const AppState::MitigatorMetrics& metrics) {
     char smoothed[32];
     std::snprintf(smoothed, sizeof(smoothed), "%.1f ms", metrics.latest_smoothed_rtt_ms);
-    char raw[48];
+    char raw[32];
+    std::snprintf(raw, sizeof(raw), "raw %.1f ms", metrics.latest_measured_rtt_ms);
+
+    // Hub-measured ICMP ping to the game server. A separate metric from the
+    // action RTT above, so it gets its own tile rather than sharing one.
     const double net_ping = app_state.network_ping_ms();
+    char net[32];
     if (net_ping >= 0.0) {
-        std::snprintf(raw, sizeof(raw), "net %.0f ms  -  raw %.1f ms", net_ping, metrics.latest_measured_rtt_ms);
+        std::snprintf(net, sizeof(net), "%.0f ms", net_ping);
     } else {
-        std::snprintf(raw, sizeof(raw), "raw %.1f ms", metrics.latest_measured_rtt_ms);
+        std::snprintf(net, sizeof(net), "--");
     }
 
     char jitter[32];
@@ -180,8 +185,9 @@ void render_metric_tiles(AppState& app_state, const AppState::MitigatorMetrics& 
 
     const StatTileSpec tiles[] = {
         { "##PingCard", ICON_ACTIVITY, "SMOOTHED RTT", smoothed,
-          ping_grade_color(net_ping >= 0.0 ? net_ping : metrics.latest_smoothed_rtt_ms),
-          raw, colors::Accent },
+          ping_grade_color(metrics.latest_smoothed_rtt_ms), raw, colors::Accent },
+        { "##NetPingCard", ICON_ACTIVITY, "NETWORK PING", net,
+          ping_grade_color(net_ping), "server round-trip", colors::Accent },
         { "##JitterCard", ICON_TRENDING, "JITTER", jitter,
           colors::SuccessLight, "round-trip variance", colors::Success },
         { "##ReducedCard", ICON_BOLT, "LATENCY SAVED", saved,

@@ -100,14 +100,14 @@ void LatencyOverlay::render() {
         border_col = ImVec4(0.20f, 0.23f, 0.30f, 0.70f);
         if (dot_metric < 0.0) {
             dot_color = ImVec4(0.55f, 0.60f, 0.70f, 0.80f); // Muted gray/slate
-        } else if (dot_metric < 180.0) {
-            dot_color = ImVec4(0.20f, 0.85f, 0.40f, 1.00f); // Green (< 180ms)
-        } else if (dot_metric <= 260.0) {
-            dot_color = ImVec4(0.12f, 0.79f, 0.59f, 1.00f); // Teal/Mint (#20C997, <= 260ms)
-        } else if (dot_metric <= 340.0) {
-            dot_color = ImVec4(0.95f, 0.70f, 0.20f, 1.00f); // Amber (<= 340ms)
+        } else if (dot_metric < constants::PING_GRADE_GOOD_MS) {
+            dot_color = ImVec4(0.20f, 0.85f, 0.40f, 1.00f); // Green
+        } else if (dot_metric <= constants::PING_GRADE_FAIR_MS) {
+            dot_color = ImVec4(0.12f, 0.79f, 0.59f, 1.00f); // Teal/Mint (#20C997)
+        } else if (dot_metric <= constants::PING_GRADE_POOR_MS) {
+            dot_color = ImVec4(0.95f, 0.70f, 0.20f, 1.00f); // Amber
         } else {
-            dot_color = ImVec4(0.95f, 0.25f, 0.25f, 1.00f); // Red (> 340ms)
+            dot_color = ImVec4(0.95f, 0.25f, 0.25f, 1.00f); // Red
         }
         text_col = ImVec4(0.92f, 0.94f, 0.98f, 1.00f);
     }

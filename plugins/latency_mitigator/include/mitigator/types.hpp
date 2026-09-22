@@ -35,6 +35,11 @@ namespace constants {
     constexpr float ABSOLUTE_MAX_CAST_DURATION_SECONDS = 30.0f;
     constexpr double ONE_WAY_LATENCY_RATIO = 0.5;
 
+    /// Ping grading bands, shared by the in-game HUD dot and the desktop latency view.
+    constexpr double PING_GRADE_GOOD_MS = 180.0;
+    constexpr double PING_GRADE_FAIR_MS = 260.0;
+    constexpr double PING_GRADE_POOR_MS = 340.0;
+
     constexpr size_t MIN_SAMPLES_FOR_MEDIAN_FILTER = 5;
     constexpr double MIN_OUTLIER_TOLERANCE_MS = 50.0;
     constexpr double JITTER_SPIKE_MULTIPLIER = 3.0;
