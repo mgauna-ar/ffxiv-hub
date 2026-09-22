@@ -97,9 +97,6 @@ struct ActionRequestInfo {
     TimePoint  timestamp{std::chrono::steady_clock::now()};
     bool       is_cast{false};
     float      cast_duration_seconds{0.0f};
-    /// Stamped at key-press but sent when the lock/recast runs out, so the
-    /// elapsed time to its response includes the queue wait.
-    bool       is_queued{false};
 };
 
 /// Result of animation lock calculation for a server response

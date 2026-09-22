@@ -47,11 +47,6 @@ sequence counter match handles ordinary actions. Queued actions need the second 
 `UseActionLocation` fires when you press the key, before the sequence counter increments,
 so those are matched against the oldest pending request with the same action id.
 
-A queued action is also timed from the key press, but its packet only leaves when the
-current lock or recast runs out, so its round trip includes the time it sat in the queue.
-That is an upper bound, not a measurement: it is capped at the current median, so a queued
-action can lower the estimate but never raise it or cut the lock by its own wait.
-
 ### What is deliberately left alone
 
 - **Caster tax.** The 100 ms lock after a cast completes is never mitigated. Trimming it

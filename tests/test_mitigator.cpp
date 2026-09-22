@@ -426,28 +426,6 @@ std::chrono::steady_clock::time_point seed_rtt(AnimationLockMitigator& mit, int 
 
 } // namespace
 
-TEST_CASE(Mitigator, QueuedRequestCannotCutByItsQueueWait) {
-    AnimationLockMitigator mit;
-    uint32_t seq = 0;
-    auto t = seed_rtt(mit, 5, 40, std::chrono::steady_clock::now(), seq);
-
-    // Pressed 45ms before the lock ran out - inside the spike tolerance, so the filter
-    // alone would take it as a real 85ms round trip. Only the 40ms may come off.
-    mit.record_action_request(901, ++seq, t, false, 0.0f, /*is_queued=*/true);
-    const auto res = mit.calculate_mitigation(901, seq, 600.0, t + std::chrono::milliseconds(85));
-
-    TEST_ASSERT_NEAR(res.measured_rtt_ms, 85.0, 1.0);
-    TEST_ASSERT_FALSE(res.spike_filtered);
-    TEST_ASSERT_NEAR(res.adjusted_lock_ms, 600.0 - (40.0 - 15.0), 0.5);
-    TEST_ASSERT_NEAR(mit.get_rtt_tracker().get_median_rtt_ms(), 40.0, 0.01);
-
-    // A queued response faster than the median still counts as the upper bound it is.
-    t += std::chrono::seconds(1);
-    mit.record_action_request(902, ++seq, t, false, 0.0f, /*is_queued=*/true);
-    const auto fast = mit.calculate_mitigation(902, seq, 600.0, t + std::chrono::milliseconds(30));
-    TEST_ASSERT_NEAR(fast.adjusted_lock_ms, 600.0 - (30.0 - 15.0), 0.5);
-}
-
 TEST_CASE(Mitigator, SustainedRttRiseIsLearnedButSingleSpikeIsNot) {
     AnimationLockMitigator mit;
     uint32_t seq = 0;

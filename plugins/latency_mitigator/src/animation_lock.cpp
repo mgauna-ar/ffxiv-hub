@@ -29,12 +29,11 @@ void AnimationLockMitigator::record_action_request(
     SequenceId sequence,
     TimePoint timestamp,
     bool is_cast,
-    float cast_duration_seconds,
-    bool is_queued
+    float cast_duration_seconds
 ) {
     std::lock_guard<std::mutex> lock(m_mutex);
     ++m_total_actions_requested;
-    m_seq_tracker.record_request(action_id, sequence, timestamp, is_cast, cast_duration_seconds, is_queued);
+    m_seq_tracker.record_request(action_id, sequence, timestamp, is_cast, cast_duration_seconds);
 }
 
 MitigationResult AnimationLockMitigator::calculate_mitigation(
@@ -88,11 +87,7 @@ MitigationResult AnimationLockMitigator::calculate_mitigation(
 
     if (elapsed > 0.0 && elapsed < constants::MAX_PLAUSIBLE_RTT_MS) {
         measured_rtt = elapsed;
-        // A queued request was stamped at key-press, so its elapsed time includes the
-        // wait in the queue: an upper bound on the round trip, never a measurement of it.
-        double window_sample = matched_req->is_queued
-            ? std::min(measured_rtt, m_rtt_tracker.get_median_rtt_ms())
-            : measured_rtt;
+        double window_sample = measured_rtt;
         effective_rtt = window_sample;
 
         if (samples_before >= constants::MIN_SAMPLES_FOR_MEDIAN_FILTER) {

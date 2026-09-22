@@ -17,8 +17,7 @@ public:
         SequenceId sequence,
         TimePoint timestamp = std::chrono::steady_clock::now(),
         bool is_cast = false,
-        float cast_duration_seconds = 0.0f,
-        bool is_queued = false
+        float cast_duration_seconds = 0.0f
     );
 
     [[nodiscard]] MitigationResult calculate_mitigation(

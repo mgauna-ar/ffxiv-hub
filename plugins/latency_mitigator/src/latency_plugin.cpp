@@ -22,7 +22,6 @@ namespace {
 struct UseActionState {
     uint16_t sequence{0};
     uint8_t is_casting{0};
-    uint8_t is_queued{0};
     float cast_time{0.0f};
     float elapsed_cast_time{0.0f};
 };
@@ -30,7 +29,6 @@ struct UseActionState {
 void extract_use_action_state(const uint8_t* mgr, UseActionState& out) {
     std::memcpy(&out.sequence, mgr + game::offsets::ACTION_MANAGER_CURRENT_SEQUENCE, sizeof(out.sequence));
     std::memcpy(&out.is_casting, mgr + game::offsets::ACTION_MANAGER_IS_CASTING, sizeof(out.is_casting));
-    std::memcpy(&out.is_queued, mgr + game::offsets::ACTION_MANAGER_IS_QUEUED, sizeof(out.is_queued));
     std::memcpy(&out.cast_time, mgr + game::offsets::ACTION_MANAGER_CAST_TIME, sizeof(out.cast_time));
     std::memcpy(&out.elapsed_cast_time, mgr + game::offsets::ACTION_MANAGER_ELAPSED_CAST_TIME, sizeof(out.elapsed_cast_time));
 }
@@ -215,8 +213,7 @@ void LatencyPlugin::on_use_action_location(
         state.sequence,
         now,
         is_casting,
-        is_casting ? state.cast_time : 0.0f,
-        state.is_queued != 0
+        is_casting ? state.cast_time : 0.0f
     );
 }
 
