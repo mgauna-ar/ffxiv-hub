@@ -39,7 +39,6 @@ jobs:
           New-Item -ItemType Directory -Path dist -Force
           Copy-Item build/bin/Release/ffxiv-hub.exe dist/
           Copy-Item build/bin/Release/hub_payload.dll dist/
-          Copy-Item README.md dist/
           Compress-Archive -Path dist/* -DestinationPath ffxiv-hub-windows-x64.zip -Force
           $hash = (Get-FileHash -Algorithm SHA256 ffxiv-hub-windows-x64.zip).Hash
           "$hash  ffxiv-hub-windows-x64.zip" | Out-File -Encoding utf8 ffxiv-hub-windows-x64.zip.sha256

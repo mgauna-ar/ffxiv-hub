@@ -5,7 +5,7 @@ Signatures are the part of the payload that silently rots across game patches,
 and the only other way to test one is to launch the game on Windows. This scans
 ffxiv_dx11.exe offline and reports, per signature, how many times it matches.
 
-    python3 scripts/verify_signatures.py ~/Downloads/ffxiv_dx11/ffxiv_dx11.exe
+    python3 scripts/verify_signatures.py <path to ffxiv_dx11.exe>
 
 A signature that resolves a static singleton must match exactly once and land in
 a data section; a function signature must match exactly once in .text.

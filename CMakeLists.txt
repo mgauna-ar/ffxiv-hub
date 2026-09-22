@@ -205,11 +205,12 @@ if(WIN32 OR CYGWIN OR MSYS OR MINGW)
     endif()
 
     # 5. Installation Rules for Windows Distribution
+    # Binaries only. Documentation stays in the repository so it cannot go stale
+    # against the release it shipped with.
     install(TARGETS ffxiv-hub hub_payload
         RUNTIME DESTINATION .
         LIBRARY DESTINATION .
     )
-    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/README.md" DESTINATION .)
 endif()
 
 # -----------------------------------------------------------------------------

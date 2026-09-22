@@ -70,20 +70,51 @@ flowchart TD
 
 ---
 
+## 🚀 Quick Start
+
+### 1. Download & extract
+
+Grab `ffxiv-hub-windows-x64.zip` from the [Releases](../../releases) tab and extract it
+anywhere. Keep both files in the same folder — the app resolves the payload next to its
+own executable:
+
+```
+ffxiv-hub/
+├── ffxiv-hub.exe      # Desktop manager, system tray, injector
+└── hub_payload.dll    # In-game hooks, overlays and telemetry
+```
+
+### 2. Run it
+
+Double-click `ffxiv-hub.exe`. It opens the desktop manager and places an icon in the
+notification area. There is no console window and nothing is installed.
+
+### 3. Launch Final Fantasy XIV
+
+Start the game through your normal launcher. The Hub discovers `ffxiv_dx11.exe`, injects
+the payload once the game window is ready, and reports the attachment in the dashboard and
+as a notification. Closing the game returns it to a waiting state; closing the Hub leaves
+the game running and hides the overlays until you start it again.
+
+---
+
+## 🧩 Plugins
+
+Each plugin has a master switch — off means it consumes no game hooks, streams no
+telemetry and draws no overlay, not merely that its view is hidden. Toggle it from the
+plugin's page or its dashboard card.
+
+| Plugin | What it does |
+|---|---|
+| [**Combat Meter**](plugins/combat_meter/README.md) | DPS and HPS with overheal separated, crit/DH/CDH rates, automatic pet attribution, encounter tracking and pull history |
+| [**Latency Mitigator**](plugins/latency_mitigator/README.md) | Animation lock compensation for clean double-weaving on high latency, with a live ping/RTT HUD |
+
+Each plugin's own README documents how it works, its in-game overlay, and its
+configuration keys.
+
+---
+
 ## 🚀 Key Features
-
-### ⚔️ Combat Meter Plugin
-- **Real-Time Analytics**: Live DPS, HPS (effective healing vs overhealing), Crit%, Direct Hit%, and Crit-Direct Hit%.
-- **Automatic Pet Attribution**: Automatically maps pet damage and abilities (Bahamut, Phoenix, Solar Bahamut, Carbuncle, Automaton Queen, Living Shadow, Eos, Selene) to their owner with zero orphan rows.
-- **Encounter State Machine**: Automatic start on direct offensive/healing action, party wipe detection, and 7.0-second inactivity timeout with accurate duration calculation.
-- **Analytical Drilldown**: Inspect per-action min/avg/max hits, swing counts, damage contribution, and hit severity distribution.
-- **Per-Job Row Identity**: Both the in-game overlay and the desktop inspector carry a dedicated Job column in the combatant's own job color; the synthetic Limit Break row reads as a gold `LB` rather than an unknown job.
-
-### ⚡ Latency Mitigator Plugin
-- **Animation Lock Latency Compensation**: Eliminates double-weaving animation clip for players with higher ping by subtracting round-trip latency while strictly preserving native game timings.
-- **Caster Tax & Slide-Cast Preservation**: Maintains the native 100ms cast completion lock so slide-casting and caster rotations remain perfectly synchronized with the server.
-- **Anti-Cheat Guardrails**: Hard minimum animation lock floor (25.0ms) and moving-median spike rejection ($2.5\times$) prevent anomalous packet bursts or over-mitigation.
-- **Real-Time RTT & Server Monitor**: Auto-detects active FFXIV game server IP via TCP connection inspection and displays smoothed round-trip ping.
 
 ### 🎮 Unified In-Game Payload & Overlays
 - **Single Hook In-Game Pipeline**: Exactly one DirectX 11 hook (`Present` & `ResizeBuffers`), one non-destructive `WndProc` detour, and one unified `ReceiveActionEffect` hook fanning out to every registered hook consumer in registration order.
@@ -100,6 +131,25 @@ flowchart TD
 - **Dedicated Analytical Views**: Full-featured Combat Meter inspector (damage tables with job progress bars, healing breakdowns, pull history, action drilldowns) and Latency Mitigator inspector (real-time RTT curves, jitter cards, rolling action feeds). Both share one page frame, so the Settings tab lists the same sections - Plugin, In-game overlay, Display, Maintenance - in the same order for every plugin.
 - **Responsive Layout**: Card grids, stat tile rows and data tables reflow as the window resizes, down to an enforced minimum size; tables scroll horizontally rather than crushing their columns.
 - **Debounced Geometry Persistence**: Overlay positions, dimensions, opacities, and scales automatically persist to `%APPDATA%/ffxiv-hub/config.json`.
+
+
+---
+
+## ⚙️ Configuration
+
+Settings live in `%APPDATA%/ffxiv-hub/config.json`, written as you change them in the app.
+Each plugin owns a section; hub-level keys are:
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `start_with_windows` | bool | `false` | Launch automatically on Windows logon. |
+| `minimize_to_tray` | bool | `true` | Closing the window hides to the notification area instead of exiting. |
+| `show_notifications` | bool | `true` | Windows notifications on attach and detach. |
+| `refresh_interval_ms` | int | `500` | How often the desktop views refresh. |
+
+Plugin keys are documented in
+[Combat Meter](plugins/combat_meter/README.md#configuration) and
+[Latency Mitigator](plugins/latency_mitigator/README.md#configuration).
 
 ---
 
@@ -130,7 +180,7 @@ cpack -G ZIP -C Release
 ```
 Or via PowerShell:
 ```powershell
-Compress-Archive -Path build/bin/Release/ffxiv-hub.exe, build/bin/Release/hub_payload.dll, README.md -DestinationPath ffxiv-hub-windows-x64.zip
+Compress-Archive -Path build/bin/Release/ffxiv-hub.exe, build/bin/Release/hub_payload.dll -DestinationPath ffxiv-hub-windows-x64.zip
 ```
 The GitHub Actions CI/CD pipeline automatically compiles, tests, and publishes `ffxiv-hub-windows-x64.zip` with SHA256 checksums on all `v*.*.*` release tags and as workflow run artifacts on pushes to `main`.
 
