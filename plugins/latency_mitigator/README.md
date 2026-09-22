@@ -43,9 +43,14 @@ coalescing delivers bursts of them, and resetting on those would make mitigation
 out.
 
 Matching a returning packet to the action that caused it uses two strategies. The exact
-sequence counter match handles ordinary actions. Queued actions need the second one:
-`UseActionLocation` fires when you press the key, before the sequence counter increments,
-so those are matched against the oldest pending request with the same action id.
+sequence counter match is the normal path for every action, queued ones included: the game
+increments the counter as it sends, and the plugin records it right after. A response whose
+sequence finds no pending request falls back to the oldest pending request with the same
+action id.
+
+A queued action is recorded when the game actually sends it, once the current lock ends,
+not when you pressed the key. Its round trip therefore holds no waiting time and is measured
+like any other.
 
 ### What is deliberately left alone
 

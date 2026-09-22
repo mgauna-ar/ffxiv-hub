@@ -85,13 +85,14 @@ namespace offsets {
     constexpr size_t CHARACTER_CLASS_JOB = 0x1CA;
 
     // ActionManager offsets
-    constexpr size_t ACTION_MANAGER_ANIMATION_LOCK = 0x08;
-    constexpr size_t ACTION_MANAGER_IS_CASTING = 0x28;
-    constexpr size_t ACTION_MANAGER_ELAPSED_CAST_TIME = 0x30;
+    // Dispatch behaviour behind these: plugins/latency_mitigator/AGENTS.md.
+    constexpr size_t ACTION_MANAGER_ANIMATION_LOCK = 0x08;     // A send writes a provisional 0.5s
+    constexpr size_t ACTION_MANAGER_IS_CASTING = 0x28;         // Cast action type (dword), set at cast start
+    constexpr size_t ACTION_MANAGER_ELAPSED_CAST_TIME = 0x30;  // Reset to 0 at cast start
     constexpr size_t ACTION_MANAGER_CAST_TIME = 0x34;
     constexpr size_t ACTION_MANAGER_COMBO_TIME = 0x60;
-    constexpr size_t ACTION_MANAGER_IS_QUEUED = 0x68;
-    constexpr size_t ACTION_MANAGER_CURRENT_SEQUENCE = 0x120;
+    constexpr size_t ACTION_MANAGER_IS_QUEUED = 0x68;          // Still set while the queued action is sent
+    constexpr size_t ACTION_MANAGER_CURRENT_SEQUENCE = 0x120;  // Incremented inside UseActionLocation
 
     // GroupManager & PartyList offsets
     constexpr size_t GROUP_MAIN_GROUP = 0x20;

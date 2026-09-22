@@ -71,7 +71,7 @@ TEST_CASE(Mitigator, SequenceTrackerExactAndFifoMatching) {
     TEST_ASSERT_EQ(m1->action_id, 1002u);
     TEST_ASSERT_EQ(m1->sequence, 43u);
 
-    // Strategy 2: FIFO match by action_id when server sequence differs (queued action N vs N+1)
+    // Strategy 2: FIFO match by action_id when the response's sequence finds no pending request
     tracker.record_request(2001, 10, t0);
     auto m2 = tracker.match_response(2001, 11, t0 + std::chrono::milliseconds(60));
     TEST_ASSERT(m2.has_value());

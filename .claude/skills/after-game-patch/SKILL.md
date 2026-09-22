@@ -134,7 +134,25 @@ rather than replacing it wholesale.
   are the only automated check on the offsets, so keeping them compiling is the whole
   verification story for a field move.
 
-## 4. Verify
+## 4. Re-check the action dispatch model
+
+The Latency Mitigator's timing rules rest on how the client sends an action, recorded in
+[How the client dispatches an action](../../../plugins/latency_mitigator/AGENTS.md#how-the-client-dispatches-an-action).
+A patch can change that without breaking a signature, so re-check it against the new
+executable before trusting those rules. `objdump -d --x86-asm-syntax=intel` on macOS
+disassembles the copied exe; find the hooked `UseActionLocation` through the resolved
+`USE_ACTION_LOCATION_PRIMARY` call site and confirm:
+
+- It returns 0 when `[mgr+0x08]` (animation lock) is above 0.
+- It increments `word [mgr+0x120]` before sending, and writes 0.5f to `[mgr+0x08]` after.
+- Queueing is a separate helper that only writes `+0x68`/`+0x6C`/`+0x70`/`+0x78`.
+- The dequeue in `ActionManager::Update` calls `UseAction` (which reaches the hooked
+  function) and clears `+0x68` only after that call returns.
+
+If any of these changed, update that section and the rules built on it before changing the
+mitigator's timing math.
+
+## 5. Verify
 
 ```bash
 make
