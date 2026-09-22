@@ -84,11 +84,12 @@ metric at a time — damage or healing — selected by `overlay_metric`. Rows ca
 combatant's job colour, taken from the hub's shared job style table so the overlay and the
 desktop always agree.
 
-**Desktop view.** Four tabs: **Damage**, **Healing**, **Pull history**, and **Settings**.
-Damage and healing carry full rankings with share, crit, direct hit and crit-direct-hit
-rates and job-coloured bars; pull history archives previous encounters with their zone and
-whether they were a clear or a wipe; per-action drilldown shows min/avg/max hits and swing
-counts.
+**Desktop view.** Three tabs: **Damage**, **Healing**, and **Settings**. Damage and
+healing show a pull list rail on the left - the live fight at the top, then archived
+pulls grouped by duty with their end time, duration and a clear/wipe badge - and the
+selected pull's rankings beside it: share, crit, direct hit and crit-direct-hit rates with
+job-coloured bars, plus a per-action drilldown with min/avg/max hits and swing counts. The
+rail is the only place a pull is chosen; it narrows to pull numbers on a small window.
 
 Job colours are per-job, not per-role, and live in `src/common/ui/job_style.cpp` as the
 single source of truth.

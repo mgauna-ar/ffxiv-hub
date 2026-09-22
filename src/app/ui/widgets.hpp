@@ -114,7 +114,11 @@ void end_page_header();
 /// long label is cut rather than overflowing its container.
 void pill(const char* text, uint32_t color);
 
-/// Gradient bar drawn behind the current table row, left-aligned, fraction of full width.
+/// Width pill() takes for `text` when it is not clamped, for right-aligning one.
+[[nodiscard]] float pill_width(const char* text);
+
+/// Gradient bar behind the current table row, left-aligned, a fraction of the full
+/// row width. Call straight after TableNextRow(); it leaves the cursor in column 0.
 void row_progress_bar(float fraction, uint32_t color);
 
 /// Big-number tile: label, value, subtitle, icon, and an accent underline.

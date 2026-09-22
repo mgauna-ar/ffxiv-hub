@@ -3,6 +3,7 @@
 #include "common/ui/job_style.hpp"
 
 #ifdef HAVE_IMGUI
+#include "imgui_internal.h"
 #include <algorithm>
 #include <cstdarg>
 #include <cstdio>
@@ -297,6 +298,10 @@ void page_header(const char* icon, const char* title, const char* subtitle) {
 
 // ------------------------------------------------------------- indicators ---
 
+float pill_width(const char* text) {
+    return ImGui::CalcTextSize(text).x + m(9.0f) * 2.0f + m(3.0f) * 4.0f;
+}
+
 void pill(const char* text, uint32_t color) {
     const ImVec2 label = ImGui::CalcTextSize(text);
     const float pad_x = m(9.0f);
@@ -304,7 +309,7 @@ void pill(const char* text, uint32_t color) {
     const float height = label.y + m(6.0f);
     // Clamped to the space available: a status string long enough to overflow its
     // container would otherwise push a scrollbar onto the whole panel.
-    const float width = std::min(label.x + pad_x * 2.0f + dot_r * 4.0f,
+    const float width = std::min(pill_width(text),
                                  std::max(ImGui::GetContentRegionAvail().x, m(40.0f)));
 
     const ImVec2 p = ImGui::GetCursorScreenPos();
@@ -322,13 +327,26 @@ void pill(const char* text, uint32_t color) {
 }
 
 void row_progress_bar(float fraction, uint32_t color) {
-    const ImVec2 p = ImGui::GetCursorScreenPos();
-    const float width = ImGui::GetContentRegionAvail().x * std::clamp(fraction, 0.0f, 1.0f);
-    const float height = ImGui::GetTextLineHeightWithSpacing();
+    ImGuiTable* table = ImGui::GetCurrentTable();
+    if (table == nullptr) return;
+
+    // Before a cell is entered the cursor still belongs to the previous row's last
+    // column, so the rect comes from the table, drawn under column 0's text with
+    // the column clip widened to the whole table.
+    ImGui::TableSetColumnIndex(0);
+    // The row's final height is only known once its cells are in, so size it to
+    // one line of text, which is what a ranking row holds.
+    const float y1 = table->RowPosY1;
+    const float y2 = std::max(table->RowPosY2, y1 + ImGui::GetTextLineHeight() +
+                                                   table->RowCellPaddingY * 2.0f);
+    const float x0 = table->WorkRect.Min.x;
+    const float width = (table->WorkRect.Max.x - x0) * std::clamp(fraction, 0.0f, 1.0f);
+    ImGui::PushClipRect(table->InnerClipRect.Min, table->InnerClipRect.Max, false);
     ImGui::GetWindowDrawList()->AddRectFilledMultiColor(
-        ImVec2(p.x, p.y - m(1.0f)), ImVec2(p.x + width, p.y + height - m(2.0f)),
+        ImVec2(x0, y1), ImVec2(x0 + width, y2),
         colors::with_alpha(color, 0.22f), colors::with_alpha(color, 0.04f),
         colors::with_alpha(color, 0.04f), colors::with_alpha(color, 0.22f));
+    ImGui::PopClipRect();
 }
 
 void stat_tile(const char* id, float width, const char* icon, const char* label,

@@ -27,9 +27,6 @@ constexpr const char* METER = "combat_meter";
 /// 0 = live encounter.
 uint64_t s_selected_pull_id = 0;
 uint32_t s_selected_drilldown_entity = 0;
-/// Set when a History row asks to inspect a pull, so the tab bar can switch away
-/// from History on the next frame.
-bool s_jump_to_damage = false;
 
 /// A full EncounterSummary carries every combatant's per-action breakdown, so
 /// refetching one per frame means hundreds of map and string allocations under
@@ -90,61 +87,134 @@ void encounter_state_pill(meter::EncounterState state) {
     pill("Idle", colors::TextDim);
 }
 
+/// Outcome badge for an archived pull.
+const char* pull_outcome_label(meter::EncounterState state) {
+    switch (state) {
+        case meter::EncounterState::Wipe:     return "Wipe";
+        case meter::EncounterState::Complete: return "Clear";
+        default:                              return "Timeout";
+    }
+}
+
+uint32_t pull_outcome_color(meter::EncounterState state) {
+    switch (state) {
+        case meter::EncounterState::Wipe:     return colors::Danger;
+        case meter::EncounterState::Complete: return colors::WarningLight;
+        default:                              return colors::TextDim;
+    }
+}
+
+/// One selectable rail row with a badge flush right. The badge is drawn over the
+/// selectable, so the whole row stays clickable.
+bool rail_row(const char* label, bool selected, const char* badge, uint32_t badge_color) {
+    const float row_h = ImGui::GetTextLineHeight() + m(6.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign, ImVec2(0.0f, 0.5f));
+    const bool clicked = ImGui::Selectable(label, selected, ImGuiSelectableFlags_AllowOverlap,
+                                           ImVec2(0.0f, row_h));
+    ImGui::PopStyleVar();
+    ImGui::SameLine();
+    right_align(pill_width(badge));
+    pill(badge, badge_color);
+    return clicked;
+}
+
+/// The one place a pull is chosen: live at the top, then the archive grouped by
+/// duty. The tables beside it always show whatever is selected here.
+void render_pull_rail(AppState& app_state, const std::vector<meter::PullHistoryEntry>& pull_history,
+                      bool is_live, float width) {
+    CardOptions opts{};
+    begin_card("##PullRail", ImVec2(width, fill_h(0.0f)), opts);
+    const bool compact = width < m(180.0f);
+
+    const auto live_state = s_live_summary.state;
+    const char* live_badge = live_state == meter::EncounterState::InCombat ? "Active" : "Idle";
+    if (rail_row("Live##LivePull", is_live, live_badge,
+                 live_state == meter::EncounterState::InCombat ? colors::SuccessLight
+                                                               : colors::TextDim)) {
+        s_selected_pull_id = 0;
+    }
+    ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
+
+    if (pull_history.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        text_colored_u32(colors::TextFaint, "%s", "Finished pulls appear here.");
+        ImGui::PopTextWrapPos();
+        end_card();
+        return;
+    }
+
+    // The list scrolls on its own so the clear button stays pinned underneath.
+    const float footer_h = ImGui::GetFrameHeight() + m(8.0f);
+    ImGui::BeginChild("##PullList", ImVec2(0.0f, fill_h(0.0f) - footer_h), ImGuiChildFlags_None);
+
+    const auto selected_idx = find_pull_index(pull_history, s_selected_pull_id);
+    const auto groups = meter::group_pulls_by_zone(pull_history);
+    for (size_t g = 0; g < groups.size(); ++g) {
+        const auto& group = groups[g];
+        const bool holds_selection =
+            selected_idx && std::find(group.pulls.begin(), group.pulls.end(), *selected_idx)
+                                != group.pulls.end();
+
+        // Opened once so the newest duty (and whichever holds the current
+        // selection) starts expanded; after that the user's own toggling wins.
+        ImGui::PushID(static_cast<int>(group.zone_id));
+        ImGui::SetNextItemOpen(g == 0 || holds_selection, ImGuiCond_Once);
+        const std::string header = group.label + "  (" + std::to_string(group.pulls.size()) + ")";
+        ImGui::PushStyleColor(ImGuiCol_Text, v4(colors::TextMuted));
+        const bool open = ImGui::TreeNodeEx(header.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth);
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", group.label.c_str());
+        if (open) {
+            for (size_t idx : group.pulls) {
+                const auto& pull = pull_history[idx];
+                std::string label = "#" + std::to_string(pull.encounter_id);
+                if (!compact) {
+                    label += "  " + format_clock_time(pull.ended_at_unix_s) + "  " +
+                             format_duration(static_cast<uint64_t>(pull.duration_seconds));
+                }
+                label += "##Pull" + std::to_string(pull.encounter_id);
+                if (rail_row(label.c_str(), s_selected_pull_id == pull.encounter_id,
+                             pull_outcome_label(pull.state), pull_outcome_color(pull.state))) {
+                    s_selected_pull_id = pull.encounter_id;
+                }
+            }
+            ImGui::TreePop();
+        }
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+
+    ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
+    if (button(ICON_TRASH "  Clear##ClearPulls", ButtonKind::Danger, ButtonSize::Small)) {
+        app_state.clear_pull_history();
+        s_selected_pull_id = 0;
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear pull history");
+
+    end_card();
+}
+
 void render_top_bar(AppState& app_state, const meter::EncounterSummary& summary,
-                    const std::vector<meter::PullHistoryEntry>& pull_history, bool is_live) {
+                    const meter::PullHistoryEntry* archived) {
     CardOptions opts{};
     // Auto-height: the stat run and the actions wrap onto further lines on a
     // narrow window rather than being cut off by a fixed height.
     opts.auto_height = true;
     begin_card("##CombatTopBar", ImVec2(0.0f, 0.0f), opts);
 
-    const float row_y = ImGui::GetCursorPosY();
-    const auto selected_idx = find_pull_index(pull_history, s_selected_pull_id);
-
-    std::string current_pull_name = "Live encounter";
-    if (!is_live && selected_idx) {
-        const auto& sel = pull_history[*selected_idx];
-        std::string zone = meter::zone_label(sel.zone_id, sel.zone_name);
+    // What the tables below are showing, since the picker sits beside them.
+    std::string title = "Live encounter";
+    if (archived != nullptr) {
+        std::string zone = meter::zone_label(archived->zone_id, archived->zone_name);
         if (zone.empty()) zone = "Unknown zone";
-        current_pull_name = zone + "  -  Pull #" + std::to_string(sel.encounter_id);
+        title = zone + "  -  Pull #" + std::to_string(archived->encounter_id);
     }
+    ImGui::PushFont(bold_font());
+    text_colored_u32(colors::TextPrimary, "%s", title.c_str());
+    ImGui::PopFont();
+    ImGui::Dummy(ImVec2(0.0f, m(2.0f)));
 
-    // The popup carries duty names, which do not fit the closed control.
-    ImGui::SetNextWindowSizeConstraints(ImVec2(m(300.0f), 0.0f), ImVec2(m(600.0f), m(420.0f)));
-    ImGui::SetNextItemWidth(std::min(m(240.0f), ImGui::GetContentRegionAvail().x));
-    if (ImGui::BeginCombo("##PullSelector", current_pull_name.c_str())) {
-        if (ImGui::Selectable("Live encounter", is_live)) {
-            s_selected_pull_id = 0;
-        }
-
-        const auto groups = meter::group_pulls_by_zone(pull_history);
-        for (size_t g = 0; g < groups.size(); ++g) {
-            const auto& group = groups[g];
-            const bool holds_selection =
-                selected_idx && std::find(group.pulls.begin(), group.pulls.end(), *selected_idx)
-                                    != group.pulls.end();
-
-            // Opened once so the newest duty (and whichever holds the current
-            // selection) starts expanded; after that the user's own toggling wins.
-            ImGui::PushID(static_cast<int>(group.zone_id));
-            ImGui::SetNextItemOpen(g == 0 || holds_selection, ImGuiCond_Once);
-            const std::string header = group.label + "  (" + std::to_string(group.pulls.size()) + ")";
-            if (ImGui::TreeNodeEx(header.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth)) {
-                for (size_t idx : group.pulls) {
-                    const auto& pull = pull_history[idx];
-                    const std::string label =
-                        "Pull #" + std::to_string(pull.encounter_id) + "  (" +
-                        format_duration(static_cast<uint64_t>(pull.duration_seconds)) + ")";
-                    if (ImGui::Selectable(label.c_str(), s_selected_pull_id == pull.encounter_id)) {
-                        s_selected_pull_id = pull.encounter_id;
-                    }
-                }
-                ImGui::TreePop();
-            }
-            ImGui::PopID();
-        }
-        ImGui::EndCombo();
-    }
+    const float row_y = ImGui::GetCursorPosY();
 
     // Label-over-value pairs rather than a pipe-separated run of text: the numbers
     // are the point of this bar and need to read first. Each pair wraps to the next
@@ -152,11 +222,13 @@ void render_top_bar(AppState& app_state, const meter::EncounterSummary& summary,
     const float stat_w = m(96.0f);
     // Each pair is a group, and a group ends its line, so the pairs on one line
     // are re-aligned to that line's top rather than to the bar's first row.
-    float line_top = row_y - m(3.0f);
+    float line_top = row_y;
+    bool first = true;
     const auto stat = [&](const char* label, const std::string& value, uint32_t color) {
-        if (!same_line_if_room(stat_w, 20.0f)) {
+        if (!first && !same_line_if_room(stat_w, 20.0f)) {
             line_top = ImGui::GetCursorPosY();
         }
+        first = false;
         ImGui::BeginGroup();
         ImGui::SetCursorPosY(line_top);
         text_colored_u32(colors::TextDim, "%s", label);
@@ -334,83 +406,6 @@ void render_healing_table(const meter::EncounterSummary& summary, float height) 
 
         ImGui::TableSetColumnIndex(6);
         text_colored_u32(colors::TextMuted, "%s", format_percentage(c.overheal_pct()).c_str());
-    }
-
-    ImGui::EndTable();
-}
-
-void render_history_table(AppState& app_state,
-                          const std::vector<meter::PullHistoryEntry>& pull_history) {
-    right_align(m(metrics::ButtonMd));
-    if (button(ICON_TRASH "  Clear history", ButtonKind::Danger, ButtonSize::Medium)) {
-        app_state.clear_pull_history();
-        s_selected_pull_id = 0;
-    }
-
-    if (pull_history.empty()) {
-        empty_state(ICON_HISTORY, "No pulls archived yet",
-                    "Finished encounters are kept here for comparison.");
-        return;
-    }
-
-    const auto sizing = table_sizing(840.0f, kTableFlags);
-    if (!ImGui::BeginTable("##PullHistoryTable", 9, sizing.flags, ImVec2(0.0f, fill_h(0.0f)))) return;
-
-    ImGui::TableSetupColumn("Pull", ImGuiTableColumnFlags_WidthFixed, m(60.0f));
-    ImGui::TableSetupColumn("Ended", ImGuiTableColumnFlags_WidthFixed, m(70.0f));
-    ImGui::TableSetupColumn("Zone", sizing.flex_flags(), sizing.flex_width(110.0f, 1.0f));
-    ImGui::TableSetupColumn("Duration", ImGuiTableColumnFlags_WidthFixed, m(90.0f));
-    ImGui::TableSetupColumn("Raid DPS", ImGuiTableColumnFlags_WidthFixed, m(100.0f));
-    ImGui::TableSetupColumn("Raid HPS", ImGuiTableColumnFlags_WidthFixed, m(100.0f));
-    ImGui::TableSetupColumn("Total damage", ImGuiTableColumnFlags_WidthFixed, m(110.0f));
-    ImGui::TableSetupColumn("Outcome", ImGuiTableColumnFlags_WidthFixed, m(100.0f));
-    ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, m(metrics::ButtonSm) + m(10.0f));
-    ImGui::TableSetupScrollFreeze(0, 1);
-    table_headers_row();
-
-    for (size_t i = 0; i < pull_history.size(); ++i) {
-        const auto& pull = pull_history[i];
-        ImGui::TableNextRow();
-
-        ImGui::TableSetColumnIndex(0);
-        text_colored_u32(colors::TextMuted, "#%llu",
-                         static_cast<unsigned long long>(pull.encounter_id));
-
-        ImGui::TableSetColumnIndex(1);
-        text_colored_u32(colors::TextMuted, "%s", format_clock_time(pull.ended_at_unix_s).c_str());
-
-        ImGui::TableSetColumnIndex(2);
-        const std::string zone = meter::zone_label(pull.zone_id, pull.zone_name);
-        text_colored_u32(colors::TextMuted, "%s", zone.empty() ? "--" : zone.c_str());
-
-        ImGui::TableSetColumnIndex(3);
-        text_colored_u32(colors::TextBody, "%s",
-                         format_duration(static_cast<uint64_t>(pull.duration_seconds)).c_str());
-
-        ImGui::TableSetColumnIndex(4);
-        text_colored_u32(colors::AccentHover, "%s", format_dps(pull.total_dps).c_str());
-
-        ImGui::TableSetColumnIndex(5);
-        text_colored_u32(colors::SuccessLight, "%s", format_dps(pull.total_hps).c_str());
-
-        ImGui::TableSetColumnIndex(6);
-        text_colored_u32(colors::TextBody, "%s", format_damage(pull.total_damage).c_str());
-
-        ImGui::TableSetColumnIndex(7);
-        if (pull.state == meter::EncounterState::Wipe) {
-            pill("Wipe", colors::Danger);
-        } else if (pull.state == meter::EncounterState::Complete) {
-            pill("Clear", colors::WarningLight);
-        } else {
-            pill("Timeout", colors::TextDim);
-        }
-
-        ImGui::TableSetColumnIndex(8);
-        const std::string inspect_btn = std::string(ICON_SEARCH "  Inspect##") + std::to_string(i);
-        if (button(inspect_btn.c_str(), ButtonKind::Secondary, ButtonSize::Small)) {
-            s_selected_pull_id = pull.encounter_id;
-            s_jump_to_damage = true;
-        }
     }
 
     ImGui::EndTable();
@@ -650,6 +645,25 @@ float ranking_table_height() {
     return s_selected_drilldown_entity != 0 ? fill_h(0.0f) * 0.55f : fill_h(0.0f);
 }
 
+/// Rail on the left, the selected pull's top bar and ranking on the right. The
+/// rail narrows to pull numbers and badges on a small window.
+template <typename TableFn>
+void render_pull_view(AppState& app_state, const meter::EncounterSummary& summary,
+                      const std::vector<meter::PullHistoryEntry>& pull_history,
+                      std::optional<size_t> selected_index, const char* id, TableFn&& table) {
+    const float rail_w = ImGui::GetContentRegionAvail().x < m(760.0f) ? m(130.0f) : m(210.0f);
+    render_pull_rail(app_state, pull_history, !selected_index.has_value(), rail_w);
+    ImGui::SameLine(0.0f, m(metrics::Gutter));
+
+    ImGui::BeginChild(id, ImVec2(0.0f, fill_h(0.0f)), ImGuiChildFlags_None,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
+    render_top_bar(app_state, summary, selected_index ? &pull_history[*selected_index] : nullptr);
+    ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
+    table(summary, ranking_table_height());
+    render_drilldown(summary);
+    ImGui::EndChild();
+}
+
 } // namespace
 #endif
 
@@ -668,15 +682,15 @@ void render_view_combat(AppState& app_state) {
     const auto selected_index = find_pull_index(pull_history, s_selected_pull_id);
     const bool is_live = !selected_index.has_value();
 
+    // Live is snapshotted on the timer even while an archived pull is open, so
+    // the rail's live badge stays current.
     const auto now = std::chrono::steady_clock::now();
-    const bool stale = std::chrono::duration_cast<std::chrono::milliseconds>(
-                           now - s_last_snapshot).count() >= kSnapshotIntervalMs;
-    if (is_live) {
-        if (stale) {
-            s_live_summary = app_state.get_live_summary();
-            s_last_snapshot = now;
-        }
-    } else if (s_cached_pull_id != s_selected_pull_id) {
+    if (std::chrono::duration_cast<std::chrono::milliseconds>(now - s_last_snapshot).count() >=
+        kSnapshotIntervalMs) {
+        s_live_summary = app_state.get_live_summary();
+        s_last_snapshot = now;
+    }
+    if (!is_live && s_cached_pull_id != s_selected_pull_id) {
         // An archived pull never changes, so it is fetched once per selection
         // rather than on the live timer. The id only advances on a hit, or a
         // pull that failed to load would leave the tables showing its
@@ -689,31 +703,17 @@ void render_view_combat(AppState& app_state) {
 
     const meter::EncounterSummary& current_summary = is_live ? s_live_summary : s_selected_pull;
 
-    render_top_bar(app_state, current_summary, pull_history, is_live);
-    ImGui::Dummy(ImVec2(0.0f, m(2.0f)));
-
     if (ImGui::BeginTabBar("##CombatTabs", ImGuiTabBarFlags_None)) {
-        ImGuiTabItemFlags damage_flags = ImGuiTabItemFlags_None;
-        if (s_jump_to_damage) {
-            damage_flags = ImGuiTabItemFlags_SetSelected;
-            s_jump_to_damage = false;
-        }
-
-        if (ImGui::BeginTabItem(ICON_SWORDS "  Damage", nullptr, damage_flags)) {
+        if (ImGui::BeginTabItem(ICON_SWORDS "  Damage")) {
             ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
-            render_damage_table(current_summary, ranking_table_height());
-            render_drilldown(current_summary);
+            render_pull_view(app_state, current_summary, pull_history, selected_index,
+                             "##DamagePane", render_damage_table);
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem(ICON_HEART "  Healing")) {
             ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
-            render_healing_table(current_summary, ranking_table_height());
-            render_drilldown(current_summary);
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem(ICON_HISTORY "  Pull history")) {
-            ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
-            render_history_table(app_state, pull_history);
+            render_pull_view(app_state, current_summary, pull_history, selected_index,
+                             "##HealingPane", render_healing_table);
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem(ICON_SLIDERS "  Settings")) {
