@@ -226,18 +226,18 @@ std::vector<PullHistoryEntry> EncounterEngine::pull_history_index() const {
     index.reserve(m_pull_history.size());
     for (const auto& pull : m_pull_history) {
         index.push_back(PullHistoryEntry{
-            pull.encounter_id,
-            pull.zone_id,
-            pull.zone_name,
-            pull.ended_at_unix_s,
-            pull.duration_seconds,
-            pull.total_damage,
-            pull.total_effective_healing,
-            pull.total_dps,
-            pull.total_hps,
-            pull.combatants.size(),
-            pull.state,
-            pull.end_reason
+            .encounter_id = pull.encounter_id,
+            .zone_id = pull.zone_id,
+            .zone_name = pull.zone_name,
+            .ended_at_unix_s = pull.ended_at_unix_s,
+            .duration_seconds = pull.duration_seconds,
+            .total_damage = pull.total_damage,
+            .total_effective_healing = pull.total_effective_healing,
+            .total_dps = pull.total_dps,
+            .total_hps = pull.total_hps,
+            .combatant_count = pull.combatants.size(),
+            .state = pull.state,
+            .end_reason = pull.end_reason
         });
     }
     return index;

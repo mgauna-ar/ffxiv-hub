@@ -65,6 +65,14 @@ public:
     /// source, and not always, so targets are otherwise unidentifiable.
     void set_actor_resolver(std::function<void(uint32_t)> resolver) { m_actor_resolver = std::move(resolver); }
 
+    /// Same job for a source the hook did hand a character pointer for. The
+    /// pointer path is the common one, and registering it locally is not enough:
+    /// the desktop app runs its own engine and only ever learns a name from an
+    /// ActorInfo packet, so that read has to reach the wire too.
+    void set_actor_object_resolver(std::function<void(const void*)> resolver) {
+        m_actor_object_resolver = std::move(resolver);
+    }
+
     /// Non-owning pointer to the in-game overlay this plugin drives via config load/commands.
     void set_overlay(CombatOverlay* overlay) noexcept { m_overlay = overlay; }
 
@@ -79,6 +87,7 @@ private:
     bool m_initialized{false};
     ipc::PacketRingBuffer* m_ring_buffer{nullptr};
     std::function<void(uint32_t)> m_actor_resolver;
+    std::function<void(const void*)> m_actor_object_resolver;
     CombatOverlay* m_overlay{nullptr};
     GameStateProvider* m_game_state{nullptr};
     uint32_t m_sequence{0};

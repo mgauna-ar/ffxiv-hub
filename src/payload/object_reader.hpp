@@ -31,8 +31,14 @@ public:
     bool initialize();
     bool read_character(uint32_t entity_id, ipc::ActorInfoPacket& out_packet);
     void inspect_and_sync_actor(uint32_t entity_id, meter::CombatantRegistry* registry = nullptr);
-    void inspect_and_sync_actor_direct(void* character_ptr, meter::CombatantRegistry* registry = nullptr);
+    void inspect_and_sync_actor_direct(const void* character_ptr, meter::CombatantRegistry* registry = nullptr);
     void sync_party(meter::CombatantRegistry* registry = nullptr);
+
+    /// Drops every cached actor, party and territory value so the next read
+    /// republishes them. The caches exist to keep the same packet off the wire
+    /// twice, which also means a listener that reconnects mid-session would
+    /// otherwise never be told any name it missed.
+    void invalidate_cache();
 
     /// Territory the party is in as of the last sync_party(); 0 when unknown
     /// (solo play leaves the party list empty).
@@ -43,6 +49,10 @@ public:
 
 private:
     using FnGetObjectByEntityId = game::CharacterObject*(void*, uint32_t);
+
+    /// Cache, register and publish a freshly read actor. Returns false when the
+    /// cached copy is identical, i.e. nothing was sent.
+    bool publish_actor(const ipc::ActorInfoPacket& packet, meter::CombatantRegistry* registry);
 
     [[maybe_unused]] FnGetObjectByEntityId* m_fp_get_object_by_id{nullptr};
     [[maybe_unused]] uintptr_t m_game_object_mgr_addr{0};

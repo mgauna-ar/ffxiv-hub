@@ -153,6 +153,14 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
         }
     );
 
+    combat_plugin->set_actor_object_resolver(
+        [reader = object_reader.get(), plugin = combat_plugin.get()](const void* character) {
+            plugin->engine().with_registry([&](hub::meter::CombatantRegistry& registry) {
+                reader->inspect_and_sync_actor_direct(character, &registry);
+            });
+        }
+    );
+
     // 7. Install DirectX 11 Hook (Present & ResizeBuffers)
     const bool dx11_ok = hub::payload::Dx11Hook::instance().install();
     hub::os::Logger::info(std::string("Dx11Hook::install() -> ") + (dx11_ok ? "ok" : "FAILED"));
@@ -189,6 +197,12 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
         if (connected != prev_connected) {
             hub::os::Logger::info(std::string("Pipe connection state changed -> ") + (connected ? "connected" : "disconnected"));
             latency_plugin->set_connected(connected);
+            if (connected) {
+                // Whoever just connected has none of the names, party or zone
+                // this session already published. The caches suppress repeats,
+                // so without this they would never be sent again.
+                object_reader->invalidate_cache();
+            }
             if (!connected) {
                 latency_overlay_prev_visible = latency_overlay->is_visible();
                 latency_overlay->set_visible(false);

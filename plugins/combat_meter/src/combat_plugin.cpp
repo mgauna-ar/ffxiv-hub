@@ -3,6 +3,8 @@
 #include "meter/combat_overlay.hpp"
 #include "common/config/json.hpp"
 #include "hub/game_definitions.hpp"
+#include <cstring>
+#include <string>
 
 namespace hub::meter {
 
@@ -137,18 +139,29 @@ void CombatPlugin::on_receive_action_effect(
     } else {
         const auto* chr = reinterpret_cast<const game::CharacterObject*>(source_character);
         if (chr->entity_id == source_entity_id) {
-            const uint32_t owner_id = normalize_owner_id(chr->owner_id);
-            m_engine.with_registry([&](CombatantRegistry& registry) {
-                registry.register_actor(
-                    chr->entity_id,
-                    chr->name,
-                    static_cast<Job>(chr->class_job),
-                    owner_id,
-                    actor_type_from_object_kind(chr->object_kind, owner_id),
-                    chr->max_hp,
-                    chr->current_hp
-                );
-            });
+            if (m_actor_object_resolver) {
+                // Registers *and* publishes, so the desktop app's engine learns
+                // the name too. Without this the app only ever sees the source
+                // as Entity_<id>, which its pull history then archives forever.
+                m_actor_object_resolver(source_character);
+            } else {
+                const uint32_t owner_id = normalize_owner_id(chr->owner_id);
+                // Capped to what an ActorInfo packet can carry, so the two
+                // engines cannot end up disagreeing on a long name.
+                const std::string name(
+                    chr->name, strnlen(chr->name, ipc::MAX_ACTOR_NAME_LEN - 1));
+                m_engine.with_registry([&](CombatantRegistry& registry) {
+                    registry.register_actor(
+                        chr->entity_id,
+                        name,
+                        static_cast<Job>(chr->class_job),
+                        owner_id,
+                        actor_type_from_object_kind(chr->object_kind, owner_id),
+                        chr->max_hp,
+                        chr->current_hp
+                    );
+                });
+            }
         }
     }
 

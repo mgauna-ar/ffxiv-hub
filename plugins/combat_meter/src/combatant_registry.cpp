@@ -248,13 +248,10 @@ void CombatantRegistry::sync_party(const ipc::PartySyncPacket& packet) {
         }
     }
 
-    if (count > 0 && packet.entity_ids[0] != 0 && m_local_player_id == 0) {
-        m_local_player_id = packet.entity_ids[0];
-        auto lp = m_actors.find(m_local_player_id);
-        if (lp != m_actors.end()) {
-            lp->second.is_local_player = true;
-        }
-    }
+    // Recomputed every sync rather than latched once: the id from the previous
+    // party outlives that party otherwise, and keeps flagging a stranger as the
+    // local player for the rest of the session.
+    set_local_player((count > 0) ? packet.entity_ids[0] : 0);
 }
 
 void CombatantRegistry::set_party_members(const std::vector<EntityId>& member_ids) {

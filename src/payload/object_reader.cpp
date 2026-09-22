@@ -2,8 +2,103 @@
 #include "meter/combatant_registry.hpp"
 #include "common/sigscan.hpp"
 #include "common/pe_scanner.hpp"
+#include "hub/game/entity.hpp"
 #include <chrono>
 #include <cstring>
+
+namespace hub::payload {
+
+namespace detail {
+
+/// Field extraction for a Character object. Reading the struct needs no platform
+/// support; only walking a pointer the game handed us does, so Windows wraps this
+/// in SEH and the mock build calls it directly.
+bool extract_character_fields(const game::CharacterObject* obj, ipc::ActorInfoPacket& out) {
+    if (obj == nullptr) return false;
+
+    out.entity_id = obj->entity_id;
+    if (!hub::game::is_real_entity_id(out.entity_id)) return false;
+
+    out.owner_id = (obj->owner_id != hub::game::NO_ENTITY_ID) ? obj->owner_id : 0;
+    out.job_id = obj->class_job;
+    out.max_hp = obj->max_hp;
+    out.current_hp = obj->current_hp;
+
+    if (obj->object_kind == 5 || (out.owner_id != 0)) {
+        out.actor_type = static_cast<uint8_t>(meter::ActorType::Pet);
+    } else if (obj->object_kind == 1) {
+        out.actor_type = static_cast<uint8_t>(meter::ActorType::Player);
+    } else {
+        out.actor_type = static_cast<uint8_t>(meter::ActorType::Monster);
+    }
+
+    std::memcpy(out.name, obj->name, sizeof(out.name) - 1);
+    out.name[sizeof(out.name) - 1] = '\0';
+    return true;
+}
+
+} // namespace detail
+
+bool ObjectReader::publish_actor(const ipc::ActorInfoPacket& packet, meter::CombatantRegistry* registry) {
+    bool changed = true;
+    {
+        std::lock_guard<std::mutex> lock(m_cache_mutex);
+        auto it = m_actor_cache.find(packet.entity_id);
+        if (it != m_actor_cache.end()) {
+            changed = it->second.owner_id != packet.owner_id ||
+                      it->second.job_id != packet.job_id ||
+                      it->second.max_hp != packet.max_hp ||
+                      it->second.name != packet.name;
+        }
+        m_actor_cache[packet.entity_id] = CachedActor{
+            packet.owner_id, packet.job_id, packet.max_hp, packet.name,
+            std::chrono::steady_clock::now()
+        };
+    }
+    if (!changed) {
+        return false;
+    }
+
+    if (registry) {
+        registry->register_actor(
+            packet.entity_id,
+            packet.name,
+            static_cast<meter::Job>(packet.job_id),
+            packet.owner_id,
+            static_cast<meter::ActorType>(packet.actor_type),
+            packet.max_hp,
+            packet.current_hp
+        );
+    }
+
+    if (m_ring_buffer) {
+        m_ring_buffer->push(ipc::serialize_typed_packet(
+            PluginId::CombatMeter, MessageType::CombatActorInfo, 0, packet
+        ));
+    }
+    return true;
+}
+
+void ObjectReader::inspect_and_sync_actor_direct(const void* character_ptr, meter::CombatantRegistry* registry) {
+    if (!character_ptr) return;
+    ipc::ActorInfoPacket packet{};
+    // The action hook fires several times a second per actor, so this goes
+    // through the same cache as the object-table path rather than pushing an
+    // identical packet on every effect.
+    if (detail::extract_character_fields(
+            reinterpret_cast<const game::CharacterObject*>(character_ptr), packet)) {
+        publish_actor(packet, registry);
+    }
+}
+
+void ObjectReader::invalidate_cache() {
+    std::lock_guard<std::mutex> lock(m_cache_mutex);
+    m_actor_cache.clear();
+    m_last_party_sync = ipc::PartySyncPacket{};
+    m_last_territory = 0;
+}
+
+} // namespace hub::payload
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -18,31 +113,11 @@ namespace {
 using FnGetObjectByEntityId = game::CharacterObject*(void*, uint32_t);
 
 static bool SafeReadCharacterFromObject(
-    game::CharacterObject* obj,
+    const game::CharacterObject* obj,
     ipc::ActorInfoPacket& out
 ) {
     __try {
-        if (obj == nullptr) return false;
-
-        out.entity_id = obj->entity_id;
-        if (out.entity_id == 0 || out.entity_id == 0xE0000000) return false;
-
-        out.owner_id = (obj->owner_id != 0xE0000000) ? obj->owner_id : 0;
-        out.job_id = obj->class_job;
-        out.max_hp = obj->max_hp;
-        out.current_hp = obj->current_hp;
-
-        if (obj->object_kind == 5 || (out.owner_id != 0)) {
-            out.actor_type = static_cast<uint8_t>(meter::ActorType::Pet);
-        } else if (obj->object_kind == 1) {
-            out.actor_type = static_cast<uint8_t>(meter::ActorType::Player);
-        } else {
-            out.actor_type = static_cast<uint8_t>(meter::ActorType::Monster);
-        }
-
-        std::memcpy(out.name, obj->name, sizeof(out.name) - 1);
-        out.name[sizeof(out.name) - 1] = '\0';
-        return true;
+        return detail::extract_character_fields(obj, out);
     }
     __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
@@ -215,65 +290,7 @@ void ObjectReader::inspect_and_sync_actor(uint32_t entity_id, meter::CombatantRe
 
     ipc::ActorInfoPacket packet{};
     if (read_character(entity_id, packet)) {
-        bool changed = true;
-        {
-            std::lock_guard<std::mutex> lock(m_cache_mutex);
-            auto it = m_actor_cache.find(entity_id);
-            if (it != m_actor_cache.end()) {
-                changed = it->second.owner_id != packet.owner_id ||
-                          it->second.job_id != packet.job_id ||
-                          it->second.max_hp != packet.max_hp ||
-                          it->second.name != packet.name;
-            }
-            m_actor_cache[entity_id] =
-                CachedActor{packet.owner_id, packet.job_id, packet.max_hp, packet.name, now};
-        }
-        if (!changed) {
-            return;
-        }
-        if (registry) {
-            registry->register_actor(
-                packet.entity_id,
-                packet.name,
-                static_cast<meter::Job>(packet.job_id),
-                packet.owner_id,
-                static_cast<meter::ActorType>(packet.actor_type),
-                packet.max_hp,
-                packet.current_hp
-            );
-        }
-
-        if (m_ring_buffer) {
-            std::vector<uint8_t> bytes = ipc::serialize_typed_packet(
-                PluginId::CombatMeter, MessageType::CombatActorInfo, 0, packet
-            );
-            m_ring_buffer->push(bytes);
-        }
-    }
-}
-
-void ObjectReader::inspect_and_sync_actor_direct(void* character_ptr, meter::CombatantRegistry* registry) {
-    if (!character_ptr) return;
-    ipc::ActorInfoPacket packet{};
-    if (SafeReadCharacterFromObject(reinterpret_cast<game::CharacterObject*>(character_ptr), packet)) {
-        if (registry) {
-            registry->register_actor(
-                packet.entity_id,
-                packet.name,
-                static_cast<meter::Job>(packet.job_id),
-                packet.owner_id,
-                static_cast<meter::ActorType>(packet.actor_type),
-                packet.max_hp,
-                packet.current_hp
-            );
-        }
-
-        if (m_ring_buffer) {
-            std::vector<uint8_t> bytes = ipc::serialize_typed_packet(
-                PluginId::CombatMeter, MessageType::CombatActorInfo, 0, packet
-            );
-            m_ring_buffer->push(bytes);
-        }
+        publish_actor(packet, registry);
     }
 }
 
@@ -408,7 +425,6 @@ bool ObjectReader::read_character(uint32_t, ipc::ActorInfoPacket&) {
 }
 
 void ObjectReader::inspect_and_sync_actor(uint32_t, meter::CombatantRegistry*) {}
-void ObjectReader::inspect_and_sync_actor_direct(void*, meter::CombatantRegistry*) {}
 void ObjectReader::sync_party(meter::CombatantRegistry*) {}
 
 } // namespace hub::payload

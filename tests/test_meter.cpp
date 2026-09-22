@@ -9,6 +9,7 @@
 #include "meter/pull_grouping.hpp"
 #include "meter/combat_plugin.hpp"
 #include "common/config/json.hpp"
+#include "payload/object_reader.hpp"
 #include <algorithm>
 #include <array>
 #include <vector>
@@ -1410,4 +1411,273 @@ TEST_CASE(MeterEngine, EncounterIdsSurviveEviction) {
     TEST_ASSERT_EQ(index.size(), 2u);
     TEST_ASSERT_EQ(index[0].encounter_id, 2u);
     TEST_ASSERT_EQ(index[1].encounter_id, 3u);
+}
+
+// ---------------------------------------------------------------------------
+// Actor info reaching the desktop app. The app runs its own engine and learns a
+// name only from an ActorInfo packet, so anything the payload resolves locally
+// but never publishes shows up there as Entity_<id> - and, once a pull closes,
+// stays that way in the archive.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// Every ActorInfo packet sitting in a ring buffer, decoded.
+std::vector<hub::ipc::ActorInfoPacket> drain_actor_info(hub::ipc::PacketRingBuffer& ring) {
+    std::vector<hub::ipc::ActorInfoPacket> out;
+    std::vector<uint8_t> frame;
+    while (ring.pop(frame)) {
+        const auto header = hub::ipc::deserialize_header(frame);
+        if (!header) continue;
+        if (header->message_type != static_cast<uint16_t>(hub::MessageType::CombatActorInfo)) continue;
+        if (frame.size() < sizeof(hub::ipc::PacketHeader) + sizeof(hub::ipc::ActorInfoPacket)) continue;
+        hub::ipc::ActorInfoPacket actor{};
+        std::memcpy(&actor, frame.data() + sizeof(hub::ipc::PacketHeader), sizeof(actor));
+        out.push_back(actor);
+    }
+    return out;
+}
+
+/// Wires a plugin the way dllmain does, so the source-character path publishes
+/// instead of only registering locally.
+void attach_object_resolver(CombatPlugin& plugin, hub::payload::ObjectReader& reader) {
+    plugin.set_actor_object_resolver([&](const void* character) {
+        plugin.engine().with_registry([&](CombatantRegistry& registry) {
+            reader.inspect_and_sync_actor_direct(character, &registry);
+        });
+    });
+}
+
+} // namespace
+
+TEST_CASE(MeterPlugin, PublishesActorInfoForSourceWithCharacterPointer) {
+    // The hook usually does hand over a source character, and that branch used
+    // to register the name in-process only: the in-game overlay showed it while
+    // the desktop app showed Entity_<id> for the very same pull.
+    hub::ipc::PacketRingBuffer ring;
+    hub::payload::ObjectReader reader(&ring);
+
+    CombatPlugin plugin;
+    plugin.initialize();
+    plugin.set_ring_buffer(&ring);
+    attach_object_resolver(plugin, reader);
+
+    hub::game::ActionEffectHeader header{};
+    header.animation_target_id = 0x40001;
+    header.action_id = 31;
+    header.num_targets = 1;
+
+    std::array<hub::game::ActionEffectEntry, 8> entries{};
+    entries[0].effect_type = 0x03; // Damage
+    entries[0].value = 25000;
+
+    hub::game::CharacterObject chr{};
+    chr.entity_id = 777;
+    const std::string test_name = "Krile Baldesion";
+    std::copy(test_name.begin(), test_name.end(), chr.name);
+    chr.class_job = static_cast<uint8_t>(Job::PCT);
+    chr.object_kind = 1;       // Player
+    chr.owner_id = 0xE0000000; // Game's "no owner" sentinel
+    chr.current_hp = 50000;
+    chr.max_hp = 50000;
+
+    plugin.on_receive_action_effect(777, &chr, &header, entries.data(), nullptr);
+
+    // Still registered locally for the in-game overlay.
+    const auto* actor = plugin.engine().registry().find_actor(777);
+    TEST_ASSERT(actor != nullptr);
+    TEST_ASSERT_EQ(actor->name, test_name);
+
+    const auto published = drain_actor_info(ring);
+    const hub::ipc::ActorInfoPacket* source = nullptr;
+    for (const auto& p : published) {
+        if (p.entity_id == 777) source = &p;
+    }
+    TEST_ASSERT(source != nullptr);
+    TEST_ASSERT_EQ(std::string(source->name), test_name);
+    TEST_ASSERT_EQ(source->job_id, static_cast<uint32_t>(Job::PCT));
+    TEST_ASSERT_EQ(source->actor_type, static_cast<uint8_t>(ActorType::Player));
+    TEST_ASSERT_EQ(source->owner_id, 0u);
+
+    plugin.shutdown();
+}
+
+TEST_CASE(MeterPlugin, RepublishesActorInfoOnlyWhenItChanges) {
+    // ReceiveActionEffect fires several times a second per actor, so the
+    // publishing path has to dedupe or it floods the pipe.
+    hub::ipc::PacketRingBuffer ring;
+    hub::payload::ObjectReader reader(&ring);
+
+    CombatPlugin plugin;
+    plugin.initialize();
+    plugin.set_ring_buffer(&ring);
+    attach_object_resolver(plugin, reader);
+
+    hub::game::ActionEffectHeader header{};
+    header.animation_target_id = 0x40001;
+    header.action_id = 31;
+    header.num_targets = 1;
+
+    std::array<hub::game::ActionEffectEntry, 8> entries{};
+    entries[0].effect_type = 0x03;
+    entries[0].value = 1000;
+
+    hub::game::CharacterObject chr{};
+    chr.entity_id = 777;
+    const std::string test_name = "Krile";
+    std::copy(test_name.begin(), test_name.end(), chr.name);
+    chr.class_job = static_cast<uint8_t>(Job::PCT);
+    chr.object_kind = 1;
+    chr.owner_id = 0xE0000000;
+    chr.current_hp = 50000;
+    chr.max_hp = 50000;
+
+    for (int i = 0; i < 5; ++i) {
+        plugin.on_receive_action_effect(777, &chr, &header, entries.data(), nullptr);
+    }
+
+    size_t for_source = 0;
+    for (const auto& p : drain_actor_info(ring)) {
+        if (p.entity_id == 777) ++for_source;
+    }
+    TEST_ASSERT_EQ(for_source, 1u);
+
+    // A job change is new information and has to get through.
+    chr.class_job = static_cast<uint8_t>(Job::WAR);
+    plugin.on_receive_action_effect(777, &chr, &header, entries.data(), nullptr);
+
+    for_source = 0;
+    for (const auto& p : drain_actor_info(ring)) {
+        if (p.entity_id == 777) ++for_source;
+    }
+    TEST_ASSERT_EQ(for_source, 1u);
+
+    plugin.shutdown();
+}
+
+TEST_CASE(MeterPlugin, ArchivedPullCarriesNameIntoMirrorEngine) {
+    // End to end over the wire, without a game: what the payload publishes has
+    // to be enough for the app's engine to archive a real name. The archive is a
+    // value snapshot, so a name missing when the pull closes is missing forever.
+    hub::ipc::PacketRingBuffer ring;
+    hub::payload::ObjectReader reader(&ring);
+
+    CombatPlugin plugin;
+    plugin.initialize();
+    plugin.set_ring_buffer(&ring);
+    attach_object_resolver(plugin, reader);
+
+    hub::game::ActionEffectHeader header{};
+    header.animation_target_id = 0x40001;
+    header.action_id = 31;
+    header.num_targets = 1;
+
+    std::array<hub::game::ActionEffectEntry, 8> entries{};
+    entries[0].effect_type = 0x03;
+    entries[0].value = 25000;
+
+    hub::game::CharacterObject chr{};
+    chr.entity_id = 777;
+    const std::string test_name = "Krile";
+    std::copy(test_name.begin(), test_name.end(), chr.name);
+    chr.class_job = static_cast<uint8_t>(Job::PCT);
+    chr.object_kind = 1;
+    chr.owner_id = 0xE0000000;
+    chr.current_hp = 50000;
+    chr.max_hp = 50000;
+
+    // Solo: no party sync, so the party list cannot supply the name either.
+    plugin.on_receive_action_effect(777, &chr, &header, entries.data(), nullptr);
+
+    // Replay everything the payload put on the wire into the app's own engine.
+    EncounterEngine mirror;
+    std::vector<uint8_t> frame;
+    while (ring.pop(frame)) {
+        const auto hdr = hub::ipc::deserialize_header(frame);
+        if (!hdr) continue;
+        const auto* body = frame.data() + sizeof(hub::ipc::PacketHeader);
+        if (hdr->message_type == static_cast<uint16_t>(hub::MessageType::CombatActorInfo)) {
+            hub::ipc::ActorInfoPacket actor{};
+            std::memcpy(&actor, body, sizeof(actor));
+            mirror.process_actor_info(actor);
+        } else if (hdr->message_type == static_cast<uint16_t>(hub::MessageType::CombatAction)) {
+            hub::ipc::CombatActionPacket action{};
+            std::memcpy(&action, body, sizeof(action));
+            mirror.process_action(action);
+        }
+    }
+
+    mirror.end_encounter(EncounterEndReason::Manual);
+
+    const auto history = mirror.pull_history();
+    TEST_ASSERT_EQ(history.size(), 1u);
+
+    const CombatantStats* row = nullptr;
+    for (const auto& c : history[0].combatants) {
+        if (c.entity_id == 777) row = &c;
+    }
+    TEST_ASSERT(row != nullptr);
+    TEST_ASSERT_EQ(row->name, test_name);
+    TEST_ASSERT_EQ(row->job, Job::PCT);
+
+    plugin.shutdown();
+}
+
+TEST_CASE(MeterRegistry, LocalPlayerFollowsTheCurrentParty) {
+    // The id used to be latched on the first sync and never revisited, so it
+    // outlived the party it came from and kept flagging a stranger.
+    CombatantRegistry reg;
+
+    hub::ipc::PartySyncPacket first{};
+    first.party_count = 2;
+    first.entity_ids[0] = 1001; first.job_ids[0] = static_cast<uint32_t>(Job::WAR);
+    first.entity_ids[1] = 1002; first.job_ids[1] = static_cast<uint32_t>(Job::WHM);
+    reg.sync_party(first);
+    TEST_ASSERT_EQ(reg.local_player_id(), 1001u);
+
+    hub::ipc::PartySyncPacket second{};
+    second.party_count = 2;
+    second.entity_ids[0] = 2001; second.job_ids[0] = static_cast<uint32_t>(Job::PCT);
+    second.entity_ids[1] = 2002; second.job_ids[1] = static_cast<uint32_t>(Job::SGE);
+    reg.sync_party(second);
+    TEST_ASSERT_EQ(reg.local_player_id(), 2001u);
+
+    const auto* stale = reg.find_actor(1001);
+    TEST_ASSERT(stale != nullptr);
+    TEST_ASSERT_FALSE(stale->is_local_player);
+
+    // Disbanding leaves nobody to point at.
+    hub::ipc::PartySyncPacket empty{};
+    reg.sync_party(empty);
+    TEST_ASSERT_EQ(reg.local_player_id(), 0u);
+}
+
+TEST_CASE(PayloadObjectReader, InvalidateCacheRepublishesEverything) {
+    // A desktop app that reconnects mid-session has none of the names already
+    // sent, and the dedupe cache would otherwise never offer them again.
+    hub::ipc::PacketRingBuffer ring;
+    hub::payload::ObjectReader reader(&ring);
+
+    hub::game::CharacterObject chr{};
+    chr.entity_id = 777;
+    const std::string test_name = "Krile";
+    std::copy(test_name.begin(), test_name.end(), chr.name);
+    chr.class_job = static_cast<uint8_t>(Job::PCT);
+    chr.object_kind = 1;
+    chr.owner_id = 0xE0000000;
+    chr.current_hp = 50000;
+    chr.max_hp = 50000;
+
+    reader.inspect_and_sync_actor_direct(&chr, nullptr);
+    TEST_ASSERT_EQ(drain_actor_info(ring).size(), 1u);
+
+    reader.inspect_and_sync_actor_direct(&chr, nullptr);
+    TEST_ASSERT_EQ(drain_actor_info(ring).size(), 0u);
+
+    reader.invalidate_cache();
+    reader.inspect_and_sync_actor_direct(&chr, nullptr);
+
+    const auto republished = drain_actor_info(ring);
+    TEST_ASSERT_EQ(republished.size(), 1u);
+    TEST_ASSERT_EQ(std::string(republished[0].name), test_name);
 }

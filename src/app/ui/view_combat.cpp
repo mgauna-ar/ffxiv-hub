@@ -676,12 +676,15 @@ void render_view_combat(AppState& app_state) {
             s_live_summary = app_state.get_live_summary();
             s_last_snapshot = now;
         }
-    } else if (stale || s_cached_pull_id != s_selected_pull_id) {
+    } else if (s_cached_pull_id != s_selected_pull_id) {
+        // An archived pull never changes, so it is fetched once per selection
+        // rather than on the live timer. The id only advances on a hit, or a
+        // pull that failed to load would leave the tables showing its
+        // predecessor under the new pull's header.
         if (auto pull = app_state.get_pull(*selected_index)) {
             s_selected_pull = std::move(*pull);
+            s_cached_pull_id = s_selected_pull_id;
         }
-        s_cached_pull_id = s_selected_pull_id;
-        s_last_snapshot = now;
     }
 
     const meter::EncounterSummary& current_summary = is_live ? s_live_summary : s_selected_pull;
