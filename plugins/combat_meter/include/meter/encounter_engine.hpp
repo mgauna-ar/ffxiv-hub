@@ -48,6 +48,10 @@ public:
 
     /// Event processors for incoming telemetry
     void process_action(const ipc::CombatActionPacket& packet, TimePoint now = std::chrono::steady_clock::now());
+
+    /// True when this effect is enough to open an encounter, i.e. damage that
+    /// landed. Exposed so the rule can be asserted directly.
+    [[nodiscard]] static bool starts_encounter(const ipc::CombatActionPacket& packet) noexcept;
     void process_status_tick(const ipc::StatusTickPacket& packet, TimePoint now = std::chrono::steady_clock::now());
     void process_actor_info(const ipc::ActorInfoPacket& packet, TimePoint now = std::chrono::steady_clock::now());
     void process_party_sync(const ipc::PartySyncPacket& packet);

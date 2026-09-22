@@ -12,9 +12,17 @@ app, or from its card on the dashboard.
 
 ### Starting and ending a pull
 
-An encounter starts on the first direct offensive or healing action. Damage-over-time and
-heal-over-time ticks never start one — otherwise a lingering DoT on a mob you walked away
-from would open a pull on its own.
+An encounter starts on the first direct action that deals damage. Blocked and parried
+hits count, since those are mitigated rather than avoided.
+
+Healing, shields, buffs, debuffs and whiffs never start one. Prepull topping-off and
+prepotting is preparation, not combat, and opening a pull on it meant the clock was
+already running — and the healer already ranked — before anyone had touched the boss.
+Damage-over-time and heal-over-time ticks never start one either, or a lingering DoT on a
+mob you walked away from would open a pull on its own.
+
+Once the pull is underway, healing counts as normal, both toward HPS and as activity that
+holds off the inactivity timeout.
 
 It ends in one of four ways:
 

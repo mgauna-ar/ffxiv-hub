@@ -6,6 +6,24 @@ namespace hub::meter {
 EncounterEngine::EncounterEngine(double inactivity_timeout_seconds)
     : m_inactivity_timeout_seconds(inactivity_timeout_seconds) {}
 
+/// Whether an effect is the first blow of a pull. Only damage that actually
+/// landed counts: a heal, shield or buff before the pull is preparation, not
+/// combat, and starting on one opened an encounter whose clock was already
+/// running by the time anyone hit the boss.
+bool EncounterEngine::starts_encounter(const ipc::CombatActionPacket& packet) noexcept {
+    if (packet.damage == 0) {
+        return false;
+    }
+    switch (static_cast<EffectType>(packet.effect_type)) {
+        case EffectType::Damage:
+        case EffectType::Blocked:
+        case EffectType::Parried:
+            return true;
+        default:
+            return false;
+    }
+}
+
 void EncounterEngine::process_action(const ipc::CombatActionPacket& packet, TimePoint now) {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
 
@@ -17,8 +35,7 @@ void EncounterEngine::process_action(const ipc::CombatActionPacket& packet, Time
         if (m_registry.is_party_wiped()) {
             return;
         }
-        const auto effect = static_cast<EffectType>(packet.effect_type);
-        if (effect == EffectType::Damage || effect == EffectType::Heal || packet.damage > 0) {
+        if (starts_encounter(packet)) {
             start_encounter_locked(now, packet.timestamp_us);
         }
     }

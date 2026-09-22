@@ -1681,3 +1681,77 @@ TEST_CASE(PayloadObjectReader, InvalidateCacheRepublishesEverything) {
     TEST_ASSERT_EQ(republished.size(), 1u);
     TEST_ASSERT_EQ(std::string(republished[0].name), test_name);
 }
+
+// ---------------------------------------------------------------------------
+// What opens a pull. Prepull healing, shielding and buffing is preparation, and
+// starting the clock on it meant the fight was already seconds old - with a
+// healer's name at the top of a table nobody had hit anything in yet.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+hub::ipc::CombatActionPacket effect_packet(EffectType effect, uint32_t damage, uint32_t heal) {
+    hub::ipc::CombatActionPacket pkt{};
+    pkt.source_id = 200;
+    pkt.target_id = 100;
+    pkt.action_id = 135;
+    pkt.damage = damage;
+    pkt.effective_heal = heal;
+    pkt.effect_type = static_cast<uint16_t>(effect);
+    return pkt;
+}
+
+} // namespace
+
+TEST_CASE(MeterEngine, PrepullHealDoesNotStartEncounter) {
+    EncounterEngine engine;
+
+    engine.process_action(effect_packet(EffectType::Heal, 0, 8000));
+    TEST_ASSERT_FALSE(engine.in_combat());
+
+    // Nothing was banked either: the heal landed before the pull.
+    TEST_ASSERT_EQ(engine.accumulator().total_healing(), 0u);
+
+    // The first real hit is what opens it.
+    engine.process_action(effect_packet(EffectType::Damage, 25000, 0));
+    TEST_ASSERT_TRUE(engine.in_combat());
+    TEST_ASSERT_EQ(engine.accumulator().total_damage(), 25000u);
+}
+
+TEST_CASE(MeterEngine, OnlyLandedDamageOpensAnEncounter) {
+    // Buffs, debuffs and whiffs are not the start of a fight either.
+    for (const auto& pkt : {
+             effect_packet(EffectType::Heal, 0, 8000),
+             effect_packet(EffectType::Buff, 0, 0),
+             effect_packet(EffectType::Debuff, 0, 0),
+             effect_packet(EffectType::Miss, 0, 0),
+             effect_packet(EffectType::Damage, 0, 0),
+         }) {
+        EncounterEngine engine;
+        engine.process_action(pkt);
+        TEST_ASSERT_FALSE(engine.in_combat());
+    }
+
+    // A blocked or parried hit is mitigated, not avoided, so it still counts.
+    for (const auto& pkt : {
+             effect_packet(EffectType::Damage, 100, 0),
+             effect_packet(EffectType::Blocked, 100, 0),
+             effect_packet(EffectType::Parried, 100, 0),
+         }) {
+        EncounterEngine engine;
+        engine.process_action(pkt);
+        TEST_ASSERT_TRUE(engine.in_combat());
+    }
+}
+
+TEST_CASE(MeterEngine, HealingStillCountsOnceTheFightIsUnderway) {
+    // The start rule must not make healers invisible mid-fight.
+    EncounterEngine engine;
+
+    engine.process_action(effect_packet(EffectType::Damage, 25000, 0));
+    TEST_ASSERT_TRUE(engine.in_combat());
+
+    engine.process_action(effect_packet(EffectType::Heal, 0, 8000));
+    TEST_ASSERT_EQ(engine.accumulator().total_healing(), 8000u);
+    TEST_ASSERT_TRUE(engine.in_combat());
+}
