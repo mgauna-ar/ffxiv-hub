@@ -86,6 +86,16 @@ public:
         return m_plugins;
     }
 
+    /// Config section a plugin's settings live under, or nullptr for an id that
+    /// owns none. The only place the id -> section mapping is written down.
+    [[nodiscard]] static const char* plugin_config_section(PluginId id) noexcept;
+
+    /// Master switch for a plugin: persists the choice, mirrors it into the
+    /// registered-plugin list, and tells the payload to stop or resume.
+    void set_plugin_enabled(PluginId id, bool enabled);
+    [[nodiscard]] bool is_plugin_enabled(PluginId id) const noexcept;
+    [[nodiscard]] size_t enabled_plugin_count() const noexcept;
+
     // ==========================================
     // Combat Meter Plugin Integration
     // ==========================================

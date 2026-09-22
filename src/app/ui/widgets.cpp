@@ -25,8 +25,10 @@ struct CardFrame {
 CardFrame g_card_stack[4]{};
 int g_card_depth = 0;
 
-/// Left edge of the control column of the setting row currently being emitted.
+/// Left edge and width of the control column of the setting row currently being
+/// emitted. The width is not a constant: it shrinks with the row.
 float g_row_control_x = 0.0f;
+float g_row_control_w = 0.0f;
 bool  g_row_open = false;
 
 void draw_shadow(ImDrawList* dl, const ImVec2& p_min, const ImVec2& p_max, float rounding) {
@@ -69,10 +71,44 @@ void right_align(float item_width) {
     ImGui::SetCursorPosX(std::max(target, ImGui::GetCursorPosX()));
 }
 
-int settings_columns(int max_columns) {
+bool same_line_if_room(float item_width, float spacing) {
+    // The test has to happen after SameLine: until the cursor is back on the line
+    // the remaining width is the full row, and nothing ever looks like it wraps.
+    ImGui::SameLine(0.0f, m(spacing));
+    if (ImGui::GetContentRegionAvail().x >= item_width) return true;
+    ImGui::NewLine();
+    ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
+    return false;
+}
+
+int grid_columns(int desired, float min_col) {
+    if (desired <= 1) return 1;
     const float avail = ImGui::GetContentRegionAvail().x;
-    int columns = static_cast<int>(avail / m(metrics::GridMinCol));
-    return std::clamp(columns, 1, max_columns);
+    const float step = m(min_col) + m(metrics::Gutter);
+    int columns = static_cast<int>((avail + m(metrics::Gutter)) / step);
+    return std::clamp(columns, 1, desired);
+}
+
+int settings_columns(int max_columns) {
+    return grid_columns(max_columns, metrics::GridMinCol);
+}
+
+// ---------------------------------------------------------------- tables ----
+
+ImGuiTableColumnFlags TableSizing::flex_flags() const {
+    return cramped ? ImGuiTableColumnFlags_WidthFixed : ImGuiTableColumnFlags_WidthStretch;
+}
+
+float TableSizing::flex_width(float min_px, float weight) const {
+    return cramped ? m(min_px) : weight;
+}
+
+TableSizing table_sizing(float natural_width, ImGuiTableFlags base) {
+    TableSizing sizing{};
+    sizing.cramped = ImGui::GetContentRegionAvail().x < m(natural_width);
+    sizing.flags = base | (sizing.cramped ? (ImGuiTableFlags_ScrollX | ImGuiTableFlags_SizingFixedFit)
+                                          : ImGuiTableFlags_SizingStretchProp);
+    return sizing;
 }
 
 // ----------------------------------------------------------------- text -----
@@ -207,7 +243,14 @@ void section_header(const char* icon, const char* label, uint32_t accent) {
     end_section_header();
 }
 
-void page_header(const char* icon, const char* title, const char* subtitle) {
+namespace {
+/// Set by begin_page_header() so its end knows whether the action slot was put
+/// on the title's line or pushed onto one of its own.
+bool g_header_action_wrapped = false;
+} // namespace
+
+void begin_page_header(const char* icon, const char* title, const char* subtitle,
+                       float action_width) {
     const float chip = metrics::ChipSizeLg;
     const float start_y = ImGui::GetCursorPosY();
     icon_chip(icon, colors::Accent, chip);
@@ -220,6 +263,36 @@ void page_header(const char* icon, const char* title, const char* subtitle) {
     ImGui::PopFont();
     text_dim("%s", subtitle);
     ImGui::EndGroup();
+
+    if (action_width <= 0.0f) {
+        g_header_action_wrapped = false;
+        return;
+    }
+
+    // Keeping the action beside a title that already fills the row is what makes
+    // the two overlap on a narrow window, so below the threshold it wraps.
+    ImGui::SameLine();
+    const float room = ImGui::GetContentRegionAvail().x;
+    g_header_action_wrapped = room < action_width + m(metrics::Gutter) ||
+                              ImGui::GetWindowSize().x < m(metrics::HeaderActionMinW);
+    if (g_header_action_wrapped) {
+        ImGui::NewLine();
+        ImGui::Dummy(ImVec2(0.0f, m(2.0f)));
+    } else {
+        right_align(action_width);
+        ImGui::SetCursorPosY(start_y + m(3.0f));
+    }
+}
+
+void end_page_header() {
+    if (!g_header_action_wrapped) {
+        ImGui::NewLine();
+    }
+    g_header_action_wrapped = false;
+}
+
+void page_header(const char* icon, const char* title, const char* subtitle) {
+    begin_page_header(icon, title, subtitle, 0.0f);
 }
 
 // ------------------------------------------------------------- indicators ---
@@ -254,17 +327,34 @@ void stat_tile(const char* id, float width, const char* icon, const char* label,
                const char* value, uint32_t value_color, const char* subtitle, uint32_t accent) {
     CardOptions opts{};
     opts.accent = 0;
-    begin_card(id, ImVec2(width, m(metrics::StatTileH)), opts);
+    // Auto-height with a floor rather than a fixed height: a wrapped subtitle on a
+    // narrow tile would otherwise be cut off.
+    opts.auto_height = true;
+    begin_card(id, ImVec2(width, 0.0f), opts);
 
     const ImVec2 card_min = ImGui::GetWindowPos();
-    const ImVec2 card_max = ImVec2(card_min.x + ImGui::GetWindowSize().x,
-                                   card_min.y + ImGui::GetWindowSize().y);
 
+    // The text column stops short of the icon drawn in the corner below.
+    const float icon_w = ImGui::CalcTextSize(icon).x + m(20.0f);
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() +
+                           std::max(ImGui::GetContentRegionAvail().x - icon_w, m(60.0f)));
     text_colored_u32(colors::TextDim, "%s", label);
     ImGui::PushFont(bold_font());
     text_colored_u32(value_color, "%s", value);
     ImGui::PopFont();
+    ImGui::PopTextWrapPos();
+
+    ImGui::PushTextWrapPos(0.0f);
     text_colored_u32(colors::with_alpha(colors::TextMuted, 0.85f), "%s", subtitle);
+    ImGui::PopTextWrapPos();
+
+    const float content_h = ImGui::GetCursorPosY() + m(metrics::CardPad);
+    if (content_h < m(metrics::StatTileH)) {
+        ImGui::Dummy(ImVec2(0.0f, m(metrics::StatTileH) - content_h));
+    }
+
+    const ImVec2 card_max = ImVec2(card_min.x + ImGui::GetWindowSize().x,
+                                   card_min.y + ImGui::GetWindowSize().y);
 
     // Icon sits in the top-right corner, out of the text flow.
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -276,6 +366,25 @@ void stat_tile(const char* id, float width, const char* icon, const char* label,
                                 accent, colors::with_alpha(accent, 0.0f),
                                 colors::with_alpha(accent, 0.0f), accent);
     end_card();
+}
+
+void stat_tile_row(const StatTileSpec* tiles, size_t count) {
+    if (tiles == nullptr || count == 0) return;
+
+    const int columns = grid_columns(static_cast<int>(count), metrics::TileMinW);
+    const float width = split_w(columns);
+    for (size_t i = 0; i < count; ++i) {
+        const bool first_in_row = (i % static_cast<size_t>(columns)) == 0;
+        if (i > 0) {
+            if (first_in_row) {
+                ImGui::Dummy(ImVec2(0.0f, m(metrics::Gutter) * 0.5f));
+            } else {
+                ImGui::SameLine(0.0f, m(metrics::Gutter));
+            }
+        }
+        const auto& t = tiles[i];
+        stat_tile(t.id, width, t.icon, t.label, t.value, t.value_color, t.subtitle, t.accent);
+    }
 }
 
 void job_badge(game::Job job, bool is_limit_break) {
@@ -382,8 +491,10 @@ bool button(const char* label, ButtonKind kind, ButtonSize size) {
 // -------------------------------------------------------------- settings ----
 
 void begin_setting_row(const char* label, const char* help) {
-    const float control_w = m(metrics::ControlW);
     const float avail = ImGui::GetContentRegionAvail().x;
+    // The control column gives ground as the row narrows instead of holding its
+    // full width and squeezing the label down to nothing.
+    const float control_w = std::clamp(avail * 0.42f, m(96.0f), m(metrics::ControlW));
     const float label_w = std::max(avail - control_w - m(metrics::Gutter), m(80.0f));
     const float start_y = ImGui::GetCursorPosY();
 
@@ -401,6 +512,7 @@ void begin_setting_row(const char* label, const char* help) {
     // so rows line up no matter how long the help text runs.
     ImGui::SameLine();
     g_row_control_x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - control_w;
+    g_row_control_w = control_w;
     ImGui::SetCursorPosX(g_row_control_x);
     ImGui::SetCursorPosY(start_y + std::max((label_h - ImGui::GetFrameHeight()) * 0.5f, 0.0f));
     ImGui::SetNextItemWidth(control_w);
@@ -425,7 +537,7 @@ bool setting_toggle(const char* label, const char* help, bool* value) {
     char id[64];
     std::snprintf(id, sizeof(id), "##tgl_%s", label);
     // The toggle is narrower than the control column, so it is pushed to its right edge.
-    ImGui::SetCursorPosX(g_row_control_x + m(metrics::ControlW) - ImGui::GetFrameHeight() * 1.52f);
+    ImGui::SetCursorPosX(g_row_control_x + g_row_control_w - ImGui::GetFrameHeight() * 1.52f);
     const bool changed = toggle(id, value);
     end_setting_row();
     return changed;

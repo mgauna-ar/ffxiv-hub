@@ -27,8 +27,38 @@ namespace hub::app::ui {
 /// the content region's right edge. Honors window padding, unlike SameLine(w - n).
 void right_align(float item_width);
 
+/// Keeps the next item on this line when `item_width` (already scaled) still fits,
+/// and starts a new line when it does not. Replaces a bare SameLine() between two
+/// buttons, which pushes the second one off a narrow card. Returns true when the
+/// item stayed on the line, which a caller that aligns to the line's top needs.
+bool same_line_if_room(float item_width, float spacing = 8.0f);
+
 /// Number of columns a settings grid should use at the current width.
 [[nodiscard]] int settings_columns(int max_columns = 2);
+
+/// How many of `desired` columns fit at the current width without any of them
+/// dropping below `min_col` unscaled pixels. Always at least one.
+[[nodiscard]] int grid_columns(int desired, float min_col);
+
+// ---------------------------------------------------------------- tables ----
+
+/// Table sizing that degrades to horizontal scrolling instead of crushing its
+/// columns. ImGui collapses stretch columns to nothing once ScrollX is on, so
+/// scrolling is only switched on below the width the table actually needs, and
+/// the flexible columns switch to a fixed minimum at the same moment.
+struct TableSizing {
+    bool cramped{false};
+    ImGuiTableFlags flags{0};
+
+    /// Column flags for a column that stretches when there is room.
+    [[nodiscard]] ImGuiTableColumnFlags flex_flags() const;
+    /// Matching width: `min_px` unscaled pixels when cramped, else `weight`.
+    [[nodiscard]] float flex_width(float min_px, float weight) const;
+};
+
+/// `natural_width` is the unscaled width below which the table should scroll:
+/// the sum of its fixed columns plus a workable minimum for the flexible ones.
+[[nodiscard]] TableSizing table_sizing(float natural_width, ImGuiTableFlags base);
 
 // ----------------------------------------------------------------- text -----
 
@@ -71,6 +101,13 @@ void end_section_header();
 /// wants an action in the band follows it with SameLine() + right_align().
 void page_header(const char* icon, const char* title, const char* subtitle);
 
+/// Same band with a right-aligned action slot of `action_width`, which drops to
+/// its own line when the title leaves too little room for it. The caller emits
+/// its content between the two calls.
+void begin_page_header(const char* icon, const char* title, const char* subtitle,
+                       float action_width);
+void end_page_header();
+
 // ------------------------------------------------------------- indicators ---
 
 /// Rounded status badge with a leading dot.
@@ -82,6 +119,21 @@ void row_progress_bar(float fraction, uint32_t color);
 /// Big-number tile: label, value, subtitle, icon, and an accent underline.
 void stat_tile(const char* id, float width, const char* icon, const char* label,
                const char* value, uint32_t value_color, const char* subtitle, uint32_t accent);
+
+/// One tile's content, so a row of them can be laid out (and wrapped) in one call.
+struct StatTileSpec {
+    const char* id;
+    const char* icon;
+    const char* label;
+    const char* value;
+    uint32_t value_color;
+    const char* subtitle;
+    uint32_t accent;
+};
+
+/// Lays tiles out across as many columns as fit at the current width and wraps
+/// onto further rows instead of shrinking them past legibility.
+void stat_tile_row(const StatTileSpec* tiles, size_t count);
 
 /// Colored job badge for a combatant row: job glyph plus abbreviation.
 void job_badge(game::Job job, bool is_limit_break = false);

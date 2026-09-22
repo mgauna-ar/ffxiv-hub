@@ -187,7 +187,9 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
                 latency_overlay_prev_visible = latency_overlay->is_visible();
                 latency_overlay->set_visible(false);
             } else {
-                latency_overlay->set_visible(latency_overlay_prev_visible);
+                // Never resurrect the HUD of a plugin the user switched off.
+                latency_overlay->set_visible(latency_overlay_prev_visible &&
+                                            latency_plugin->is_plugin_enabled());
             }
             prev_connected = connected;
         }

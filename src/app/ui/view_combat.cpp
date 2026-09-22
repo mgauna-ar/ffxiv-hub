@@ -2,6 +2,7 @@
 #include "app/ui/config_binding.hpp"
 #include "common/ui/icons.hpp"
 #include "app/ui/overlay_settings.hpp"
+#include "app/ui/plugin_page.hpp"
 #include "app/ui/theme.hpp"
 #include "app/ui/widgets.hpp"
 #include "meter/pull_grouping.hpp"
@@ -9,6 +10,7 @@
 #include <chrono>
 #include <cstdio>
 #include <ctime>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <vector>
@@ -38,9 +40,11 @@ meter::EncounterSummary s_selected_pull;
 uint64_t s_cached_pull_id = 0;
 std::chrono::steady_clock::time_point s_last_snapshot{};
 
+/// Base flags every ranking table shares; the sizing policy is chosen per table
+/// by table_sizing(), which is what lets a narrow window scroll instead of
+/// crushing the columns.
 constexpr ImGuiTableFlags kTableFlags = ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY |
-                                        ImGuiTableFlags_BordersInnerV |
-                                        ImGuiTableFlags_SizingStretchProp;
+                                        ImGuiTableFlags_BordersInnerV;
 
 void table_headers_row() {
     ImGui::PushStyleColor(ImGuiCol_Text, v4(colors::TextDim));
@@ -88,7 +92,11 @@ void encounter_state_pill(meter::EncounterState state) {
 
 void render_top_bar(AppState& app_state, const meter::EncounterSummary& summary,
                     const std::vector<meter::PullHistoryEntry>& pull_history, bool is_live) {
-    begin_card("##CombatTopBar", ImVec2(0.0f, m(62.0f)));
+    CardOptions opts{};
+    // Auto-height: the stat run and the actions wrap onto further lines on a
+    // narrow window rather than being cut off by a fixed height.
+    opts.auto_height = true;
+    begin_card("##CombatTopBar", ImVec2(0.0f, 0.0f), opts);
 
     const float row_y = ImGui::GetCursorPosY();
     const auto selected_idx = find_pull_index(pull_history, s_selected_pull_id);
@@ -103,7 +111,7 @@ void render_top_bar(AppState& app_state, const meter::EncounterSummary& summary,
 
     // The popup carries duty names, which do not fit the closed control.
     ImGui::SetNextWindowSizeConstraints(ImVec2(m(300.0f), 0.0f), ImVec2(m(600.0f), m(420.0f)));
-    ImGui::SetNextItemWidth(m(240.0f));
+    ImGui::SetNextItemWidth(std::min(m(240.0f), ImGui::GetContentRegionAvail().x));
     if (ImGui::BeginCombo("##PullSelector", current_pull_name.c_str())) {
         if (ImGui::Selectable("Live encounter", is_live)) {
             s_selected_pull_id = 0;
@@ -139,11 +147,18 @@ void render_top_bar(AppState& app_state, const meter::EncounterSummary& summary,
     }
 
     // Label-over-value pairs rather than a pipe-separated run of text: the numbers
-    // are the point of this bar and need to read first.
+    // are the point of this bar and need to read first. Each pair wraps to the next
+    // line once it no longer fits, instead of running off the card.
+    const float stat_w = m(96.0f);
+    // Each pair is a group, and a group ends its line, so the pairs on one line
+    // are re-aligned to that line's top rather than to the bar's first row.
+    float line_top = row_y - m(3.0f);
     const auto stat = [&](const char* label, const std::string& value, uint32_t color) {
-        ImGui::SameLine(0.0f, m(20.0f));
+        if (!same_line_if_room(stat_w, 20.0f)) {
+            line_top = ImGui::GetCursorPosY();
+        }
         ImGui::BeginGroup();
-        ImGui::SetCursorPosY(row_y - m(3.0f));
+        ImGui::SetCursorPosY(line_top);
         text_colored_u32(colors::TextDim, "%s", label);
         ImGui::PushFont(bold_font());
         text_colored_u32(color, "%s", value.c_str());
@@ -156,14 +171,13 @@ void render_top_bar(AppState& app_state, const meter::EncounterSummary& summary,
     stat("RAID HPS", format_dps(summary.total_hps), colors::SuccessLight);
     stat("COMBATANTS", std::to_string(summary.combatants.size()), colors::TextPrimary);
 
-    ImGui::SameLine();
-    right_align(m(metrics::ButtonMd) + m(120.0f));
-    ImGui::SetCursorPosY(row_y + m(4.0f));
+    const float actions_w = m(metrics::ButtonMd) + m(130.0f);
+    if (same_line_if_room(actions_w, metrics::Gutter)) {
+        right_align(actions_w);
+        ImGui::SetCursorPosY(line_top + m(3.0f));
+    }
     encounter_state_pill(summary.state);
-
-    ImGui::SameLine();
-    right_align(m(metrics::ButtonMd));
-    ImGui::SetCursorPosY(row_y);
+    ImGui::SameLine(0.0f, m(10.0f));
     if (button(ICON_RESET "  Reset encounter", ButtonKind::Danger, ButtonSize::Medium)) {
         app_state.reset_encounter();
         s_selected_pull_id = 0;
@@ -205,11 +219,12 @@ void render_damage_table(const meter::EncounterSummary& summary, float height) {
     }
 
     const double top_dps = std::max(combatants.front()->dps, 1.0);
-    if (!ImGui::BeginTable("##DamageRankingTable", 9, kTableFlags, ImVec2(0.0f, height))) return;
+    const auto sizing = table_sizing(700.0f, kTableFlags);
+    if (!ImGui::BeginTable("##DamageRankingTable", 9, sizing.flags, ImVec2(0.0f, height))) return;
 
     ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, m(30.0f));
     ImGui::TableSetupColumn("Job", ImGuiTableColumnFlags_WidthFixed, m(52.0f));
-    ImGui::TableSetupColumn("Combatant", ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableSetupColumn("Combatant", sizing.flex_flags(), sizing.flex_width(150.0f, 1.0f));
     ImGui::TableSetupColumn("DPS", ImGuiTableColumnFlags_WidthFixed, m(90.0f));
     ImGui::TableSetupColumn("Damage", ImGuiTableColumnFlags_WidthFixed, m(90.0f));
     ImGui::TableSetupColumn("Share", ImGuiTableColumnFlags_WidthFixed, m(65.0f));
@@ -276,11 +291,12 @@ void render_healing_table(const meter::EncounterSummary& summary, float height) 
     }
 
     const double top_hps = std::max(combatants.front()->hps, 1.0);
-    if (!ImGui::BeginTable("##HealingRankingTable", 7, kTableFlags, ImVec2(0.0f, height))) return;
+    const auto sizing = table_sizing(680.0f, kTableFlags);
+    if (!ImGui::BeginTable("##HealingRankingTable", 7, sizing.flags, ImVec2(0.0f, height))) return;
 
     ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, m(30.0f));
     ImGui::TableSetupColumn("Job", ImGuiTableColumnFlags_WidthFixed, m(52.0f));
-    ImGui::TableSetupColumn("Combatant", ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableSetupColumn("Combatant", sizing.flex_flags(), sizing.flex_width(150.0f, 1.0f));
     ImGui::TableSetupColumn("HPS", ImGuiTableColumnFlags_WidthFixed, m(90.0f));
     ImGui::TableSetupColumn("Total heal", ImGuiTableColumnFlags_WidthFixed, m(100.0f));
     ImGui::TableSetupColumn("Effective", ImGuiTableColumnFlags_WidthFixed, m(110.0f));
@@ -337,17 +353,18 @@ void render_history_table(AppState& app_state,
         return;
     }
 
-    if (!ImGui::BeginTable("##PullHistoryTable", 9, kTableFlags, ImVec2(0.0f, fill_h(0.0f)))) return;
+    const auto sizing = table_sizing(840.0f, kTableFlags);
+    if (!ImGui::BeginTable("##PullHistoryTable", 9, sizing.flags, ImVec2(0.0f, fill_h(0.0f)))) return;
 
     ImGui::TableSetupColumn("Pull", ImGuiTableColumnFlags_WidthFixed, m(60.0f));
     ImGui::TableSetupColumn("Ended", ImGuiTableColumnFlags_WidthFixed, m(70.0f));
-    ImGui::TableSetupColumn("Zone", ImGuiTableColumnFlags_WidthFixed, m(90.0f));
+    ImGui::TableSetupColumn("Zone", sizing.flex_flags(), sizing.flex_width(110.0f, 1.0f));
     ImGui::TableSetupColumn("Duration", ImGuiTableColumnFlags_WidthFixed, m(90.0f));
     ImGui::TableSetupColumn("Raid DPS", ImGuiTableColumnFlags_WidthFixed, m(100.0f));
     ImGui::TableSetupColumn("Raid HPS", ImGuiTableColumnFlags_WidthFixed, m(100.0f));
     ImGui::TableSetupColumn("Total damage", ImGuiTableColumnFlags_WidthFixed, m(110.0f));
     ImGui::TableSetupColumn("Outcome", ImGuiTableColumnFlags_WidthFixed, m(100.0f));
-    ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, m(metrics::ButtonSm) + m(10.0f));
     ImGui::TableSetupScrollFreeze(0, 1);
     table_headers_row();
 
@@ -399,86 +416,19 @@ void render_history_table(AppState& app_state,
     ImGui::EndTable();
 }
 
-void render_overlay_card(AppState& app_state) {
-    CardOptions opts{};
-    opts.auto_height = true;
-    begin_card("##MeterOverlayCard", ImVec2(0.0f, 0.0f), opts);
+// ---------------------------------------------------------------------------
+// Settings sections. Order and headings are the same for every plugin: what the
+// plugin does, then the in-game overlay, then how it is displayed, then the
+// destructive actions.
+// ---------------------------------------------------------------------------
 
-    OverlaySettingsOptions overlay_opts{};
-    overlay_opts.section = METER;
-    overlay_opts.plugin = PluginId::CombatMeter;
-    overlay_opts.visible_label = "Show in-game meter";
-    overlay_opts.locked_label = "Lock meter position & size";
-    overlay_opts.opacity_label = "Background opacity";
-    overlay_opts.scale_label = "Meter scale";
-    overlay_opts.min_opacity = meter::constants::MIN_WINDOW_OPACITY;
-    overlay_opts.max_opacity = meter::constants::MAX_WINDOW_OPACITY;
-    overlay_opts.min_scale = meter::constants::MIN_UI_SCALE;
-    overlay_opts.max_scale = meter::constants::MAX_UI_SCALE;
-    overlay_opts.defaults = meter::CombatConfig{}.overlay;
-    render_overlay_settings(app_state, overlay_opts);
-
-    static const char* metric_modes[] = { "Damage", "Healing" };
-    int metric = cfg_int(METER, "overlay_metric", 0);
-    begin_setting_row("Meter metric", "Which table the in-game meter draws.");
-    if (ImGui::Combo("##meter_metric", &metric, metric_modes, 2)) {
-        cfg_store(METER, "overlay_metric", metric);
-        app_state.send_combat_overlay_metric(static_cast<uint32_t>(metric));
-    }
-    end_setting_row();
-
-    end_card();
-}
-
-void render_columns_card(AppState& app_state) {
-    CardOptions opts{};
-    opts.auto_height = true;
-    begin_card("##MeterColumnsCard", ImVec2(0.0f, 0.0f), opts);
-    section_header(ICON_CHECKLIST, "TABLE COLUMNS", colors::Violet);
-
-    bool col_share = cfg_bool(METER, "show_col_share", true);
-    if (setting_toggle("Damage share", "Percentage of total raid damage.", &col_share)) {
-        cfg_store(METER, "show_col_share", col_share);
-        app_state.send_combat_column_share(col_share);
-    }
-
-    bool col_crit = cfg_bool(METER, "show_col_crit", true);
-    if (setting_toggle("Critical hit rate", "Per-combatant crit percentage.", &col_crit)) {
-        cfg_store(METER, "show_col_crit", col_crit);
-        app_state.send_combat_column_crit(col_crit);
-    }
-
-    bool col_dh = cfg_bool(METER, "show_col_dh", true);
-    if (setting_toggle("Direct hit rate", "Per-combatant direct hit percentage.", &col_dh)) {
-        cfg_store(METER, "show_col_dh", col_dh);
-        app_state.send_combat_column_dh(col_dh);
-    }
-
-    bool col_cdh = cfg_bool(METER, "show_col_cdh", true);
-    if (setting_toggle("Critical direct hit rate", "Combined crit-and-direct percentage.", &col_cdh)) {
-        cfg_store(METER, "show_col_cdh", col_cdh);
-        app_state.send_combat_column_cdh(col_cdh);
-    }
-
-    end_card();
-}
-
-void render_behaviour_card(AppState& app_state) {
-    CardOptions opts{};
-    opts.auto_height = true;
-    begin_card("##MeterBehaviourCard", ImVec2(0.0f, 0.0f), opts);
-    section_header(ICON_SLIDERS, "METER BEHAVIOUR", colors::Warning);
+void render_plugin_section(AppState& app_state) {
+    begin_settings_card("##MeterPluginCard", ICON_SLIDERS, "METER BEHAVIOUR", colors::Accent);
 
     bool party_only = cfg_bool(METER, "party_only", true);
     if (setting_toggle("Party members only", "Exclude everyone outside your party.", &party_only)) {
         cfg_store(METER, "party_only", party_only);
         app_state.send_combat_overlay_party_only(party_only);
-    }
-
-    bool show_bars = cfg_bool(METER, "show_bars", true);
-    if (setting_toggle("Job-coloured row bars", "Draws a role-tinted bar behind each row.", &show_bars)) {
-        cfg_store(METER, "show_bars", show_bars);
-        app_state.send_combat_show_bars(show_bars);
     }
 
     bool hide_inactive = cfg_bool(METER, "hide_inactive", false);
@@ -503,49 +453,104 @@ void render_behaviour_card(AppState& app_state) {
     }
     end_setting_row();
 
-    ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
+    end_settings_card();
+}
+
+void render_overlay_section(AppState& app_state) {
+    CardOptions opts{};
+    opts.auto_height = true;
+    begin_card("##MeterOverlayCard", ImVec2(0.0f, 0.0f), opts);
+
+    OverlaySettingsOptions overlay_opts{};
+    overlay_opts.section = METER;
+    overlay_opts.plugin = PluginId::CombatMeter;
+    overlay_opts.visible_label = "Show in-game meter";
+    overlay_opts.locked_label = "Lock meter position & size";
+    overlay_opts.opacity_label = "Background opacity";
+    overlay_opts.scale_label = "Meter scale";
+    overlay_opts.min_opacity = meter::constants::MIN_WINDOW_OPACITY;
+    overlay_opts.max_opacity = meter::constants::MAX_WINDOW_OPACITY;
+    overlay_opts.min_scale = meter::constants::MIN_UI_SCALE;
+    overlay_opts.max_scale = meter::constants::MAX_UI_SCALE;
+    overlay_opts.defaults = meter::CombatConfig{}.overlay;
+    render_overlay_settings(app_state, overlay_opts);
+
+    end_card();
+}
+
+void render_display_section(AppState& app_state) {
+    begin_settings_card("##MeterDisplayCard", ICON_CHECKLIST, "METER DISPLAY", colors::Violet);
+
+    static const char* metric_modes[] = { "Damage", "Healing" };
+    int metric = cfg_int(METER, "overlay_metric", 0);
+    begin_setting_row("Meter metric", "Which table the in-game meter draws.");
+    if (ImGui::Combo("##meter_metric", &metric, metric_modes, 2)) {
+        cfg_store(METER, "overlay_metric", metric);
+        app_state.send_combat_overlay_metric(static_cast<uint32_t>(metric));
+    }
+    end_setting_row();
+
+    bool show_bars = cfg_bool(METER, "show_bars", true);
+    if (setting_toggle("Job-coloured row bars", "Draws a role-tinted bar behind each row.", &show_bars)) {
+        cfg_store(METER, "show_bars", show_bars);
+        app_state.send_combat_show_bars(show_bars);
+    }
+
+    bool col_share = cfg_bool(METER, "show_col_share", true);
+    if (setting_toggle("Damage share column", "Percentage of total raid damage.", &col_share)) {
+        cfg_store(METER, "show_col_share", col_share);
+        app_state.send_combat_column_share(col_share);
+    }
+
+    bool col_crit = cfg_bool(METER, "show_col_crit", true);
+    if (setting_toggle("Critical hit rate column", "Per-combatant crit percentage.", &col_crit)) {
+        cfg_store(METER, "show_col_crit", col_crit);
+        app_state.send_combat_column_crit(col_crit);
+    }
+
+    bool col_dh = cfg_bool(METER, "show_col_dh", true);
+    if (setting_toggle("Direct hit rate column", "Per-combatant direct hit percentage.", &col_dh)) {
+        cfg_store(METER, "show_col_dh", col_dh);
+        app_state.send_combat_column_dh(col_dh);
+    }
+
+    bool col_cdh = cfg_bool(METER, "show_col_cdh", true);
+    if (setting_toggle("Critical direct hit column", "Combined crit-and-direct percentage.", &col_cdh)) {
+        cfg_store(METER, "show_col_cdh", col_cdh);
+        app_state.send_combat_column_cdh(col_cdh);
+    }
+
+    end_settings_card();
+}
+
+void render_maintenance_section(AppState& app_state) {
+    begin_settings_card("##MeterMaintenanceCard", ICON_WRENCH, "MAINTENANCE", colors::Warning);
+
     if (button(ICON_MOVE "  Reset overlay position", ButtonKind::Secondary, ButtonSize::Large)) {
         app_state.send_combat_reset_overlay_geometry();
     }
-    ImGui::SameLine(0.0f, m(8.0f));
-    if (button(ICON_POWER "  End encounter", ButtonKind::Secondary, ButtonSize::Medium)) {
+    ImGui::Dummy(ImVec2(0.0f, m(6.0f)));
+    if (button(ICON_POWER "  End encounter", ButtonKind::Secondary, ButtonSize::Large)) {
         app_state.send_combat_end_encounter();
     }
-    ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
+    ImGui::Dummy(ImVec2(0.0f, m(6.0f)));
     if (button(ICON_TRASH "  Reset all statistics", ButtonKind::Danger, ButtonSize::Large)) {
         app_state.send_combat_reset_stats();
         app_state.reset_encounter();
         app_state.clear_pull_history();
     }
 
-    end_card();
+    end_settings_card();
 }
 
 void render_settings_tab(AppState& app_state) {
-    const int columns = settings_columns(2);
-    const float col_w = split_w(columns);
-    const float col_h = fill_h(0.0f);
-
-    ImGui::BeginChild("##MeterSettingsLeft", ImVec2(columns > 1 ? col_w : 0.0f, col_h),
-                      ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground);
-    render_overlay_card(app_state);
-    if (columns == 1) {
-        ImGui::Dummy(ImVec2(0.0f, m(metrics::Gutter)));
-        render_columns_card(app_state);
-        ImGui::Dummy(ImVec2(0.0f, m(metrics::Gutter)));
-        render_behaviour_card(app_state);
-    }
-    ImGui::EndChild();
-
-    if (columns > 1) {
-        ImGui::SameLine(0.0f, m(metrics::Gutter));
-        ImGui::BeginChild("##MeterSettingsRight", ImVec2(col_w, col_h),
-                          ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground);
-        render_columns_card(app_state);
-        ImGui::Dummy(ImVec2(0.0f, m(metrics::Gutter)));
-        render_behaviour_card(app_state);
-        ImGui::EndChild();
-    }
+    const SettingsSection sections[] = {
+        { [&] { render_plugin_section(app_state); } },
+        { [&] { render_overlay_section(app_state); } },
+        { [&] { render_display_section(app_state); } },
+        { [&] { render_maintenance_section(app_state); } },
+    };
+    render_settings_grid(sections, std::size(sections));
 }
 
 void render_drilldown(const meter::EncounterSummary& summary) {
@@ -586,8 +591,9 @@ void render_drilldown(const meter::EncounterSummary& summary) {
         return;
     }
 
-    if (ImGui::BeginTable("##DrilldownTable", 7, kTableFlags, ImVec2(0.0f, fill_h(0.0f)))) {
-        ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthStretch);
+    const auto sizing = table_sizing(620.0f, kTableFlags);
+    if (ImGui::BeginTable("##DrilldownTable", 7, sizing.flags, ImVec2(0.0f, fill_h(0.0f)))) {
+        ImGui::TableSetupColumn("Action", sizing.flex_flags(), sizing.flex_width(160.0f, 1.0f));
         ImGui::TableSetupColumn("Casts", ImGuiTableColumnFlags_WidthFixed, m(60.0f));
         ImGui::TableSetupColumn("Total", ImGuiTableColumnFlags_WidthFixed, m(90.0f));
         ImGui::TableSetupColumn("Min", ImGuiTableColumnFlags_WidthFixed, m(75.0f));
@@ -649,6 +655,12 @@ float ranking_table_height() {
 
 void render_view_combat(AppState& app_state) {
 #ifdef HAVE_IMGUI
+    render_plugin_header(app_state, PluginId::CombatMeter, ICON_SWORDS, "Combat Meter",
+                         "Per-pull damage, healing and ability breakdowns");
+    if (render_plugin_disabled_gate(app_state, PluginId::CombatMeter, "Combat Meter")) {
+        return;
+    }
+
     const auto pull_history = app_state.get_pull_history_index();
 
     // A selected pull that has aged out of the archive falls back to live rather
@@ -673,10 +685,6 @@ void render_view_combat(AppState& app_state) {
     }
 
     const meter::EncounterSummary& current_summary = is_live ? s_live_summary : s_selected_pull;
-
-    page_header(ICON_SWORDS, "Combat Meter",
-                "Per-pull damage, healing and ability breakdowns");
-    ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
 
     render_top_bar(app_state, current_summary, pull_history, is_live);
     ImGui::Dummy(ImVec2(0.0f, m(2.0f)));
@@ -705,7 +713,7 @@ void render_view_combat(AppState& app_state) {
             render_history_table(app_state, pull_history);
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem(ICON_SLIDERS "  Overlay settings")) {
+        if (ImGui::BeginTabItem(ICON_SLIDERS "  Settings")) {
             ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
             render_settings_tab(app_state);
             ImGui::EndTabItem();

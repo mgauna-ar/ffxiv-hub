@@ -72,6 +72,14 @@ void LatencyPlugin::update(double /*delta_seconds*/) {
     // Periodic maintenance if needed (e.g. prune stale requests)
 }
 
+void LatencyPlugin::set_plugin_enabled(bool enabled) noexcept {
+    m_plugin_enabled.store(enabled);
+    // A disabled plugin must not leave its HUD painted over the game.
+    if (!enabled && m_overlay) {
+        m_overlay->set_visible(false);
+    }
+}
+
 void LatencyPlugin::shutdown() {
     m_initialized = false;
     m_mitigator.reset();
@@ -79,6 +87,7 @@ void LatencyPlugin::shutdown() {
 
 void LatencyPlugin::serialize_config(config::JsonValue& out) const {
     const auto cfg = m_mitigator.get_config();
+    out["plugin_enabled"] = config::JsonValue(m_plugin_enabled.load());
     out["enabled"] = config::JsonValue(cfg.enabled);
     out["dry_run"] = config::JsonValue(cfg.dry_run);
     out["target_ping_ms"] = config::JsonValue(cfg.target_ping_ms);
@@ -100,6 +109,9 @@ void LatencyPlugin::deserialize_config(const config::JsonValue& in) {
     if (!in.is_object()) return;
     auto cfg = m_mitigator.get_config();
 
+    if (in.contains("plugin_enabled")) {
+        m_plugin_enabled.store(in["plugin_enabled"].as_bool(m_plugin_enabled.load()));
+    }
     if (in.contains("enabled")) cfg.enabled = in["enabled"].as_bool(cfg.enabled);
     if (in.contains("dry_run")) cfg.dry_run = in["dry_run"].as_bool(cfg.dry_run);
     if (in.contains("target_ping_ms")) cfg.target_ping_ms = in["target_ping_ms"].as_double(cfg.target_ping_ms);
@@ -115,6 +127,9 @@ void LatencyPlugin::deserialize_config(const config::JsonValue& in) {
 
     if (m_overlay) {
         m_overlay->apply_config(m_overlay_config);
+        // apply_config restores the persisted visibility, which a disabled plugin
+        // must not get back.
+        if (!m_plugin_enabled.load()) m_overlay->set_visible(false);
         if (in.contains("overlay_mode")) {
             m_overlay->set_display_mode(static_cast<OverlayDisplayMode>(in["overlay_mode"].as_int(static_cast<int>(m_overlay->display_mode()))));
         }
@@ -135,7 +150,7 @@ void LatencyPlugin::on_use_action_location(
     uint64_t result
 ) {
     // Invariant: If client rejected action (result == 0), no packet was sent to server
-    if (result == 0 || action_mgr == nullptr) {
+    if (!m_plugin_enabled.load() || result == 0 || action_mgr == nullptr) {
         return;
     }
 
@@ -169,6 +184,7 @@ void LatencyPlugin::on_action_manager_resolved(void* action_manager) {
 }
 
 void LatencyPlugin::on_pre_receive_action_effect() {
+    if (!m_plugin_enabled.load()) return;
     m_pre_lock_snapshot.store(SafeReadAnimationLock(m_action_manager.load()));
 }
 
@@ -179,7 +195,7 @@ void LatencyPlugin::on_receive_action_effect(
     const void* /*effect_data*/,
     const uint64_t* /*targets*/
 ) {
-    if (!effect_header) return;
+    if (!m_plugin_enabled.load() || !effect_header) return;
 
     // ReceiveActionEffect fires for every actor in the zone, so only mitigate
     // when this call actually changed our own animation_lock.

@@ -9,6 +9,7 @@
 #include "mitigator/latency_plugin.hpp"
 #include "payload/command_dispatcher.hpp"
 #include "meter/combat_plugin.hpp"
+#include <array>
 #include <atomic>
 #include "hub/game_definitions.hpp"
 
@@ -600,4 +601,72 @@ TEST_CASE(Payload, OverlayHostForwardsGameStateOnRegistration) {
 
     host.unregister_overlay(overlay->overlay_id());
     host.set_game_state(nullptr);
+}
+
+TEST_CASE(Payload, DispatchesPluginMasterSwitch) {
+    // The per-plugin kill switch has to reach both plugins, and is distinct from
+    // the mitigation switch, which only stops the memory write-back.
+    meter::CombatPlugin combat;
+    mitigator::LatencyPlugin latency;
+    payload::CommandDispatchTargets targets;
+    targets.combat_plugin = &combat;
+    targets.latency_plugin = &latency;
+
+    TEST_ASSERT(combat.is_enabled());
+    TEST_ASSERT(latency.is_plugin_enabled());
+
+    ipc::CommandPayload cmd{};
+    cmd.command_id = static_cast<uint32_t>(CommandId::SetPluginEnabled);
+    cmd.param_uint = 0;
+
+    cmd.target_plugin_id = static_cast<uint32_t>(PluginId::CombatMeter);
+    payload::dispatch_command(targets, cmd);
+    TEST_ASSERT(!combat.is_enabled());
+    TEST_ASSERT(latency.is_plugin_enabled());
+
+    cmd.target_plugin_id = static_cast<uint32_t>(PluginId::LatencyMitigator);
+    payload::dispatch_command(targets, cmd);
+    TEST_ASSERT(!latency.is_plugin_enabled());
+
+    // Mitigation stays on its own switch: disabling the plugin must not silently
+    // rewrite the user's mitigation preference.
+    TEST_ASSERT(latency.mitigator().get_config().enabled);
+
+    cmd.param_uint = 1;
+    payload::dispatch_command(targets, cmd);
+    TEST_ASSERT(latency.is_plugin_enabled());
+    cmd.target_plugin_id = static_cast<uint32_t>(PluginId::CombatMeter);
+    payload::dispatch_command(targets, cmd);
+    TEST_ASSERT(combat.is_enabled());
+}
+
+TEST_CASE(Payload, DisabledPluginsIgnoreHookDispatch) {
+    // The master switch has to stop data at the hook, not just hide the UI.
+    meter::CombatPlugin combat;
+    combat.initialize();
+
+    game::ActionEffectHeader header{};
+    header.animation_target_id = 0x40001;
+    header.action_id = 31;
+    header.num_targets = 1;
+
+    std::array<game::ActionEffectEntry, 8> entries{};
+    entries[0].effect_type = 0x03; // Damage
+    entries[0].value = 25000;
+
+    game::CharacterObject chr{};
+    chr.entity_id = 777;
+    chr.class_job = 1;
+    chr.object_kind = 1;      // Player
+    chr.owner_id = 0xE0000000; // Game's "no owner" sentinel
+    chr.current_hp = 50000;
+    chr.max_hp = 50000;
+
+    combat.set_enabled(false);
+    combat.on_receive_action_effect(777, &chr, &header, entries.data(), nullptr);
+    TEST_ASSERT_EQ(combat.engine().accumulator().total_damage(), 0u);
+
+    combat.set_enabled(true);
+    combat.on_receive_action_effect(777, &chr, &header, entries.data(), nullptr);
+    TEST_ASSERT_EQ(combat.engine().accumulator().total_damage(), 25000u);
 }

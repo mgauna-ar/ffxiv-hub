@@ -89,6 +89,11 @@ constexpr float StatTileH   = 92.0f;
 constexpr float SidebarW    = 220.0f;
 constexpr float NavItemH    = 38.0f;
 constexpr float GridMinCol  = 430.0f; // a settings grid drops to one column below this
+constexpr float TileMinW    = 190.0f; // a stat tile row wraps rather than go below this
+constexpr float CardMinW    = 260.0f; // narrowest a card in a grid is allowed to get
+constexpr float HeaderActionMinW = 360.0f; // below this a page header's action drops to its own line
+constexpr float WindowMinW  = 880.0f; // smallest client area the layout is designed for
+constexpr float WindowMinH  = 600.0f;
 } // namespace metrics
 
 /// Applies sleek Slate Dark styling to Dear ImGui context

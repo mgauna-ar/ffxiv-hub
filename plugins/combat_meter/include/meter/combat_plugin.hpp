@@ -49,6 +49,11 @@ public:
     [[nodiscard]] EncounterEngine& engine() noexcept { return m_engine; }
     [[nodiscard]] const EncounterEngine& engine() const noexcept { return m_engine; }
 
+    /// Master switch for the whole plugin. Off means no hook dispatch, no
+    /// packets to the desktop app, and no overlay.
+    void set_enabled(bool enabled) noexcept;
+    [[nodiscard]] bool is_enabled() const noexcept { return m_config.enabled; }
+
     [[nodiscard]] CombatConfig& config() noexcept { return m_config; }
     [[nodiscard]] const CombatConfig& config() const noexcept { return m_config; }
 

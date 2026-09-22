@@ -13,13 +13,14 @@ struct NavItem {
     const char* icon;
     DesktopView view;
     const char* group; ///< non-null starts a new labelled group above this item
+    PluginId plugin;    ///< PluginId::None for a nav item that is not a plugin
 };
 
 constexpr NavItem kNavItems[] = {
-    { "Dashboard",         ICON_DASHBOARD, DesktopView::Dashboard,        "WORKSPACE" },
-    { "Combat Meter",      ICON_SWORDS,    DesktopView::CombatMeter,      "PLUGINS"   },
-    { "Latency Mitigator", ICON_ACTIVITY,  DesktopView::LatencyMitigator, nullptr     },
-    { "Hub Settings",      ICON_SETTINGS,  DesktopView::Settings,         "SYSTEM"    },
+    { "Dashboard",         ICON_DASHBOARD, DesktopView::Dashboard,        "WORKSPACE", PluginId::None },
+    { "Combat Meter",      ICON_SWORDS,    DesktopView::CombatMeter,      "PLUGINS",   PluginId::CombatMeter },
+    { "Latency Mitigator", ICON_ACTIVITY,  DesktopView::LatencyMitigator, nullptr,     PluginId::LatencyMitigator },
+    { "Hub Settings",      ICON_SETTINGS,  DesktopView::Settings,         "SYSTEM",    PluginId::None },
 };
 
 void nav_group_label(const char* text) {
@@ -30,7 +31,7 @@ void nav_group_label(const char* text) {
     ImGui::Dummy(ImVec2(0.0f, m(1.0f)));
 }
 
-bool nav_item(const NavItem& item, bool selected) {
+bool nav_item(const NavItem& item, bool selected, bool disabled) {
     const float height = m(metrics::NavItemH);
     const ImVec2 p = ImGui::GetCursorScreenPos();
     const float width = ImGui::GetContentRegionAvail().x;
@@ -59,13 +60,25 @@ bool nav_item(const NavItem& item, bool selected) {
                           colors::Accent, m(2.0f));
     }
 
-    const uint32_t icon_color = selected ? colors::AccentHover
-                                         : (hovered ? colors::TextMuted : colors::TextDim);
-    const uint32_t text_color = selected ? colors::TextPrimary
-                                         : (hovered ? colors::TextBody : colors::TextMuted);
+    uint32_t icon_color = selected ? colors::AccentHover
+                                   : (hovered ? colors::TextMuted : colors::TextDim);
+    uint32_t text_color = selected ? colors::TextPrimary
+                                   : (hovered ? colors::TextBody : colors::TextMuted);
+    if (disabled) {
+        // Dimmed rather than removed: a plugin that vanished from the sidebar
+        // would leave no obvious way back to its switch.
+        icon_color = colors::with_alpha(icon_color, 0.45f);
+        text_color = colors::with_alpha(text_color, 0.45f);
+    }
     const float text_y = p.y + (height - ImGui::GetTextLineHeight()) * 0.5f;
     dl->AddText(ImVec2(p.x + m(13.0f), text_y), icon_color, item.icon);
     dl->AddText(ImVec2(p.x + m(41.0f), text_y), text_color, item.label);
+
+    if (disabled) {
+        const float dot_r = m(3.0f);
+        dl->AddCircleFilled(ImVec2(p_max.x - m(14.0f), p.y + height * 0.5f), dot_r,
+                            colors::TextFaint);
+    }
 
     return clicked;
 }
@@ -126,7 +139,9 @@ void render_sidebar(AppState& app_state) {
         if (item.group != nullptr) {
             nav_group_label(item.group);
         }
-        if (nav_item(item, current == item.view)) {
+        const bool disabled = item.plugin != PluginId::None &&
+                              !app_state.is_plugin_enabled(item.plugin);
+        if (nav_item(item, current == item.view, disabled)) {
             app_state.set_current_view(item.view);
         }
     }

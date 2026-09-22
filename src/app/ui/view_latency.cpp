@@ -2,6 +2,7 @@
 #include "app/ui/config_binding.hpp"
 #include "common/ui/icons.hpp"
 #include "app/ui/overlay_settings.hpp"
+#include "app/ui/plugin_page.hpp"
 #include "app/ui/theme.hpp"
 #include "app/ui/widgets.hpp"
 #include "mitigator/types.hpp"
@@ -11,6 +12,7 @@
 #include <cmath>
 #include <ctime>
 #include <string>
+#include <iterator>
 #include <string_view>
 #include <vector>
 
@@ -151,8 +153,6 @@ void legend_entry(const char* label, uint32_t color) {
 }
 
 void render_metric_tiles(AppState& app_state, const AppState::MitigatorMetrics& metrics) {
-    const float w = split_w(4);
-
     char smoothed[32];
     std::snprintf(smoothed, sizeof(smoothed), "%.1f ms", metrics.latest_smoothed_rtt_ms);
     char raw[48];
@@ -162,33 +162,34 @@ void render_metric_tiles(AppState& app_state, const AppState::MitigatorMetrics& 
     } else {
         std::snprintf(raw, sizeof(raw), "raw %.1f ms", metrics.latest_measured_rtt_ms);
     }
-    stat_tile("##PingCard", w, ICON_ACTIVITY, "SMOOTHED RTT", smoothed,
-              ping_grade_color(net_ping >= 0.0 ? net_ping : metrics.latest_smoothed_rtt_ms),
-              raw, colors::Accent);
-    ImGui::SameLine(0.0f, m(metrics::Gutter));
 
     char jitter[32];
     std::snprintf(jitter, sizeof(jitter), "+/- %.1f ms", metrics.latest_jitter_ms);
-    stat_tile("##JitterCard", w, ICON_TRENDING, "JITTER", jitter,
-              colors::SuccessLight, "round-trip variance", colors::Success);
-    ImGui::SameLine(0.0f, m(metrics::Gutter));
 
     char saved[32];
     std::snprintf(saved, sizeof(saved), "%.2f s", metrics.total_delay_reduced_ms / 1000.0f);
     char actions[40];
     std::snprintf(actions, sizeof(actions), "%llu actions mitigated",
                   static_cast<unsigned long long>(metrics.total_actions_mitigated));
-    stat_tile("##ReducedCard", w, ICON_BOLT, "LATENCY SAVED", saved,
-              colors::WarningLight, actions, colors::Warning);
-    ImGui::SameLine(0.0f, m(metrics::Gutter));
 
     char spikes[32];
     std::snprintf(spikes, sizeof(spikes), "%llu", static_cast<unsigned long long>(metrics.spike_filtered_count));
     char floors[40];
     std::snprintf(floors, sizeof(floors), "%llu floor clamps (25 ms)",
                   static_cast<unsigned long long>(metrics.floor_clamp_count));
-    stat_tile("##SafetyCard", w, ICON_SHIELD, "SPIKES FILTERED", spikes,
-              colors::TextPrimary, floors, colors::Violet);
+
+    const StatTileSpec tiles[] = {
+        { "##PingCard", ICON_ACTIVITY, "SMOOTHED RTT", smoothed,
+          ping_grade_color(net_ping >= 0.0 ? net_ping : metrics.latest_smoothed_rtt_ms),
+          raw, colors::Accent },
+        { "##JitterCard", ICON_TRENDING, "JITTER", jitter,
+          colors::SuccessLight, "round-trip variance", colors::Success },
+        { "##ReducedCard", ICON_BOLT, "LATENCY SAVED", saved,
+          colors::WarningLight, actions, colors::Warning },
+        { "##SafetyCard", ICON_SHIELD, "SPIKES FILTERED", spikes,
+          colors::TextPrimary, floors, colors::Violet },
+    };
+    stat_tile_row(tiles, std::size(tiles));
 }
 
 void render_action_feed(const std::vector<ipc::MitigatorTelemetryPayload>& telemetry) {
@@ -198,20 +199,20 @@ void render_action_feed(const std::vector<ipc::MitigatorTelemetryPayload>& telem
         return;
     }
 
-    const ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY |
-                                  ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp;
-    if (!ImGui::BeginTable("##RecentActionsTable", 8, flags, ImVec2(0.0f, fill_h(0.0f)))) {
+    const auto sizing = table_sizing(720.0f, ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY |
+                                                ImGuiTableFlags_BordersInnerV);
+    if (!ImGui::BeginTable("##RecentActionsTable", 8, sizing.flags, ImVec2(0.0f, fill_h(0.0f)))) {
         return;
     }
 
     ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthFixed, m(66.0f));
-    ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, m(150.0f));
+    ImGui::TableSetupColumn("Action", sizing.flex_flags(), sizing.flex_width(150.0f, 2.0f));
     ImGui::TableSetupColumn("Seq", ImGuiTableColumnFlags_WidthFixed, m(45.0f));
     ImGui::TableSetupColumn("RTT", ImGuiTableColumnFlags_WidthFixed, m(56.0f));
     ImGui::TableSetupColumn("Raw lock", ImGuiTableColumnFlags_WidthFixed, m(68.0f));
     ImGui::TableSetupColumn("Adj lock", ImGuiTableColumnFlags_WidthFixed, m(68.0f));
     ImGui::TableSetupColumn("Reduced", ImGuiTableColumnFlags_WidthFixed, m(65.0f));
-    ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableSetupColumn("Status", sizing.flex_flags(), sizing.flex_width(160.0f, 1.6f));
     ImGui::TableSetupScrollFreeze(0, 1);
 
     ImGui::PushStyleColor(ImGuiCol_Text, v4(colors::TextDim));
@@ -317,14 +318,17 @@ void render_live_tab(AppState& app_state, const AppState::MitigatorMetrics& metr
     end_card();
 }
 
-void render_algorithm_card(AppState& app_state) {
-    CardOptions opts{};
-    opts.auto_height = true;
-    begin_card("##AlgorithmCard", ImVec2(0.0f, 0.0f), opts);
-    section_header(ICON_GAUGE, "MITIGATION ALGORITHM");
+// ---------------------------------------------------------------------------
+// Settings sections. Order and headings are the same for every plugin: what the
+// plugin does, then the in-game overlay, then how it is displayed, then the
+// destructive actions.
+// ---------------------------------------------------------------------------
 
-    // Master switch: mitigation was previously only disableable by editing
-    // config.json and restarting.
+void render_plugin_section(AppState& app_state) {
+    begin_settings_card("##MitiPluginCard", ICON_GAUGE, "MITIGATION ALGORITHM", colors::Accent);
+
+    // Distinct from the plugin's master switch in the page header: this one only
+    // stops the memory write-back, leaving measurement running.
     bool enabled = cfg_bool(MITI, "enabled", true);
     if (setting_toggle("Enable animation lock mitigation",
                        "Master switch for every memory write this plugin makes.", &enabled)) {
@@ -363,13 +367,13 @@ void render_algorithm_card(AppState& app_state) {
         app_state.send_mitigator_dry_run(dry_run);
     }
 
-    end_card();
+    end_settings_card();
 }
 
-void render_hud_card(AppState& app_state) {
+void render_overlay_section(AppState& app_state) {
     CardOptions opts{};
     opts.auto_height = true;
-    begin_card("##HudCard", ImVec2(0.0f, 0.0f), opts);
+    begin_card("##MitiOverlayCard", ImVec2(0.0f, 0.0f), opts);
 
     OverlaySettingsOptions overlay_opts{};
     overlay_opts.section = MITI;
@@ -388,11 +392,8 @@ void render_hud_card(AppState& app_state) {
     end_card();
 }
 
-void render_maintenance_card(AppState& app_state) {
-    CardOptions opts{};
-    opts.auto_height = true;
-    begin_card("##MaintenanceCard", ImVec2(0.0f, 0.0f), opts);
-    section_header(ICON_WRENCH, "HUD LAYOUT & MAINTENANCE", colors::Warning);
+void render_display_section(AppState& app_state) {
+    begin_settings_card("##MitiDisplayCard", ICON_CHECKLIST, "HUD DISPLAY", colors::Violet);
 
     int hud_mode = cfg_int(MITI, "overlay_mode", 0);
     static const char* hud_mode_names[] = { "Compact inline", "Two row", "Ping only" };
@@ -403,41 +404,31 @@ void render_maintenance_card(AppState& app_state) {
     }
     end_setting_row();
 
-    ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
+    end_settings_card();
+}
+
+void render_maintenance_section(AppState& app_state) {
+    begin_settings_card("##MitiMaintenanceCard", ICON_WRENCH, "MAINTENANCE", colors::Warning);
+
     if (button(ICON_MOVE "  Reset HUD position", ButtonKind::Secondary, ButtonSize::Large)) {
         app_state.send_mitigator_reset_overlay_geometry();
     }
-    ImGui::SameLine(0.0f, m(8.0f));
-    if (button(ICON_RESET "  Reset statistics", ButtonKind::Danger, ButtonSize::Medium)) {
+    ImGui::Dummy(ImVec2(0.0f, m(6.0f)));
+    if (button(ICON_RESET "  Reset statistics", ButtonKind::Danger, ButtonSize::Large)) {
         app_state.send_mitigator_reset_stats();
     }
 
-    end_card();
+    end_settings_card();
 }
 
 void render_settings_tab(AppState& app_state) {
-    const int columns = settings_columns(2);
-    const float col_w = split_w(columns);
-    const float col_h = fill_h(0.0f);
-
-    ImGui::BeginChild("##MitiSettingsLeft", ImVec2(columns > 1 ? col_w : 0.0f, col_h),
-                      ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground);
-    render_algorithm_card(app_state);
-    ImGui::Dummy(ImVec2(0.0f, m(metrics::Gutter)));
-    render_maintenance_card(app_state);
-    if (columns == 1) {
-        ImGui::Dummy(ImVec2(0.0f, m(metrics::Gutter)));
-        render_hud_card(app_state);
-    }
-    ImGui::EndChild();
-
-    if (columns > 1) {
-        ImGui::SameLine(0.0f, m(metrics::Gutter));
-        ImGui::BeginChild("##MitiSettingsRight", ImVec2(col_w, col_h),
-                          ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground);
-        render_hud_card(app_state);
-        ImGui::EndChild();
-    }
+    const SettingsSection sections[] = {
+        { [&] { render_plugin_section(app_state); } },
+        { [&] { render_overlay_section(app_state); } },
+        { [&] { render_display_section(app_state); } },
+        { [&] { render_maintenance_section(app_state); } },
+    };
+    render_settings_grid(sections, std::size(sections));
 }
 
 } // namespace
@@ -445,26 +436,25 @@ void render_settings_tab(AppState& app_state) {
 
 void render_view_latency(AppState& app_state) {
 #ifdef HAVE_IMGUI
-    const auto metrics_snapshot = app_state.get_mitigator_metrics();
-    const auto telemetry = app_state.get_recent_telemetry(120);
-
-    page_header(ICON_ACTIVITY, "Latency Mitigator",
-                "Animation lock compensation and slide-cast preservation");
-
     // Dry-run is otherwise invisible on this view, so the numbers below look like
     // mitigation that never happened.
-    ImGui::SameLine();
+    PluginStatus status{ "Mitigating", colors::SuccessLight };
     if (cfg_bool(MITI, "dry_run", false)) {
-        right_align(m(180.0f));
-        pill("Dry-run - measuring only", colors::Violet);
+        status = { "Dry-run - measuring only", colors::Violet };
     } else if (!cfg_bool(MITI, "enabled", true)) {
-        right_align(m(180.0f));
-        pill("Mitigation disabled", colors::Danger);
-    } else {
-        right_align(m(110.0f));
-        pill("Mitigating", colors::SuccessLight);
+        status = { "Mitigation disabled", colors::Danger };
     }
-    ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
+
+    render_plugin_header(app_state, PluginId::LatencyMitigator, ICON_ACTIVITY,
+                         "Latency Mitigator",
+                         "Animation lock compensation and slide-cast preservation", status);
+    if (render_plugin_disabled_gate(app_state, PluginId::LatencyMitigator,
+                                    "Latency Mitigator")) {
+        return;
+    }
+
+    const auto metrics_snapshot = app_state.get_mitigator_metrics();
+    const auto telemetry = app_state.get_recent_telemetry(120);
 
     if (ImGui::BeginTabBar("##LatencyTabs", ImGuiTabBarFlags_None)) {
         if (ImGui::BeginTabItem(ICON_TRENDING "  Live telemetry")) {

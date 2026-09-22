@@ -366,3 +366,45 @@ TEST_CASE(Mitigator, LatencyPluginEmitsTelemetryAndAppliesWriteBack) {
     std::memcpy(&post_lock, mgr_buf.data() + game::offsets::ACTION_MANAGER_ANIMATION_LOCK, sizeof(float));
     TEST_ASSERT_TRUE(post_lock < server_lock_seconds);
 }
+
+TEST_CASE(Mitigator, DisabledPluginIgnoresHooksAndPersistsTheChoice) {
+    // The plugin-level switch is coarser than the mitigation switch: it has to
+    // stop the plugin from seeing actions at all, not just from writing back.
+    LatencyPlugin plugin;
+    plugin.initialize();
+
+    ipc::PacketRingBuffer ring;
+    plugin.set_ring_buffer(&ring);
+    plugin.set_connected(true);
+    plugin.set_plugin_enabled(false);
+
+    std::vector<uint8_t> mgr_buf(0x200, 0);
+    void* mgr = mgr_buf.data();
+
+    plugin.on_use_action_location(mgr, 0, 700, 0, nullptr, 0, /*result=*/1);
+    TEST_ASSERT_EQ(plugin.mitigator().get_sequence_tracker().pending_count(), 0u);
+
+    plugin.on_pre_receive_action_effect();
+    game::ActionEffectHeader hdr{};
+    hdr.action_id = 700;
+    plugin.on_receive_action_effect(0, nullptr, &hdr, nullptr, nullptr);
+
+    std::vector<uint8_t> item;
+    TEST_ASSERT_FALSE(ring.pop(item));
+
+    // Mitigation keeps its own preference: the coarse switch must not rewrite it.
+    TEST_ASSERT_TRUE(plugin.mitigator().get_config().enabled);
+
+    hub::config::JsonValue json{hub::config::JsonValue::ObjectType{}};
+    plugin.serialize_config(json);
+    TEST_ASSERT_FALSE(json["plugin_enabled"].as_bool(true));
+    TEST_ASSERT_TRUE(json["enabled"].as_bool(false));
+
+    plugin.set_plugin_enabled(true);
+    plugin.deserialize_config(json);
+    TEST_ASSERT_FALSE(plugin.is_plugin_enabled());
+
+    plugin.set_plugin_enabled(true);
+    plugin.on_use_action_location(mgr, 0, 700, 0, nullptr, 0, /*result=*/1);
+    TEST_ASSERT_EQ(plugin.mitigator().get_sequence_tracker().pending_count(), 1u);
+}

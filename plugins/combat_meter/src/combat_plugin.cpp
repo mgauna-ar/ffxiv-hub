@@ -41,13 +41,21 @@ void CombatPlugin::update(double /*delta_seconds*/) {
     }
 }
 
+void CombatPlugin::set_enabled(bool enabled) noexcept {
+    m_config.enabled = enabled;
+    // A disabled plugin must not leave its overlay painted over the game.
+    if (!enabled && m_overlay) {
+        m_overlay->set_visible(false);
+    }
+}
+
 void CombatPlugin::shutdown() {
     m_initialized = false;
     m_engine.reset_current();
 }
 
 void CombatPlugin::serialize_config(config::JsonValue& out) const {
-    out["enabled"] = config::JsonValue(m_config.enabled);
+    out["plugin_enabled"] = config::JsonValue(m_config.enabled);
     out["inactivity_timeout_seconds"] = config::JsonValue(m_config.inactivity_timeout_seconds);
     out["party_only"] = config::JsonValue(m_config.party_only);
     out["show_bars"] = config::JsonValue(m_config.show_bars);
@@ -72,7 +80,10 @@ void CombatPlugin::serialize_config(config::JsonValue& out) const {
 void CombatPlugin::deserialize_config(const config::JsonValue& in) {
     if (!in.is_object()) return;
 
+    // "enabled" is the key this plugin shipped with, before every plugin moved to
+    // the shared "plugin_enabled" name.
     if (in.contains("enabled")) m_config.enabled = in["enabled"].as_bool(m_config.enabled);
+    if (in.contains("plugin_enabled")) m_config.enabled = in["plugin_enabled"].as_bool(m_config.enabled);
     if (in.contains("inactivity_timeout_seconds")) {
         m_config.inactivity_timeout_seconds = in["inactivity_timeout_seconds"].as_double(m_config.inactivity_timeout_seconds);
         m_engine.set_inactivity_timeout(m_config.inactivity_timeout_seconds);
@@ -99,6 +110,9 @@ void CombatPlugin::deserialize_config(const config::JsonValue& in) {
         m_overlay->set_show_col_cdh(m_config.show_col_cdh);
         m_overlay->set_metric(m_config.overlay_metric == 1 ? MeterMetric::Healing : MeterMetric::Damage);
         m_overlay->apply_config(m_config.overlay);
+        // apply_config restores the persisted visibility, which a disabled plugin
+        // must not get back.
+        if (!m_config.enabled) m_overlay->set_visible(false);
     }
 }
 

@@ -54,9 +54,71 @@ bool AppState::initialize() {
         m_engine.set_inactivity_timeout(meter_cfg["inactivity_timeout_seconds"].as_double(
             meter::constants::DEFAULT_INACTIVITY_TIMEOUT_SECONDS));
     }
+    // Mirror the persisted master switches into the plugin list so the sidebar
+    // and dashboard agree with what the payload will read off disk.
+    for (auto& plugin : m_plugins) {
+        plugin.active = is_plugin_enabled(plugin.id);
+    }
+
     m_pipe_server.start();
     m_network_monitor.start(0);
     return true;
+}
+
+const char* AppState::plugin_config_section(PluginId id) noexcept {
+    switch (id) {
+        case PluginId::CombatMeter:      return "combat_meter";
+        case PluginId::LatencyMitigator: return "latency_mitigator";
+        case PluginId::None:
+        case PluginId::Core:             break;
+    }
+    return nullptr;
+}
+
+bool AppState::is_plugin_enabled(PluginId id) const noexcept {
+    const char* section = plugin_config_section(id);
+    if (section == nullptr) return true;
+    const auto& root = config::ConfigManager::instance().root();
+    if (!root.contains(section) || !root[section].is_object()) return true;
+    const auto& sec = root[section];
+    // "enabled" is the combat meter's original key, kept so an existing config
+    // that switched it off still reads as off.
+    if (sec.contains("plugin_enabled")) return sec["plugin_enabled"].as_bool(true);
+    if (id == PluginId::CombatMeter && sec.contains("enabled")) {
+        return sec["enabled"].as_bool(true);
+    }
+    return true;
+}
+
+void AppState::set_plugin_enabled(PluginId id, bool enabled) {
+    const char* section = plugin_config_section(id);
+    if (section == nullptr) return;
+
+    auto& root = config::ConfigManager::instance().root();
+    if (!root.contains(section) || !root[section].is_object()) {
+        root[section] = config::JsonValue(config::JsonValue::ObjectType{});
+    }
+    root[section]["plugin_enabled"] = config::JsonValue(enabled);
+    if (id == PluginId::CombatMeter) {
+        // The payload still honours the legacy key, so leaving it behind would
+        // switch the plugin back off on the next load.
+        root[section]["enabled"] = config::JsonValue(enabled);
+    }
+    config::ConfigManager::instance().save();
+
+    for (auto& plugin : m_plugins) {
+        if (plugin.id == id) plugin.active = enabled;
+    }
+
+    m_pipe_server.send_command(id, CommandId::SetPluginEnabled, enabled ? 1u : 0u);
+}
+
+size_t AppState::enabled_plugin_count() const noexcept {
+    size_t count = 0;
+    for (const auto& plugin : m_plugins) {
+        if (plugin.active) ++count;
+    }
+    return count;
 }
 
 void AppState::shutdown() {

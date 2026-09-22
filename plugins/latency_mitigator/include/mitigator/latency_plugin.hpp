@@ -66,6 +66,12 @@ public:
     /// without touching the user's configured dry_run preference.
     void set_connected(bool connected) noexcept { m_connected.store(connected); }
 
+    /// Master switch for the whole plugin. Off means no hook dispatch, no
+    /// telemetry and no HUD, distinct from the mitigation switch on the
+    /// mitigator, which only stops the memory write-back.
+    void set_plugin_enabled(bool enabled) noexcept;
+    [[nodiscard]] bool is_plugin_enabled() const noexcept { return m_plugin_enabled.load(); }
+
 private:
     AnimationLockMitigator m_mitigator;
     bool m_initialized{false};
@@ -76,6 +82,7 @@ private:
     std::atomic<void*> m_action_manager{nullptr};
     std::atomic<float> m_pre_lock_snapshot{0.0f};
     std::atomic<bool> m_connected{false};
+    std::atomic<bool> m_plugin_enabled{true};
 };
 
 } // namespace hub::mitigator

@@ -64,6 +64,9 @@ void dispatch_combat_meter(const CommandDispatchTargets& t, const ipc::CommandPa
 
     const auto id = static_cast<CommandId>(cmd.command_id);
     switch (id) {
+        case CommandId::SetPluginEnabled:
+            if (t.combat_plugin) t.combat_plugin->set_enabled(cmd.param_uint != 0);
+            break;
         case CommandId::FilterPartyOnly:
             if (t.combat_overlay) t.combat_overlay->set_party_only(cmd.param_uint != 0);
             break;
@@ -130,6 +133,9 @@ void dispatch_latency_mitigator(const CommandDispatchTargets& t, const ipc::Comm
 
     const auto id = static_cast<CommandId>(cmd.command_id);
     switch (id) {
+        case CommandId::SetPluginEnabled:
+            if (t.latency_plugin) t.latency_plugin->set_plugin_enabled(cmd.param_uint != 0);
+            break;
         case CommandId::SetOverlayMode:
             if (t.latency_overlay) {
                 t.latency_overlay->set_display_mode(static_cast<mitigator::OverlayDisplayMode>(cmd.param_uint));

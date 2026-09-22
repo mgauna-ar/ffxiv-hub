@@ -76,6 +76,8 @@ enum class CommandId : uint32_t {
     SetHideConditions   = 34,
     /// param_uint is a hub::meter::MeterMetric
     SetMeterMetric      = 35,
+    /// Master switch for a whole plugin: hooks, telemetry and overlay all stop
+    SetPluginEnabled    = 36,
 };
 
 /// 2D Floating-point rectangle coordinates for overlay geometry

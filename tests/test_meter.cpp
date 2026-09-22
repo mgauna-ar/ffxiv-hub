@@ -649,7 +649,7 @@ TEST_CASE(MeterPlugin, PluginLifecycleAndConfig) {
     // Serialize default config to JSON
     hub::config::JsonValue json{hub::config::JsonValue::ObjectType{}};
     plugin.serialize_config(json);
-    TEST_ASSERT_TRUE(json["enabled"].as_bool(false));
+    TEST_ASSERT_TRUE(json["plugin_enabled"].as_bool(false));
     TEST_ASSERT_NEAR(json["inactivity_timeout_seconds"].as_double(0.0), 7.0, 0.01);
     TEST_ASSERT_TRUE(json["party_only"].as_bool(false));
 
@@ -663,6 +663,23 @@ TEST_CASE(MeterPlugin, PluginLifecycleAndConfig) {
     TEST_ASSERT_NEAR(plugin.engine().inactivity_timeout(), 10.0, 0.01);
     TEST_ASSERT_FALSE(plugin.config().party_only);
     TEST_ASSERT_NEAR(plugin.config().overlay.width, 950.0f, 0.01f);
+
+    // The master switch round-trips under the shared key, and the legacy
+    // "enabled" key an older config.json carries is still honoured.
+    plugin.set_enabled(false);
+    hub::config::JsonValue off{hub::config::JsonValue::ObjectType{}};
+    plugin.serialize_config(off);
+    TEST_ASSERT_FALSE(off["plugin_enabled"].as_bool(true));
+    plugin.set_enabled(true);
+    plugin.deserialize_config(off);
+    TEST_ASSERT_FALSE(plugin.is_enabled());
+
+    hub::config::JsonValue legacy{hub::config::JsonValue::ObjectType{}};
+    legacy["enabled"] = hub::config::JsonValue(false);
+    plugin.set_enabled(true);
+    plugin.deserialize_config(legacy);
+    TEST_ASSERT_FALSE(plugin.is_enabled());
+    plugin.set_enabled(true);
 
     plugin.shutdown();
 }

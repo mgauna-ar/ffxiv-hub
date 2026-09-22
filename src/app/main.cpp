@@ -49,6 +49,10 @@ bool close_to_tray_enabled() {
 }
 bool g_running = true;
 
+/// DPI scale of the main window, cached for WM_GETMINMAXINFO, which fires before
+/// the render loop has a chance to consult the theme.
+float g_dpi_scale = 1.0f;
+
 void CreateRenderTarget() {
     ID3D11Texture2D* pBackBuffer = nullptr;
     g_pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer));
@@ -146,6 +150,18 @@ LRESULT WINAPI MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 #endif
 
     switch (msg) {
+        case WM_GETMINMAXINFO: {
+            // The layout reflows down to this size and no further, so the window
+            // cannot be dragged to a width where cards and tables have nowhere to go.
+            auto* mmi = reinterpret_cast<MINMAXINFO*>(lParam);
+            RECT frame{ 0, 0,
+                        static_cast<LONG>(hub::app::ui::metrics::WindowMinW * g_dpi_scale),
+                        static_cast<LONG>(hub::app::ui::metrics::WindowMinH * g_dpi_scale) };
+            AdjustWindowRect(&frame, WS_OVERLAPPEDWINDOW, FALSE);
+            mmi->ptMinTrackSize.x = frame.right - frame.left;
+            mmi->ptMinTrackSize.y = frame.bottom - frame.top;
+            return 0;
+        }
         case WM_SIZE:
             if (wParam == SIZE_MINIMIZED) {
                 g_window_minimized = true;
@@ -262,6 +278,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     // so the font and hardcoded layout constants can be sized to match, instead of rendering
     // at a fixed 96-DPI pixel size on today's scaled displays.
     const float dpi_scale = static_cast<float>(GetDpiForWindow(hwnd)) / 96.0f;
+    g_dpi_scale = dpi_scale;
 
     // Best-effort: make the native titlebar match the app's dark theme instead of the default
     // light chrome. No-ops silently on pre-1809 Windows.
@@ -425,9 +442,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
         ImGui::SameLine();
 
         // 2. Main Content View Area
+        // Equal padding on all four edges, and a scrollbar so a page that outgrows
+        // the window is reachable instead of clipped at the bottom.
         const float page_pad = hub::app::ui::m(hub::app::ui::metrics::PagePad);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(page_pad, page_pad));
-        ImGui::BeginChild("##MainContentViewArea", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None);
+        ImGui::BeginChild("##MainContentViewArea", ImVec2(0.0f, 0.0f),
+                          ImGuiChildFlags_AlwaysUseWindowPadding);
 
         switch (app_state.current_view()) {
             case hub::app::DesktopView::Dashboard:

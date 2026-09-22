@@ -87,7 +87,7 @@ void render_config_card(AppState& app_state) {
     if (button(ICON_SAVE "  Save now", ButtonKind::Secondary, ButtonSize::Medium)) {
         app_state.config_manager().save();
     }
-    ImGui::SameLine(0.0f, m(8.0f));
+    same_line_if_room(m(metrics::ButtonLg));
     if (button(ICON_REFRESH "  Reload from disk", ButtonKind::Secondary, ButtonSize::Large)) {
         app_state.config_manager().load();
         // The payload holds its own copy and autosaves over hand edits, so it has
@@ -103,7 +103,7 @@ void render_config_card(AppState& app_state) {
     if (button(ICON_RESET "  Reset all settings", ButtonKind::Danger, ButtonSize::Large)) {
         ImGui::OpenPopup("##ConfirmResetDefaults");
     }
-    ImGui::SameLine(0.0f, m(8.0f));
+    same_line_if_room(m(metrics::ButtonMd));
 
     // Previously the only way to unload the payload was killing the game.
     ImGui::BeginDisabled(!app_state.is_connected());
@@ -156,7 +156,7 @@ void render_log_card() {
     if (button(ICON_FILE "  Open log in editor", ButtonKind::Secondary, ButtonSize::Large)) {
         os::Logger::open_log_file();
     }
-    ImGui::SameLine(0.0f, m(8.0f));
+    same_line_if_room(m(metrics::ButtonMd));
     if (button(ICON_FOLDER "  Logs folder", ButtonKind::Secondary, ButtonSize::Medium)) {
         os::Logger::open_config_folder();
     }
@@ -197,8 +197,8 @@ void render_view_settings(AppState& app_state) {
                 "Desktop manager options, system integration and diagnostic logs");
     ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
 
-    // Top band splits into two columns when there is room; the log below always
-    // takes whatever height is left.
+    // Top band uses the same responsive grid as every plugin's settings tab; the
+    // log below always takes whatever height is left.
     const int columns = settings_columns(2);
     const float col_w = split_w(columns);
 

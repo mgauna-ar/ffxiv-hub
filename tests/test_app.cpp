@@ -332,3 +332,41 @@ TEST_CASE(AppState, PullHistoryIndexMatchesFullSummaries) {
 
     state.shutdown();
 }
+
+TEST_CASE(AppState, PluginMasterSwitchPersistsAndMirrors) {
+    app::AppState state;
+    TEST_ASSERT(state.initialize());
+
+    TEST_ASSERT(state.is_plugin_enabled(PluginId::CombatMeter));
+    TEST_ASSERT(state.is_plugin_enabled(PluginId::LatencyMitigator));
+    TEST_ASSERT_EQ(state.enabled_plugin_count(), 2u);
+
+    state.set_plugin_enabled(PluginId::CombatMeter, false);
+    TEST_ASSERT(!state.is_plugin_enabled(PluginId::CombatMeter));
+    TEST_ASSERT(state.is_plugin_enabled(PluginId::LatencyMitigator));
+    TEST_ASSERT_EQ(state.enabled_plugin_count(), 1u);
+
+    // The dashboard and sidebar read the mirrored list rather than the config,
+    // so the two must not drift.
+    for (const auto& plugin : state.registered_plugins()) {
+        TEST_ASSERT_EQ(plugin.active, plugin.id != PluginId::CombatMeter);
+    }
+
+    // The payload reads the config off disk on load, so the choice has to survive
+    // a save/load round-trip under the shared key.
+    auto& cfg = config::ConfigManager::instance();
+    cfg.save();
+    cfg.load();
+    TEST_ASSERT(!cfg.root()["combat_meter"]["plugin_enabled"].as_bool(true));
+    TEST_ASSERT(!state.is_plugin_enabled(PluginId::CombatMeter));
+
+    state.set_plugin_enabled(PluginId::CombatMeter, true);
+    TEST_ASSERT(state.is_plugin_enabled(PluginId::CombatMeter));
+    TEST_ASSERT_EQ(state.enabled_plugin_count(), 2u);
+
+    // Ids that own no config section answer "enabled" and are never written out.
+    TEST_ASSERT(state.plugin_config_section(PluginId::Core) == nullptr);
+    TEST_ASSERT(state.is_plugin_enabled(PluginId::Core));
+
+    state.shutdown();
+}
