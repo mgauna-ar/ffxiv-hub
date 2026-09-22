@@ -110,7 +110,8 @@ void end_page_header();
 
 // ------------------------------------------------------------- indicators ---
 
-/// Rounded status badge with a leading dot.
+/// Rounded status badge with a leading dot. Clamped to the width available, so a
+/// long label is cut rather than overflowing its container.
 void pill(const char* text, uint32_t color);
 
 /// Gradient bar drawn behind the current table row, left-aligned, fraction of full width.

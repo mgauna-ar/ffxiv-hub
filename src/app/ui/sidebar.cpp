@@ -83,14 +83,27 @@ bool nav_item(const NavItem& item, bool selected, bool disabled) {
     return clicked;
 }
 
-uint32_t status_color_for(ConnectionState state) {
-    switch (state) {
-        case ConnectionState::Connected:           return colors::SuccessLight;
-        case ConnectionState::Injecting:
-        case ConnectionState::InjectedWaitingPipe: return colors::WarningLight;
+/// AppState::connection_status_string() is written for wide surfaces and runs to
+/// ~42 characters; the sidebar is 220px, so the badge gets a short form and the
+/// full sentence becomes the tooltip.
+struct StatusBadge {
+    const char* label;
+    uint32_t color;
+};
+
+StatusBadge status_badge_for(const AppState& app_state) {
+    if (app_state.is_access_denied()) {
+        return { "Access denied", colors::Danger };
+    }
+    switch (app_state.connection_state()) {
+        case ConnectionState::Connected:
+            return app_state.hooks_installed() ? StatusBadge{ "Hooked & active", colors::SuccessLight }
+                                               : StatusBadge{ "Hooks missing", colors::Danger };
+        case ConnectionState::Injecting:           return { "Injecting", colors::WarningLight };
+        case ConnectionState::InjectedWaitingPipe: return { "Connecting", colors::WarningLight };
         case ConnectionState::WaitingForGame:      break;
     }
-    return colors::TextDim;
+    return { "Searching for game", colors::TextDim };
 }
 
 } // namespace
@@ -147,22 +160,32 @@ void render_sidebar(AppState& app_state) {
     }
 
     // ---- footer ----
-    const float footer_height = m(62.0f);
-    const float remaining = ImGui::GetContentRegionAvail().y;
-    if (remaining > footer_height) {
-        ImGui::Dummy(ImVec2(0.0f, remaining - footer_height));
+    // Measured from the live font metrics rather than a fixed pixel budget: a
+    // short reserve clips the last line and puts the panel into scroll.
+    const float line_h = ImGui::GetTextLineHeight();
+    const float gap_y = ImGui::GetStyle().ItemSpacing.y;
+    const float footer_height = m(11.0f) + (line_h + m(6.0f)) + gap_y + line_h + m(10.0f);
+
+    const float footer_top = ImGui::GetWindowHeight() - footer_height;
+    if (ImGui::GetCursorPosY() < footer_top) {
+        ImGui::SetCursorPosY(footer_top);
     }
 
     const ImVec2 rule = ImGui::GetCursorScreenPos();
     dl->AddLine(rule, ImVec2(rule.x + ImGui::GetContentRegionAvail().x, rule.y),
                 colors::BorderSubtle, m(1.0f));
-    ImGui::Dummy(ImVec2(0.0f, m(9.0f)));
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + m(11.0f));
 
     ImGui::Indent(m(6.0f));
-    pill(app_state.connection_status_string().c_str(), status_color_for(app_state.connection_state()));
+    const StatusBadge badge = status_badge_for(app_state);
+    pill(badge.label, badge.color);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s", app_state.connection_status_string().c_str());
+    }
+
     const uint32_t pid = app_state.game_pid();
     if (pid != 0) {
-        text_colored_u32(colors::TextFaint, "ffxiv_dx11.exe - PID %u", pid);
+        text_colored_u32(colors::TextFaint, "PID %u", pid);
     } else {
         text_colored_u32(colors::TextFaint, "no game process");
     }

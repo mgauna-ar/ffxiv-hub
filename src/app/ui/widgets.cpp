@@ -302,14 +302,22 @@ void pill(const char* text, uint32_t color) {
     const float pad_x = m(9.0f);
     const float dot_r = m(3.0f);
     const float height = label.y + m(6.0f);
-    const float width = label.x + pad_x * 2.0f + dot_r * 4.0f;
+    // Clamped to the space available: a status string long enough to overflow its
+    // container would otherwise push a scrollbar onto the whole panel.
+    const float width = std::min(label.x + pad_x * 2.0f + dot_r * 4.0f,
+                                 std::max(ImGui::GetContentRegionAvail().x, m(40.0f)));
 
     const ImVec2 p = ImGui::GetCursorScreenPos();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(p, ImVec2(p.x + width, p.y + height),
                       colors::with_alpha(color, 0.13f), height * 0.5f);
     dl->AddCircleFilled(ImVec2(p.x + pad_x, p.y + height * 0.5f), dot_r, color);
-    dl->AddText(ImVec2(p.x + pad_x + dot_r * 3.0f, p.y + m(3.0f)), color, text);
+
+    const float text_x = p.x + pad_x + dot_r * 3.0f;
+    dl->PushClipRect(ImVec2(text_x, p.y), ImVec2(p.x + width - pad_x * 0.5f, p.y + height), true);
+    dl->AddText(ImVec2(text_x, p.y + m(3.0f)), color, text);
+    dl->PopClipRect();
+
     ImGui::Dummy(ImVec2(width, height));
 }
 
