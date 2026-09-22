@@ -50,6 +50,9 @@ public:
 private:
     using FnGetObjectByEntityId = game::CharacterObject*(void*, uint32_t);
 
+    /// Fields of a Character the game handed us a pointer to; SEH-guarded on Windows.
+    static bool read_character_object(const void* character_ptr, ipc::ActorInfoPacket& out_packet);
+
     /// Cache, register and publish a freshly read actor. Returns false when the
     /// cached copy is identical, i.e. nothing was sent.
     bool publish_actor(const ipc::ActorInfoPacket& packet, meter::CombatantRegistry* registry);
@@ -68,7 +71,14 @@ private:
         /// Last time the object table was read for this actor. Monsters and NPCs
         /// have job_id 0 forever, so "has a job" cannot be the freshness test.
         std::chrono::steady_clock::time_point last_read{};
+        /// HP is left out of the change test so it does not resend every tick, but
+        /// a death or a raise has to reach the app's wipe detection.
+        bool dead{false};
     };
+
+    [[nodiscard]] static bool is_dead(uint32_t current_hp, uint32_t max_hp) noexcept {
+        return max_hp > 0 && current_hp == 0;
+    }
 
     /// How long a cached actor is trusted before the object table is read again.
     static constexpr std::chrono::seconds kActorCacheTtl{5};

@@ -26,9 +26,19 @@ std::vector<const CombatantStats*> CombatOverlay::sorted_combatants(
     std::vector<const CombatantStats*> list;
     list.reserve(summary.combatants.size());
 
+    // "Party" is the synced party list; is_friendly() would also admit any other
+    // player nearby. Solo play has no list, so it falls back to friendly rows
+    // rather than an empty table.
+    const bool grouped = std::any_of(summary.combatants.begin(), summary.combatants.end(),
+        [](const CombatantStats& c) { return c.is_party_member; });
+    const auto in_party = [grouped](const CombatantStats& c) {
+        if (!grouped) return c.is_friendly();
+        return c.is_party_member || c.is_local_player || c.actor_type == ActorType::LimitBreak;
+    };
+
     for (const auto& c : summary.combatants) {
         if (c.is_pet) continue;  // Merged into the owner's totals.
-        if (party_only && !c.is_friendly()) continue;
+        if (party_only && !in_party(c)) continue;
         if (c.total_damage == 0 && c.total_healing == 0 && c.damage_taken == 0) continue;
         if (hide_inactive) {
             const uint64_t contribution = by_healing ? c.effective_healing : c.total_damage;

@@ -28,6 +28,9 @@ It ends in one of four ways:
 
 1. **Inactivity** — 7 seconds with no combat activity splits the encounter and archives it.
 2. **Wipe** — every synced party member confirmed dead. One survivor, or a raise, cancels it.
+   Party HP is read from the party list on each sync (every 1.5 s); a death or a raise is
+   republished to the desktop app so both sides see the wipe. A member whose HP has never
+   been read is not counted as dead.
 3. **Zone change** — any in-progress pull is finalised and archived.
 4. **Manual** — ended from the desktop app.
 
@@ -46,6 +49,8 @@ to the player and merges the stats there:
 - Late attribution packets consolidate into the owner rather than leaving a stray row.
 - Pet damage counts toward the player's total and DPS.
 - It is also tracked separately, so you can see how much of a total came from the pet.
+  A pet attributed late counts once toward that figure, and if the owner had no row yet,
+  the merged row takes the owner's name and job rather than the pet's.
 - Pet skills appear in the player's own per-action breakdown.
 
 The result is no orphan rows: a raid table shows eight players, not eight players and
@@ -57,6 +62,14 @@ HPS is effective healing only. Overhealing is tracked and shown, but never count
 HPS — a healer topping off full-health party members should not out-rank one whose healing
 landed. Total healing is effective plus overheal, and the overheal percentage is measured
 against that total.
+
+Overheal is worked out in-game, as each heal is decoded: the heal is compared against how
+much HP its target was missing, read from the game at that moment. The game applies the HP
+change in a later packet, so that reading is still the pre-heal value. The split is made
+before the packet goes to the desktop app, so both views agree. A self-heal carried on an
+attack (a drain) is measured against the caster, not the enemy. Two heals landing on the
+same target before the game applies either one both see the same missing HP, so overheal
+is slightly under-counted in that case.
 
 ### Limit Break
 
@@ -73,7 +86,9 @@ never toward any individual's damage, DPS or share.
   are counted separately and kept out of the denominator for crit, DH and CDH rates.
   Including them would dilute every rate toward zero.
 - **Enemy damage to players** is tracked as damage taken on the target, and never added to
-  raid DPS.
+  raid DPS. Each hit of an AoE is booked on the target it actually hit, so a self-centred
+  AoE never lands on its caster and a raidwide never lands on the boss.
+- **Crit and direct hit** come from the game's severity bits (`0x20` and `0x40`) only.
 
 ---
 
@@ -106,7 +121,7 @@ not the intended interface.
 |---|---|---|---|
 | `plugin_enabled` | bool | `true` | Master switch. Off means no hook dispatch, no telemetry, no overlay. |
 | `inactivity_timeout_seconds` | float | `7.0` | Gap that splits one encounter from the next. |
-| `party_only` | bool | `false` | Restrict rows to party members. |
+| `party_only` | bool | `true` | In-game overlay only: restrict rows to the synced party and the Limit Break row. Solo there is no party list, so it keeps every friendly row. |
 | `show_bars` | bool | `true` | Job-coloured progress bars behind rows. |
 | `hide_inactive` | bool | `false` | Hide combatants with no activity. |
 | `refresh_interval_ms` | int | `500` | How often the displayed snapshot refreshes. |

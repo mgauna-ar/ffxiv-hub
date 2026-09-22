@@ -18,10 +18,40 @@ namespace hub::mitigator {
 
 namespace {
 
+/// What UseActionLocation left in the ActionManager, read in one guarded pass.
+struct UseActionState {
+    uint16_t sequence{0};
+    uint8_t is_casting{0};
+    uint8_t is_queued{0};
+    float cast_time{0.0f};
+    float elapsed_cast_time{0.0f};
+};
+
+void extract_use_action_state(const uint8_t* mgr, UseActionState& out) {
+    std::memcpy(&out.sequence, mgr + game::offsets::ACTION_MANAGER_CURRENT_SEQUENCE, sizeof(out.sequence));
+    std::memcpy(&out.is_casting, mgr + game::offsets::ACTION_MANAGER_IS_CASTING, sizeof(out.is_casting));
+    std::memcpy(&out.is_queued, mgr + game::offsets::ACTION_MANAGER_IS_QUEUED, sizeof(out.is_queued));
+    std::memcpy(&out.cast_time, mgr + game::offsets::ACTION_MANAGER_CAST_TIME, sizeof(out.cast_time));
+    std::memcpy(&out.elapsed_cast_time, mgr + game::offsets::ACTION_MANAGER_ELAPSED_CAST_TIME, sizeof(out.elapsed_cast_time));
+}
+
 // SEH-protected leaf functions for touching ActionManager memory. Kept free of
 // C++ objects requiring unwinding, matching this codebase's SafeCallOriginal*/
 // SafeRead* convention (src/payload/hook_manager.cpp, object_reader.cpp).
 #ifdef _WIN32
+bool SafeReadUseActionState(void* mgr, UseActionState& out) {
+    __try {
+        if (mgr != nullptr) {
+            extract_use_action_state(static_cast<const uint8_t*>(mgr), out);
+            return true;
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return false;
+}
+
 float SafeReadAnimationLock(void* mgr) {
     __try {
         if (mgr != nullptr) {
@@ -47,6 +77,12 @@ bool SafeWriteAnimationLock(void* mgr, float desired_lock) {
     return false;
 }
 #else
+bool SafeReadUseActionState(void* mgr, UseActionState& out) {
+    if (mgr == nullptr) return false;
+    extract_use_action_state(static_cast<const uint8_t*>(mgr), out);
+    return true;
+}
+
 float SafeReadAnimationLock(void* mgr) {
     if (mgr == nullptr) return 0.0f;
     return *reinterpret_cast<float*>(static_cast<uint8_t*>(mgr) + game::offsets::ACTION_MANAGER_ANIMATION_LOCK);
@@ -117,7 +153,11 @@ void LatencyPlugin::deserialize_config(const config::JsonValue& in) {
     if (in.contains("target_ping_ms")) cfg.target_ping_ms = in["target_ping_ms"].as_double(cfg.target_ping_ms);
     if (in.contains("min_animation_lock_ms")) cfg.min_animation_lock_ms = in["min_animation_lock_ms"].as_double(cfg.min_animation_lock_ms);
     if (in.contains("max_animation_lock_ms")) cfg.max_animation_lock_ms = in["max_animation_lock_ms"].as_double(cfg.max_animation_lock_ms);
-    if (in.contains("rtt_sample_window")) cfg.rtt_sample_window = static_cast<size_t>(in["rtt_sample_window"].as_int(static_cast<int>(cfg.rtt_sample_window)));
+    if (in.contains("rtt_sample_window")) {
+        // A negative value would wrap to a huge size_t; anything below 1 keeps the current window.
+        const int window = in["rtt_sample_window"].as_int(static_cast<int>(cfg.rtt_sample_window));
+        if (window >= 1) cfg.rtt_sample_window = static_cast<size_t>(window);
+    }
     if (in.contains("safety_margin_ms")) cfg.safety_margin_ms = in["safety_margin_ms"].as_double(cfg.safety_margin_ms);
     if (in.contains("spike_multiplier")) cfg.spike_multiplier = in["spike_multiplier"].as_double(cfg.spike_multiplier);
 
@@ -156,24 +196,27 @@ void LatencyPlugin::on_use_action_location(
 
     m_action_manager.store(action_mgr);
 
-    const auto* mgr_bytes = reinterpret_cast<const uint8_t*>(action_mgr);
-    uint16_t current_sequence = 0;
-    std::memcpy(&current_sequence, mgr_bytes + game::offsets::ACTION_MANAGER_CURRENT_SEQUENCE, sizeof(uint16_t));
+    UseActionState state{};
+    if (!SafeReadUseActionState(action_mgr, state)) {
+        return;
+    }
 
-    bool is_casting = false;
-    std::memcpy(&is_casting, mgr_bytes + game::offsets::ACTION_MANAGER_IS_CASTING, sizeof(bool));
+    const auto now = std::chrono::steady_clock::now();
+    const bool is_casting = state.is_casting != 0;
 
-    float cast_time = 0.0f;
+    // Second caster-tax guard, independent of the is_cast flag on the request. The
+    // cast in progress may have started before this press, so track what is left.
     if (is_casting) {
-        std::memcpy(&cast_time, mgr_bytes + game::offsets::ACTION_MANAGER_CAST_TIME, sizeof(float));
+        m_mitigator.record_cast_begin(action_id, state.cast_time - state.elapsed_cast_time, now);
     }
 
     m_mitigator.record_action_request(
         action_id,
-        current_sequence,
-        std::chrono::steady_clock::now(),
+        state.sequence,
+        now,
         is_casting,
-        cast_time
+        is_casting ? state.cast_time : 0.0f,
+        state.is_queued != 0
     );
 }
 
@@ -227,6 +270,10 @@ void LatencyPlugin::on_receive_action_effect(
     if (res.applied) {
         const float adjusted_seconds = static_cast<float>(res.adjusted_lock_ms / 1000.0);
         SafeWriteAnimationLock(mgr, adjusted_seconds);
+    }
+
+    if (res.spike_filtered && m_overlay) {
+        m_overlay->notify_spike_filtered();
     }
 
     if (m_ring_buffer) {

@@ -41,6 +41,7 @@ namespace constants {
     constexpr double PING_GRADE_POOR_MS = 340.0;
 
     constexpr size_t MIN_SAMPLES_FOR_MEDIAN_FILTER = 5;
+    constexpr size_t MAX_RTT_SAMPLE_WINDOW = 64;
     constexpr double MIN_OUTLIER_TOLERANCE_MS = 50.0;
     constexpr double JITTER_SPIKE_MULTIPLIER = 3.0;
 
@@ -96,6 +97,9 @@ struct ActionRequestInfo {
     TimePoint  timestamp{std::chrono::steady_clock::now()};
     bool       is_cast{false};
     float      cast_duration_seconds{0.0f};
+    /// Stamped at key-press but sent when the lock/recast runs out, so the
+    /// elapsed time to its response includes the queue wait.
+    bool       is_queued{false};
 };
 
 /// Result of animation lock calculation for a server response

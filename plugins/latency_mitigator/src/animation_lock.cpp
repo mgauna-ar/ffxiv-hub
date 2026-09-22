@@ -4,22 +4,37 @@
 
 namespace hub::mitigator {
 
-AnimationLockMitigator::AnimationLockMitigator(const MitigationConfig& config)
-    : m_config(config),
-      m_rtt_tracker(config.rtt_sample_window, config.target_ping_ms > 0 ? config.target_ping_ms * 3.0 : 50.0) {
-    m_config.min_animation_lock_ms = std::max(constants::ABSOLUTE_MIN_ANIMATION_LOCK_FLOOR_MS, m_config.min_animation_lock_ms);
+namespace {
+
+/// A hand-edited config can carry values that would cut the lock by more than the
+/// measured round trip, or break the sample window. Every config path ends here.
+MitigationConfig sanitize(MitigationConfig cfg) {
+    cfg.target_ping_ms = std::max(0.0, cfg.target_ping_ms);
+    cfg.safety_margin_ms = std::max(0.0, cfg.safety_margin_ms);
+    cfg.spike_multiplier = std::max(1.0, cfg.spike_multiplier);
+    cfg.min_animation_lock_ms = std::max(constants::ABSOLUTE_MIN_ANIMATION_LOCK_FLOOR_MS, cfg.min_animation_lock_ms);
+    cfg.max_animation_lock_ms = std::max(cfg.min_animation_lock_ms, cfg.max_animation_lock_ms);
+    cfg.rtt_sample_window = std::clamp<size_t>(cfg.rtt_sample_window, 1, constants::MAX_RTT_SAMPLE_WINDOW);
+    return cfg;
 }
+
+} // namespace
+
+AnimationLockMitigator::AnimationLockMitigator(const MitigationConfig& config)
+    : m_config(sanitize(config)),
+      m_rtt_tracker(m_config.rtt_sample_window, m_config.target_ping_ms > 0 ? m_config.target_ping_ms * 3.0 : 50.0) {}
 
 void AnimationLockMitigator::record_action_request(
     ActionId action_id,
     SequenceId sequence,
     TimePoint timestamp,
     bool is_cast,
-    float cast_duration_seconds
+    float cast_duration_seconds,
+    bool is_queued
 ) {
     std::lock_guard<std::mutex> lock(m_mutex);
     ++m_total_actions_requested;
-    m_seq_tracker.record_request(action_id, sequence, timestamp, is_cast, cast_duration_seconds);
+    m_seq_tracker.record_request(action_id, sequence, timestamp, is_cast, cast_duration_seconds, is_queued);
 }
 
 MitigationResult AnimationLockMitigator::calculate_mitigation(
@@ -63,7 +78,6 @@ MitigationResult AnimationLockMitigator::calculate_mitigation(
 
     const double baseline_rtt = m_rtt_tracker.get_smoothed_rtt_ms();
     const size_t samples_before = m_rtt_tracker.sample_count();
-    const bool is_cold_start = (samples_before < constants::MIN_SAMPLES_FOR_MEDIAN_FILTER);
 
     double measured_rtt = 0.0;
     const auto elapsed = std::chrono::duration_cast<Milliseconds>(
@@ -74,8 +88,12 @@ MitigationResult AnimationLockMitigator::calculate_mitigation(
 
     if (elapsed > 0.0 && elapsed < constants::MAX_PLAUSIBLE_RTT_MS) {
         measured_rtt = elapsed;
-        effective_rtt = measured_rtt;
-        bool is_outlier = false;
+        // A queued request was stamped at key-press, so its elapsed time includes the
+        // wait in the queue: an upper bound on the round trip, never a measurement of it.
+        double window_sample = matched_req->is_queued
+            ? std::min(measured_rtt, m_rtt_tracker.get_median_rtt_ms())
+            : measured_rtt;
+        effective_rtt = window_sample;
 
         if (samples_before >= constants::MIN_SAMPLES_FOR_MEDIAN_FILTER) {
             const double median_rtt = m_rtt_tracker.get_median_rtt_ms();
@@ -87,27 +105,41 @@ MitigationResult AnimationLockMitigator::calculate_mitigation(
             });
             const double outlier_threshold = median_rtt + outlier_tolerance;
             if (effective_rtt > outlier_threshold) {
+                // The spike stays out of the EMA but still enters the median window,
+                // so a sustained rise is eventually learned instead of rejected forever.
                 effective_rtt = median_rtt;
-                is_outlier = true;
                 res.spike_filtered = true;
             }
-        } else if (is_cold_start) {
+        } else {
             const double cold_start_cap = (samples_before == 0)
                 ? 200.0
                 : (baseline_rtt + std::max(constants::MIN_OUTLIER_TOLERANCE_MS, baseline_rtt * 0.5));
             if (effective_rtt > cold_start_cap) {
                 effective_rtt = cold_start_cap;
-                is_outlier = true;
+                window_sample = cold_start_cap;
                 res.cold_start_guard = true;
             }
         }
 
-        const double sample_to_ingest = is_outlier ? effective_rtt : measured_rtt;
-        m_rtt_tracker.add_sample(sample_to_ingest);
+        m_rtt_tracker.add_sample(window_sample, effective_rtt);
     }
 
     res.measured_rtt_ms = measured_rtt;
     res.smoothed_rtt_ms = m_rtt_tracker.get_smoothed_rtt_ms();
+
+    // Above the ceiling is either a malformed packet or a legitimately long lock such
+    // as a Limit Break's. Neither is safe to shorten, so it passes through untouched.
+    if (original_lock_ms > m_config.max_animation_lock_ms) {
+        res.adjusted_lock_ms = original_lock_ms;
+        res.clamped_by_ceiling = true;
+        return res;
+    }
+
+    // Already at or under the floor: there is nothing to take off.
+    if (original_lock_ms <= m_config.min_animation_lock_ms) {
+        res.adjusted_lock_ms = original_lock_ms;
+        return res;
+    }
 
     double latency_delta = (effective_rtt - m_config.target_ping_ms) - m_config.safety_margin_ms;
     if (latency_delta < 0.0) {
@@ -120,15 +152,6 @@ MitigationResult AnimationLockMitigator::calculate_mitigation(
         target_lock = m_config.min_animation_lock_ms;
         res.clamped_by_floor = true;
         ++m_total_floor_clamps;
-    }
-
-    if (original_lock_ms <= m_config.max_animation_lock_ms && target_lock > m_config.max_animation_lock_ms) {
-        target_lock = m_config.max_animation_lock_ms;
-        res.clamped_by_ceiling = true;
-    }
-
-    if (target_lock > original_lock_ms && original_lock_ms >= m_config.min_animation_lock_ms) {
-        target_lock = original_lock_ms;
     }
 
     res.adjusted_lock_ms = target_lock;
@@ -175,9 +198,8 @@ MitigationConfig AnimationLockMitigator::get_config() const {
 
 void AnimationLockMitigator::set_config(const MitigationConfig& config) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_config = config;
-    m_config.min_animation_lock_ms = std::max(constants::ABSOLUTE_MIN_ANIMATION_LOCK_FLOOR_MS, m_config.min_animation_lock_ms);
-    m_rtt_tracker.set_window_size(config.rtt_sample_window);
+    m_config = sanitize(config);
+    m_rtt_tracker.set_window_size(m_config.rtt_sample_window);
 }
 
 void AnimationLockMitigator::set_dry_run(bool dry_run) {
@@ -192,17 +214,20 @@ void AnimationLockMitigator::set_enabled(bool enabled) {
 
 void AnimationLockMitigator::set_target_ping_ms(double target_ping_ms) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_config.target_ping_ms = std::max(0.0, target_ping_ms);
+    m_config.target_ping_ms = target_ping_ms;
+    m_config = sanitize(m_config);
 }
 
 void AnimationLockMitigator::set_min_animation_lock_ms(double min_lock_ms) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_config.min_animation_lock_ms = std::max(constants::ABSOLUTE_MIN_ANIMATION_LOCK_FLOOR_MS, min_lock_ms);
+    m_config.min_animation_lock_ms = min_lock_ms;
+    m_config = sanitize(m_config);
 }
 
 void AnimationLockMitigator::set_spike_multiplier(double multiplier) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_config.spike_multiplier = std::max(1.0, multiplier);
+    m_config.spike_multiplier = multiplier;
+    m_config = sanitize(m_config);
 }
 
 SessionStats AnimationLockMitigator::get_session_stats() const {

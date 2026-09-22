@@ -43,16 +43,18 @@ bool ObjectReader::publish_actor(const ipc::ActorInfoPacket& packet, meter::Comb
     bool changed = true;
     {
         std::lock_guard<std::mutex> lock(m_cache_mutex);
+        const bool dead = is_dead(packet.current_hp, packet.max_hp);
         auto it = m_actor_cache.find(packet.entity_id);
         if (it != m_actor_cache.end()) {
             changed = it->second.owner_id != packet.owner_id ||
                       it->second.job_id != packet.job_id ||
                       it->second.max_hp != packet.max_hp ||
-                      it->second.name != packet.name;
+                      it->second.name != packet.name ||
+                      it->second.dead != dead;
         }
         m_actor_cache[packet.entity_id] = CachedActor{
             packet.owner_id, packet.job_id, packet.max_hp, packet.name,
-            std::chrono::steady_clock::now()
+            std::chrono::steady_clock::now(), dead
         };
     }
     if (!changed) {
@@ -85,8 +87,7 @@ void ObjectReader::inspect_and_sync_actor_direct(const void* character_ptr, mete
     // The action hook fires several times a second per actor, so this goes
     // through the same cache as the object-table path rather than pushing an
     // identical packet on every effect.
-    if (detail::extract_character_fields(
-            reinterpret_cast<const game::CharacterObject*>(character_ptr), packet)) {
+    if (read_character_object(character_ptr, packet)) {
         publish_actor(packet, registry);
     }
 }
@@ -234,6 +235,10 @@ static bool SafeReadParty(
 ObjectReader::ObjectReader(RingBuffer* ring_buffer)
     : m_ring_buffer(ring_buffer) {}
 
+bool ObjectReader::read_character_object(const void* character_ptr, ipc::ActorInfoPacket& out_packet) {
+    return SafeReadCharacterFromObject(static_cast<const game::CharacterObject*>(character_ptr), out_packet);
+}
+
 bool ObjectReader::initialize() {
     if (m_initialized) return true;
 
@@ -310,15 +315,21 @@ void ObjectReader::sync_party(meter::CombatantRegistry* registry) {
         const auto& m = extracted.members[i];
         if (m.entity_id == 0) continue;
 
+        const bool dead = is_dead(m.current_hp, m.max_hp);
         bool actor_changed = false;
         {
             std::lock_guard<std::mutex> lock(m_cache_mutex);
             auto it = m_actor_cache.find(m.entity_id);
-            if (it == m_actor_cache.end() || it->second.job_id != m.job_id || it->second.name != m.name) {
+            if (it == m_actor_cache.end() || it->second.job_id != m.job_id || it->second.name != m.name ||
+                it->second.dead != dead) {
                 m_actor_cache[m.entity_id] =
-                    CachedActor{0, m.job_id, m.max_hp, m.name, std::chrono::steady_clock::now()};
+                    CachedActor{0, m.job_id, m.max_hp, m.name, std::chrono::steady_clock::now(), dead};
                 actor_changed = true;
             }
+        }
+        // The local engine takes every reading; only a death or raise goes on the wire.
+        if (registry) {
+            registry->update_hp(m.entity_id, m.current_hp, m.max_hp);
         }
         if (!actor_changed) continue;
 
@@ -414,6 +425,10 @@ namespace hub::payload {
 
 ObjectReader::ObjectReader(RingBuffer* ring_buffer)
     : m_ring_buffer(ring_buffer) {}
+
+bool ObjectReader::read_character_object(const void* character_ptr, ipc::ActorInfoPacket& out_packet) {
+    return detail::extract_character_fields(static_cast<const game::CharacterObject*>(character_ptr), out_packet);
+}
 
 bool ObjectReader::initialize() {
     m_initialized = true;

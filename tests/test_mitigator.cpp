@@ -7,6 +7,7 @@
 #include "mitigator/cast_tracker.hpp"
 #include "mitigator/animation_lock.hpp"
 #include "mitigator/latency_plugin.hpp"
+#include "mitigator/latency_overlay.hpp"
 #include <thread>
 #include <chrono>
 #include <cstring>
@@ -407,4 +408,164 @@ TEST_CASE(Mitigator, DisabledPluginIgnoresHooksAndPersistsTheChoice) {
     plugin.set_plugin_enabled(true);
     plugin.on_use_action_location(mgr, 0, 700, 0, nullptr, 0, /*result=*/1);
     TEST_ASSERT_EQ(plugin.mitigator().get_sequence_tracker().pending_count(), 1u);
+}
+
+namespace {
+
+/// Feeds `count` un-queued round trips of `rtt_ms` straight into the mitigator,
+/// with fabricated timestamps so the test does not have to sleep.
+std::chrono::steady_clock::time_point seed_rtt(AnimationLockMitigator& mit, int count, int rtt_ms,
+                                               std::chrono::steady_clock::time_point t, uint32_t& seq) {
+    for (int i = 0; i < count; ++i) {
+        mit.record_action_request(900, ++seq, t);
+        (void)mit.calculate_mitigation(900, seq, 600.0, t + std::chrono::milliseconds(rtt_ms));
+        t += std::chrono::seconds(1);
+    }
+    return t;
+}
+
+} // namespace
+
+TEST_CASE(Mitigator, QueuedRequestCannotCutByItsQueueWait) {
+    AnimationLockMitigator mit;
+    uint32_t seq = 0;
+    auto t = seed_rtt(mit, 5, 40, std::chrono::steady_clock::now(), seq);
+
+    // Pressed 45ms before the lock ran out - inside the spike tolerance, so the filter
+    // alone would take it as a real 85ms round trip. Only the 40ms may come off.
+    mit.record_action_request(901, ++seq, t, false, 0.0f, /*is_queued=*/true);
+    const auto res = mit.calculate_mitigation(901, seq, 600.0, t + std::chrono::milliseconds(85));
+
+    TEST_ASSERT_NEAR(res.measured_rtt_ms, 85.0, 1.0);
+    TEST_ASSERT_FALSE(res.spike_filtered);
+    TEST_ASSERT_NEAR(res.adjusted_lock_ms, 600.0 - (40.0 - 15.0), 0.5);
+    TEST_ASSERT_NEAR(mit.get_rtt_tracker().get_median_rtt_ms(), 40.0, 0.01);
+
+    // A queued response faster than the median still counts as the upper bound it is.
+    t += std::chrono::seconds(1);
+    mit.record_action_request(902, ++seq, t, false, 0.0f, /*is_queued=*/true);
+    const auto fast = mit.calculate_mitigation(902, seq, 600.0, t + std::chrono::milliseconds(30));
+    TEST_ASSERT_NEAR(fast.adjusted_lock_ms, 600.0 - (30.0 - 15.0), 0.5);
+}
+
+TEST_CASE(Mitigator, SustainedRttRiseIsLearnedButSingleSpikeIsNot) {
+    AnimationLockMitigator mit;
+    uint32_t seq = 0;
+    auto t = seed_rtt(mit, 10, 30, std::chrono::steady_clock::now(), seq);
+
+    // One spike: filtered, and the median does not move.
+    mit.record_action_request(910, ++seq, t);
+    const auto spike = mit.calculate_mitigation(910, seq, 600.0, t + std::chrono::milliseconds(150));
+    TEST_ASSERT_TRUE(spike.spike_filtered);
+    TEST_ASSERT_NEAR(mit.get_rtt_tracker().get_median_rtt_ms(), 30.0, 0.01);
+    t += std::chrono::seconds(1);
+
+    // The route really changed: within about half a window the new level is accepted.
+    MitigationResult last{};
+    for (int i = 0; i < 20; ++i) {
+        mit.record_action_request(911, ++seq, t);
+        last = mit.calculate_mitigation(911, seq, 600.0, t + std::chrono::milliseconds(150));
+        t += std::chrono::seconds(1);
+    }
+    TEST_ASSERT_FALSE(last.spike_filtered);
+    TEST_ASSERT_NEAR(mit.get_rtt_tracker().get_median_rtt_ms(), 150.0, 0.01);
+    TEST_ASSERT_TRUE(mit.get_rtt_tracker().get_smoothed_rtt_ms() > 130.0);
+}
+
+TEST_CASE(Mitigator, LockAboveCeilingPassesThroughUntouched) {
+    AnimationLockMitigator mit;
+    const auto t0 = std::chrono::steady_clock::now();
+
+    mit.record_action_request(920, 1, t0);
+    const auto res = mit.calculate_mitigation(920, 1, 4000.0, t0 + std::chrono::milliseconds(100));
+
+    TEST_ASSERT_TRUE(res.clamped_by_ceiling);
+    TEST_ASSERT_FALSE(res.applied);
+    TEST_ASSERT_NEAR(res.adjusted_lock_ms, 4000.0, 0.01);
+    TEST_ASSERT_NEAR(res.delay_reduced_ms, 0.0, 0.01);
+    // The round trip itself was fine and still feeds the tracker.
+    TEST_ASSERT_EQ(mit.get_rtt_tracker().sample_count(), 1u);
+}
+
+TEST_CASE(Mitigator, LockAtOrBelowFloorIsNotReportedAsClamped) {
+    AnimationLockMitigator mit;
+    const auto t0 = std::chrono::steady_clock::now();
+
+    mit.record_action_request(930, 1, t0);
+    const auto res = mit.calculate_mitigation(930, 1, 15.0, t0 + std::chrono::milliseconds(100));
+
+    TEST_ASSERT_FALSE(res.clamped_by_floor);
+    TEST_ASSERT_FALSE(res.applied);
+    TEST_ASSERT_NEAR(res.adjusted_lock_ms, 15.0, 0.01);
+    TEST_ASSERT_EQ(mit.get_session_stats().total_floor_clamps, 0u);
+}
+
+TEST_CASE(Mitigator, HandEditedConfigIsSanitised) {
+    LatencyPlugin plugin;
+    hub::config::JsonValue doc{hub::config::JsonValue::ObjectType{}};
+    doc["target_ping_ms"] = hub::config::JsonValue(-50.0);
+    doc["safety_margin_ms"] = hub::config::JsonValue(-10.0);
+    doc["rtt_sample_window"] = hub::config::JsonValue(-3);
+    doc["spike_multiplier"] = hub::config::JsonValue(0.2);
+    doc["max_animation_lock_ms"] = hub::config::JsonValue(10.0);
+    plugin.deserialize_config(doc);
+
+    const auto cfg = plugin.mitigator().get_config();
+    TEST_ASSERT_NEAR(cfg.target_ping_ms, 0.0, 0.001);
+    TEST_ASSERT_NEAR(cfg.safety_margin_ms, 0.0, 0.001);
+    TEST_ASSERT_EQ(cfg.rtt_sample_window, constants::DEFAULT_RTT_SAMPLE_WINDOW);
+    TEST_ASSERT_NEAR(cfg.spike_multiplier, 1.0, 0.001);
+    TEST_ASSERT_TRUE(cfg.max_animation_lock_ms >= cfg.min_animation_lock_ms);
+
+    doc["rtt_sample_window"] = hub::config::JsonValue(1000);
+    plugin.deserialize_config(doc);
+    TEST_ASSERT_EQ(plugin.mitigator().get_config().rtt_sample_window, constants::MAX_RTT_SAMPLE_WINDOW);
+}
+
+TEST_CASE(Mitigator, UseActionFeedsCastTrackerWithRemainingCast) {
+    LatencyPlugin plugin;
+    plugin.initialize();
+
+    std::vector<uint8_t> mgr_buf(0x200, 0);
+    const uint8_t casting = 1;
+    const float cast_total = 2.5f;
+    const float cast_elapsed = 2.3f;
+    std::memcpy(mgr_buf.data() + game::offsets::ACTION_MANAGER_IS_CASTING, &casting, sizeof(casting));
+    std::memcpy(mgr_buf.data() + game::offsets::ACTION_MANAGER_CAST_TIME, &cast_total, sizeof(cast_total));
+    std::memcpy(mgr_buf.data() + game::offsets::ACTION_MANAGER_ELAPSED_CAST_TIME, &cast_elapsed, sizeof(cast_elapsed));
+
+    const auto before = std::chrono::steady_clock::now();
+    plugin.on_use_action_location(mgr_buf.data(), 0, 940, 0, nullptr, 0, /*result=*/1);
+
+    // 0.2s of cast left plus the grace window, not a fresh 2.5s from this press.
+    TEST_ASSERT_TRUE(plugin.mitigator().is_casting(before + std::chrono::milliseconds(150)));
+    TEST_ASSERT_FALSE(plugin.mitigator().is_casting(before + std::chrono::milliseconds(1000)));
+}
+
+TEST_CASE(Mitigator, FilteredSpikeLightsTheHud) {
+    LatencyPlugin plugin;
+    plugin.initialize();
+    plugin.set_connected(true);
+    LatencyOverlay hud;
+    plugin.set_overlay(&hud);
+    TEST_ASSERT_FALSE(hud.spike_active());
+
+    // A 2ms baseline, so the real elapsed time below is far outside the tolerance.
+    uint32_t seq = 0;
+    (void)seed_rtt(plugin.mitigator(), 5, 2, std::chrono::steady_clock::now() - std::chrono::seconds(30), seq);
+
+    std::vector<uint8_t> mgr_buf(0x200, 0);
+    plugin.on_use_action_location(mgr_buf.data(), 0, 950, 0, nullptr, 0, /*result=*/1);
+    plugin.on_pre_receive_action_effect();
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+
+    const float server_lock_seconds = 0.6f;
+    std::memcpy(mgr_buf.data() + game::offsets::ACTION_MANAGER_ANIMATION_LOCK, &server_lock_seconds, sizeof(float));
+    game::ActionEffectHeader hdr{};
+    hdr.action_id = 950;
+    plugin.on_receive_action_effect(0, nullptr, &hdr, nullptr, nullptr);
+
+    const auto now = std::chrono::steady_clock::now();
+    TEST_ASSERT_TRUE(hud.spike_active(now));
+    TEST_ASSERT_FALSE(hud.spike_active(now + std::chrono::milliseconds(2000)));
 }

@@ -150,7 +150,9 @@ Combatant& CombatantRegistry::register_actor(
     actor.role = job_to_role(job);
     actor.actor_type = actor_type;
     actor.max_hp = max_hp;
-    actor.current_hp = (current_hp > 0) ? current_hp : max_hp;
+    // 0 of a known max is a dead actor, not a missing reading; is_party_wiped()
+    // tells the two apart by max_hp.
+    actor.current_hp = current_hp;
     actor.is_pet = is_pet_actor;
     actor.is_party_member = is_party_member(entity_id);
     actor.is_local_player = (entity_id == m_local_player_id);
@@ -325,12 +327,18 @@ void CombatantRegistry::update_hp(EntityId entity_id, uint32_t current_hp, uint3
 }
 
 bool CombatantRegistry::is_party_wiped() const {
+    // Dead means an HP reading of 0 out of a known max. An actor whose HP was never
+    // read (max_hp 0, e.g. a party slot still loading) proves nothing either way.
+    const auto confirmed_dead = [](const Combatant& actor) {
+        return actor.max_hp > 0 && actor.current_hp == 0;
+    };
+
     if (!m_party_members.empty()) {
         size_t party_dead = 0;
 
         for (EntityId id : m_party_members) {
             auto it = m_actors.find(id);
-            if (it != m_actors.end() && it->second.current_hp == 0) {
+            if (it != m_actors.end() && confirmed_dead(it->second)) {
                 party_dead++;
             }
         }
@@ -346,7 +354,7 @@ bool CombatantRegistry::is_party_wiped() const {
     for (const auto& [id, actor] : m_actors) {
         if (actor.actor_type == ActorType::Player || actor.role != Role::None) {
             players_known++;
-            if (actor.current_hp == 0) {
+            if (confirmed_dead(actor)) {
                 players_dead++;
             }
         }

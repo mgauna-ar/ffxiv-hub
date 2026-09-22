@@ -8,20 +8,25 @@ namespace hub::mitigator {
 
 namespace {
     constexpr double EMA_SMOOTHING_FACTOR = 2.0;
+
+    bool is_plausible(double rtt_ms) {
+        return rtt_ms >= constants::MIN_PLAUSIBLE_RTT_MS && rtt_ms <= constants::MAX_PLAUSIBLE_RTT_MS;
+    }
 }
 
 RollingRttTracker::RollingRttTracker(size_t window_size, double initial_rtt_ms)
     : m_window_size(window_size > 0 ? window_size : constants::DEFAULT_RTT_SAMPLE_WINDOW),
       m_smoothed_rtt(initial_rtt_ms > 0.0 ? initial_rtt_ms : constants::DEFAULT_INITIAL_RTT_MS) {}
 
-void RollingRttTracker::add_sample(double rtt_ms) {
-    if (rtt_ms < constants::MIN_PLAUSIBLE_RTT_MS || rtt_ms > constants::MAX_PLAUSIBLE_RTT_MS) {
+void RollingRttTracker::add_sample(double window_ms, double smoothed_ms) {
+    if (!is_plausible(window_ms) || !is_plausible(smoothed_ms)) {
         return;
     }
+    const double rtt_ms = smoothed_ms;
 
     std::lock_guard<std::mutex> lock(m_mutex);
 
-    m_samples.push_back(rtt_ms);
+    m_samples.push_back(window_ms);
     if (m_samples.size() > m_window_size) {
         m_samples.pop_front();
     }

@@ -12,7 +12,11 @@ class RollingRttTracker {
 public:
     explicit RollingRttTracker(size_t window_size = 10, double initial_rtt_ms = 50.0);
 
-    void add_sample(double rtt_ms);
+    /// Records one round trip. The median window keeps `window_ms` as measured, so
+    /// a sustained shift moves the median within about half a window; the EMA and
+    /// jitter follow `smoothed_ms`, which the caller has already spike-filtered.
+    void add_sample(double window_ms, double smoothed_ms);
+    void add_sample(double rtt_ms) { add_sample(rtt_ms, rtt_ms); }
 
     [[nodiscard]] double get_smoothed_rtt_ms() const;
     [[nodiscard]] double get_median_rtt_ms() const;

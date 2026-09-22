@@ -26,7 +26,8 @@ public:
     void recalculate(double duration_seconds, const CombatantRegistry* registry = nullptr);
 
     /// Merges all metrics from one combatant into another (e.g. late pet attribution).
-    void merge_combatants(EntityId from_id, EntityId to_id);
+    /// A missing destination row is created from the registry's entry for it.
+    void merge_combatants(EntityId from_id, EntityId to_id, const CombatantRegistry& registry);
 
     /// Lookup statistics for a specific combatant.
     [[nodiscard]] const CombatantStats* find_stats(EntityId entity_id) const;

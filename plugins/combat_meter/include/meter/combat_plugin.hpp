@@ -73,6 +73,12 @@ public:
         m_actor_object_resolver = std::move(resolver);
     }
 
+    /// Reads an actor's current and max HP from the game's object table, so each
+    /// heal can be split into effective healing and overheal before either engine
+    /// sees it. Returns false when the actor cannot be read.
+    using HpResolver = std::function<bool(uint32_t entity_id, uint32_t& current_hp, uint32_t& max_hp)>;
+    void set_hp_resolver(HpResolver resolver) { m_hp_resolver = std::move(resolver); }
+
     /// Non-owning pointer to the in-game overlay this plugin drives via config load/commands.
     void set_overlay(CombatOverlay* overlay) noexcept { m_overlay = overlay; }
 
@@ -88,6 +94,7 @@ private:
     ipc::PacketRingBuffer* m_ring_buffer{nullptr};
     std::function<void(uint32_t)> m_actor_resolver;
     std::function<void(const void*)> m_actor_object_resolver;
+    HpResolver m_hp_resolver;
     CombatOverlay* m_overlay{nullptr};
     GameStateProvider* m_game_state{nullptr};
     uint32_t m_sequence{0};

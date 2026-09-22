@@ -161,6 +161,20 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
         }
     );
 
+    combat_plugin->set_hp_resolver(
+        [reader = object_reader.get(), plugin = combat_plugin.get()](uint32_t entity_id, uint32_t& current_hp, uint32_t& max_hp) {
+            // Under the engine lock like the resolvers above: the orchestration
+            // thread drives the same ObjectReader through sync_party.
+            return plugin->engine().with_registry([&](hub::meter::CombatantRegistry&) {
+                hub::ipc::ActorInfoPacket actor{};
+                if (!reader->read_character(entity_id, actor)) return false;
+                current_hp = actor.current_hp;
+                max_hp = actor.max_hp;
+                return true;
+            });
+        }
+    );
+
     // 7. Install DirectX 11 Hook (Present & ResizeBuffers)
     const bool dx11_ok = hub::payload::Dx11Hook::instance().install();
     hub::os::Logger::info(std::string("Dx11Hook::install() -> ") + (dx11_ok ? "ok" : "FAILED"));

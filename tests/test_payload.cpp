@@ -456,6 +456,35 @@ TEST_CASE(Payload, HideInactiveDropsZeroContributors) {
     TEST_ASSERT(hidden[0]->name == "Dealer");
 }
 
+TEST_CASE(Payload, PartyOnlyMeansThePartyNotEveryPlayer) {
+    meter::EncounterSummary summary;
+
+    meter::CombatantStats member;
+    member.entity_id = 1;
+    member.name = "Member";
+    member.is_party_member = true;
+    member.actor_type = meter::ActorType::Player;
+    member.total_damage = 1000;
+    summary.combatants.push_back(member);
+
+    // Another player nearby in an open-world fight.
+    meter::CombatantStats stranger;
+    stranger.entity_id = 2;
+    stranger.name = "Stranger";
+    stranger.actor_type = meter::ActorType::Player;
+    stranger.total_damage = 5000;
+    summary.combatants.push_back(stranger);
+
+    const auto party = meter::CombatOverlay::sorted_combatants(summary, true, false);
+    TEST_ASSERT_EQ(party.size(), 1u);
+    TEST_ASSERT(party[0]->name == "Member");
+    TEST_ASSERT_EQ(meter::CombatOverlay::sorted_combatants(summary, false, false).size(), 2u);
+
+    // Solo there is no party list, so the table falls back to friendly rows.
+    summary.combatants[0].is_party_member = false;
+    TEST_ASSERT_EQ(meter::CombatOverlay::sorted_combatants(summary, true, false).size(), 2u);
+}
+
 TEST_CASE(Payload, DispatchesRuntimeMitigationToggle) {
     // Mitigation had no runtime switch at all: MitigationConfig::enabled was
     // reachable only by editing config.json and restarting the game.

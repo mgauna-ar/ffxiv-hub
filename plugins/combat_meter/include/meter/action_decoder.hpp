@@ -18,7 +18,8 @@ using ActionPacketCallback = std::function<void(const ipc::CombatActionPacket&)>
  * @param source_id Entity ID of the action instigator.
  * @param header ActionEffectHeader containing action ID, target count, and primary target.
  * @param effect_data Pointer to contiguous array of ActionEffectEntry[8] records per target.
- * @param targets Pointer to array of uint64_t target IDs for secondary targets (or nullptr).
+ * @param targets Pointer to array of uint64_t target IDs, one per effect block (or nullptr,
+ *                which falls back to the header's animation target).
  * @param timestamp_us Combat timestamp in microseconds (0 to auto-generate).
  * @param callback Invoked for each valid non-empty CombatActionPacket decoded.
  * @return Number of combat action packets dispatched.
@@ -42,5 +43,13 @@ size_t decode_action_effects(
     const void* targets,
     uint64_t timestamp_us = 0
 );
+
+/**
+ * @brief Splits a decoded heal into what landed and what overhealed.
+ *
+ * `current_hp` and `max_hp` are the target's as they stood before the heal applied.
+ * Anything but a heal, or a target whose HP is unknown (max_hp 0), is left alone.
+ */
+void apply_overheal(ipc::CombatActionPacket& packet, uint32_t current_hp, uint32_t max_hp) noexcept;
 
 } // namespace hub::meter::decoder

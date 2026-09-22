@@ -6,6 +6,13 @@
 #include <cstring>
 #include <string>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
 namespace hub::meter {
 
 namespace {
@@ -22,6 +29,51 @@ ActorType actor_type_from_object_kind(uint8_t object_kind, uint32_t owner_id) {
 uint32_t normalize_owner_id(uint32_t owner_id) {
     return (owner_id != 0xE0000000) ? owner_id : 0;
 }
+
+/// The source Character fields this plugin reads, copied out in one guarded pass.
+/// The name is capped to what an ActorInfo packet can carry, so the two engines
+/// cannot end up disagreeing on a long name.
+struct SourceFields {
+    uint32_t entity_id{0};
+    uint32_t owner_id{0};
+    uint32_t max_hp{0};
+    uint32_t current_hp{0};
+    uint8_t class_job{0};
+    uint8_t object_kind{0};
+    char name[ipc::MAX_ACTOR_NAME_LEN]{};
+};
+
+void extract_source_fields(const game::CharacterObject* chr, SourceFields& out) {
+    out.entity_id = chr->entity_id;
+    out.owner_id = chr->owner_id;
+    out.max_hp = chr->max_hp;
+    out.current_hp = chr->current_hp;
+    out.class_job = chr->class_job;
+    out.object_kind = chr->object_kind;
+    std::memcpy(out.name, chr->name, sizeof(out.name) - 1);
+    out.name[sizeof(out.name) - 1] = '\0';
+}
+
+#ifdef _WIN32
+bool SafeReadSourceFields(const void* chr, SourceFields& out) {
+    __try {
+        if (chr != nullptr) {
+            extract_source_fields(static_cast<const game::CharacterObject*>(chr), out);
+            return true;
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return false;
+}
+#else
+bool SafeReadSourceFields(const void* chr, SourceFields& out) {
+    if (chr == nullptr) return false;
+    extract_source_fields(static_cast<const game::CharacterObject*>(chr), out);
+    return true;
+}
+#endif
 
 } // namespace
 
@@ -137,28 +189,24 @@ void CombatPlugin::on_receive_action_effect(
         // No character pointer in this packet, so fall back to the object table.
         if (m_actor_resolver) m_actor_resolver(source_entity_id);
     } else {
-        const auto* chr = reinterpret_cast<const game::CharacterObject*>(source_character);
-        if (chr->entity_id == source_entity_id) {
+        SourceFields src{};
+        if (SafeReadSourceFields(source_character, src) && src.entity_id == source_entity_id) {
             if (m_actor_object_resolver) {
                 // Registers *and* publishes, so the desktop app's engine learns
                 // the name too. Without this the app only ever sees the source
                 // as Entity_<id>, which its pull history then archives forever.
                 m_actor_object_resolver(source_character);
             } else {
-                const uint32_t owner_id = normalize_owner_id(chr->owner_id);
-                // Capped to what an ActorInfo packet can carry, so the two
-                // engines cannot end up disagreeing on a long name.
-                const std::string name(
-                    chr->name, strnlen(chr->name, ipc::MAX_ACTOR_NAME_LEN - 1));
+                const uint32_t owner_id = normalize_owner_id(src.owner_id);
                 m_engine.with_registry([&](CombatantRegistry& registry) {
                     registry.register_actor(
-                        chr->entity_id,
-                        name,
-                        static_cast<Job>(chr->class_job),
+                        src.entity_id,
+                        std::string(src.name),
+                        static_cast<Job>(src.class_job),
                         owner_id,
-                        actor_type_from_object_kind(chr->object_kind, owner_id),
-                        chr->max_hp,
-                        chr->current_hp
+                        actor_type_from_object_kind(src.object_kind, owner_id),
+                        src.max_hp,
+                        src.current_hp
                     );
                 });
             }
@@ -172,9 +220,19 @@ void CombatPlugin::on_receive_action_effect(
         effect_data,
         targets,
         0,
-        [this](const ipc::CombatActionPacket& packet) {
+        [this](const ipc::CombatActionPacket& decoded) {
+            ipc::CombatActionPacket packet = decoded;
             if (m_actor_resolver && packet.target_id != 0) {
                 m_actor_resolver(static_cast<uint32_t>(packet.target_id));
+            }
+            // The heal has not reached the target's HP yet (a later effect-result
+            // packet applies it), so the object table still holds the pre-heal value.
+            // Split here, before both the local engine and the wire see the packet.
+            uint32_t current_hp = 0;
+            uint32_t max_hp = 0;
+            if (m_hp_resolver && packet.effect_type == static_cast<uint16_t>(EffectType::Heal)
+                && m_hp_resolver(static_cast<uint32_t>(packet.target_id), current_hp, max_hp)) {
+                decoder::apply_overheal(packet, current_hp, max_hp);
             }
             m_engine.process_action(packet);
 

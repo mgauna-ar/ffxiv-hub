@@ -11,7 +11,8 @@ void SequenceTracker::record_request(
     SequenceId sequence,
     TimePoint timestamp,
     bool is_cast,
-    float cast_duration_seconds
+    float cast_duration_seconds,
+    bool is_queued
 ) {
     std::lock_guard<std::mutex> lock(m_mutex);
 
@@ -30,7 +31,8 @@ void SequenceTracker::record_request(
         .sequence = sequence,
         .timestamp = timestamp,
         .is_cast = is_cast,
-        .cast_duration_seconds = cast_duration_seconds
+        .cast_duration_seconds = cast_duration_seconds,
+        .is_queued = is_queued
     });
 }
 

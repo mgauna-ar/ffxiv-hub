@@ -33,22 +33,35 @@ subtracts the measured round trip from that lock — it does not invent a new on
 lock you experience approximates what a player sitting next to the datacenter would feel.
 
 The round trip feeding that subtraction is smoothed with an exponential moving average, so
-a single slow packet does not swing the adjustment. On top of the EMA, a moving-median
-filter rejects samples more than 2.5× the median of the recent window; TCP acknowledgement
-coalescing delivers bursts of artificially fast packets, and without the filter those
-would drag the baseline down and cause mitigation to cut in and out.
+a single slow packet does not swing the adjustment. Once five samples are in, a spike
+filter keeps a sample out of the EMA when it lands above
+`median + max(50 ms, 0.5 × median, spike_multiplier × jitter)`, the median taken over the
+sample window. The rejected sample still enters the window itself, so one spike never moves
+the median but a real, sustained rise in latency is picked up within about half a window
+instead of being rejected forever. Fast samples are never filtered: TCP acknowledgement
+coalescing delivers bursts of them, and resetting on those would make mitigation cut in and
+out.
 
 Matching a returning packet to the action that caused it uses two strategies. The exact
 sequence counter match handles ordinary actions. Queued actions need the second one:
 `UseActionLocation` fires when you press the key, before the sequence counter increments,
 so those are matched against the oldest pending request with the same action id.
 
+A queued action is also timed from the key press, but its packet only leaves when the
+current lock or recast runs out, so its round trip includes the time it sat in the queue.
+That is an upper bound, not a measurement: it is capped at the current median, so a queued
+action can lower the estimate but never raise it or cut the lock by its own wait.
+
 ### What is deliberately left alone
 
 - **Caster tax.** The 100 ms lock after a cast completes is never mitigated. Trimming it
-  would clip slide-casting and desynchronise caster rotations from the server.
-- **The floor.** Adjusted lock never drops below 25 ms, whatever the measured latency.
-- **Corrupt values.** Incoming locks above 2500 ms are clamped rather than trusted.
+  would clip slide-casting and desynchronise caster rotations from the server. Two guards
+  hold it: the cast flag recorded with the action, and a cast timer started from the
+  cast's remaining time whenever an action goes out mid-cast.
+- **The floor.** Adjusted lock never drops below 25 ms, whatever the measured latency. A
+  lock that already sits at or under the floor is left as it is.
+- **Very long locks.** Locks above 2500 ms pass through untouched. They are either
+  malformed or legitimately long (a Limit Break), and shortening either is unsafe.
 - **Rejected actions.** If the server refuses an action, nothing is written.
 
 The plugin never writes a speculative lock at dispatch time. Guessing before the server
@@ -83,7 +96,8 @@ the two never disagree:
 | Bad | > 340 ms | Critical / route degradation |
 
 A dimmed reading means no measurement yet — idle out of combat, or waiting on the first
-server response.
+server response. The badge turns amber with a `!` for 1.5 s after the spike filter rejects
+a sample.
 
 ---
 
@@ -100,8 +114,10 @@ format, not the intended interface.
 | `dry_run` | bool | `false` | Calculate and stream telemetry without modifying game memory. |
 | `target_ping_ms` | float | `15.0` | Simulated LAN latency near the datacenter. |
 | `min_animation_lock_ms` | float | `25.0` | Hard floor. Adjusted lock never goes below this. |
-| `max_animation_lock_ms` | float | `2500.0` | Ceiling clamp for malformed server packets. |
-| `spike_multiplier` | float | `2.5` | Reject samples above this multiple of the moving median. |
+| `max_animation_lock_ms` | float | `2500.0` | Locks above this pass through unmitigated. Never below `min_animation_lock_ms`. |
+| `rtt_sample_window` | int | `10` | Samples the median and spike filter look back over, `1`–`64`. |
+| `safety_margin_ms` | float | `0.0` | Extra lock kept on top of the target ping. Never negative. |
+| `spike_multiplier` | float | `3.0` | Jitter multiple in the spike tolerance, `median + max(50 ms, 0.5 × median, this × jitter)`. At least `1.0`. |
 | `overlay_visible` | bool | `true` | Draw the in-game HUD. |
 | `overlay_mode` | int | `0` | Display layout — see the table above. |
 | `overlay_x`, `overlay_y` | float | `20.0` | HUD position. |

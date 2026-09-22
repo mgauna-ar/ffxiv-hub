@@ -4,6 +4,16 @@
 
 namespace hub::meter::decoder {
 
+namespace {
+    /// ActionEffectEntry::flags bits.
+    constexpr uint8_t EFFECT_FLAG_EXTENDED_VALUE = 0x40; // high_byte holds bits 16-23 of the value
+    constexpr uint8_t EFFECT_FLAG_ON_SOURCE = 0x80;      // lands on the source, e.g. a drain's self-heal
+
+    /// ActionEffectEntry::hit_severity bits for damage.
+    constexpr uint8_t SEVERITY_CRIT = 0x20;
+    constexpr uint8_t SEVERITY_DIRECT_HIT = 0x40;
+}
+
 size_t decode_action_effects(
     uint32_t source_id,
     const game::ActionEffectHeader& header,
@@ -39,12 +49,12 @@ size_t decode_action_effects(
     size_t packet_count = 0;
 
     for (uint8_t t = 0; t < num_targets; ++t) {
+        // targets[] runs parallel to the effect blocks, slot 0 included. The
+        // animation target is only a fallback: a self-centred AoE animates on the
+        // caster, not on whoever its first block hit.
         uint64_t target_id = header.animation_target_id;
-        if (t > 0 && target_ids_ptr != nullptr) {
-            const uint64_t next_id = target_ids_ptr[t];
-            if (next_id != 0) {
-                target_id = next_id;
-            }
+        if (target_ids_ptr != nullptr && target_ids_ptr[t] != 0) {
+            target_id = target_ids_ptr[t];
         }
 
         const auto* entries = &reinterpret_cast<const game::ActionEffectEntry*>(
@@ -63,9 +73,8 @@ size_t decode_action_effects(
             uint32_t effective_heal = 0;
             uint16_t flags = HitFlags::None;
 
-            // FFXIV client packs 24-bit values: if flags & 0x40, high_byte is shifted left by 16
             uint32_t val = entry.value;
-            if (entry.flags & 0x40) {
+            if (entry.flags & EFFECT_FLAG_EXTENDED_VALUE) {
                 val += static_cast<uint32_t>(entry.high_byte) << 16;
             }
 
@@ -92,12 +101,8 @@ size_t decode_action_effects(
                     damage = val;
                     flags |= HitFlags::Parried;
                     break;
-                case 0x0A: // Buff
-                    effect_type = EffectType::Buff;
-                    break;
-                case 0x0B: // Debuff
-                    effect_type = EffectType::Debuff;
-                    break;
+                // 0x0A/0x0B are MP loss/gain, not status effects, and nothing here
+                // books them; they fall through with the rest.
                 default:
                     effect_type = EffectType::None;
                     break;
@@ -107,12 +112,10 @@ size_t decode_action_effects(
                 continue;
             }
 
-            // In FFXIV client, bit 5 (0x20) is Critical and bit 6 (0x40) is Direct Hit.
-            // Support both standard FFXIV flags (0x20/0x40) and normalized mock flags (0x01/0x02).
-            if ((entry.hit_severity & 0x20) || (entry.hit_severity & 0x01)) {
+            if (entry.hit_severity & SEVERITY_CRIT) {
                 flags |= HitFlags::Crit;
             }
-            if ((entry.hit_severity & 0x40) || (entry.hit_severity & 0x02)) {
+            if (entry.hit_severity & SEVERITY_DIRECT_HIT) {
                 flags |= HitFlags::DirectHit;
             }
 
@@ -120,7 +123,11 @@ size_t decode_action_effects(
 
             ipc::CombatActionPacket pkt{};
             pkt.source_id = source_id;
-            pkt.target_id = target_id;
+            // A heal carried in the target's block but landing on the caster (drains,
+            // Bloodwhetting-style self-heals) must be measured against the caster's HP.
+            pkt.target_id = (effect_type == EffectType::Heal && (entry.flags & EFFECT_FLAG_ON_SOURCE))
+                ? source_id
+                : target_id;
             pkt.action_id = action_id;
             pkt.damage = damage;
             pkt.effective_heal = effective_heal;
@@ -136,6 +143,16 @@ size_t decode_action_effects(
     }
 
     return packet_count;
+}
+
+void apply_overheal(ipc::CombatActionPacket& packet, uint32_t current_hp, uint32_t max_hp) noexcept {
+    if (static_cast<EffectType>(packet.effect_type) != EffectType::Heal || max_hp == 0 || current_hp > max_hp) {
+        return;
+    }
+    const uint32_t heal = packet.effective_heal + packet.overheal;
+    const uint32_t missing = max_hp - current_hp;
+    packet.overheal = (heal > missing) ? heal - missing : 0;
+    packet.effective_heal = heal - packet.overheal;
 }
 
 std::vector<ipc::CombatActionPacket> decode_action_effects(

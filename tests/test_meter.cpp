@@ -42,25 +42,26 @@ TEST_CASE(MeterDecoder, SingleTargetDamageAndHitSeverity) {
     TEST_ASSERT_EQ(packets[0].severity, static_cast<uint8_t>(HitSeverity::Normal));
     TEST_ASSERT_EQ(packets[0].timestamp_us, 999999u);
 
-    // Critical Hit (tested with both FFXIV client bit 0x20 and mock 0x01)
+    // Critical Hit
     entries[0].hit_severity = 0x20; // Real FFXIV client critical flag
     packets = decoder::decode_action_effects(1001, header, entries.data(), nullptr);
     TEST_ASSERT_EQ(packets[0].severity, static_cast<uint8_t>(HitSeverity::Critical));
     TEST_ASSERT((packets[0].hit_flags & HitFlags::Crit) != 0);
 
-    entries[0].hit_severity = 0x01; // Mock flag fallback
+    // Only the game's bits count: the low bits are neither a crit nor a direct hit.
+    entries[0].hit_severity = 0x01;
     packets = decoder::decode_action_effects(1001, header, entries.data(), nullptr);
-    TEST_ASSERT_EQ(packets[0].severity, static_cast<uint8_t>(HitSeverity::Critical));
+    TEST_ASSERT_EQ(packets[0].severity, static_cast<uint8_t>(HitSeverity::Normal));
 
-    // Direct Hit (tested with both FFXIV client bit 0x40 and mock 0x02)
+    // Direct Hit
     entries[0].hit_severity = 0x40; // Real FFXIV client direct hit flag
     packets = decoder::decode_action_effects(1001, header, entries.data(), nullptr);
     TEST_ASSERT_EQ(packets[0].severity, static_cast<uint8_t>(HitSeverity::DirectHit));
     TEST_ASSERT((packets[0].hit_flags & HitFlags::DirectHit) != 0);
 
-    entries[0].hit_severity = 0x02; // Mock flag fallback
+    entries[0].hit_severity = 0x02;
     packets = decoder::decode_action_effects(1001, header, entries.data(), nullptr);
-    TEST_ASSERT_EQ(packets[0].severity, static_cast<uint8_t>(HitSeverity::DirectHit));
+    TEST_ASSERT_EQ(packets[0].severity, static_cast<uint8_t>(HitSeverity::Normal));
 
     // Crit Direct Hit (0x20 | 0x40 = 0x60)
     entries[0].hit_severity = 0x60; // Real FFXIV client CDH flag
@@ -69,9 +70,9 @@ TEST_CASE(MeterDecoder, SingleTargetDamageAndHitSeverity) {
     TEST_ASSERT((packets[0].hit_flags & HitFlags::Crit) != 0);
     TEST_ASSERT((packets[0].hit_flags & HitFlags::DirectHit) != 0);
 
-    entries[0].hit_severity = 0x03; // Mock flag fallback
+    entries[0].hit_severity = 0x03;
     packets = decoder::decode_action_effects(1001, header, entries.data(), nullptr);
-    TEST_ASSERT_EQ(packets[0].severity, static_cast<uint8_t>(HitSeverity::CritDirectHit));
+    TEST_ASSERT_EQ(packets[0].severity, static_cast<uint8_t>(HitSeverity::Normal));
 
     // Extended 24-bit Dawntrail damage (e.g. 150,000 damage: value=18928, high_byte=2, flags=0x40)
     entries[0].value = static_cast<uint16_t>(150000 & 0xFFFF);
@@ -1754,4 +1755,295 @@ TEST_CASE(MeterEngine, HealingStillCountsOnceTheFightIsUnderway) {
     engine.process_action(effect_packet(EffectType::Heal, 0, 8000));
     TEST_ASSERT_EQ(engine.accumulator().total_healing(), 8000u);
     TEST_ASSERT_TRUE(engine.in_combat());
+}
+
+// ---------------------------------------------------------------------------
+// Review regressions: overheal, wipe detection, target slots, pet merges.
+// ---------------------------------------------------------------------------
+
+TEST_CASE(MeterDecoder, FirstBlockUsesTargetListNotAnimationTarget) {
+    // A self-centred AoE animates on the caster; its first block hit an enemy.
+    hub::game::ActionEffectHeader header{};
+    header.animation_target_id = 1001;
+    header.action_id = 139; // Holy
+    header.num_targets = 2;
+
+    uint64_t targets[2] = { 0x40000001, 0x40000002 };
+    std::array<hub::game::ActionEffectEntry, 16> entries{};
+    entries[0].effect_type = 0x03;
+    entries[0].value = 9000;
+    entries[8].effect_type = 0x03;
+    entries[8].value = 8500;
+
+    const auto packets = decoder::decode_action_effects(1001, header, entries.data(), targets);
+    TEST_ASSERT_EQ(packets.size(), 2u);
+    TEST_ASSERT_EQ(packets[0].target_id, 0x40000001u);
+    TEST_ASSERT_EQ(packets[1].target_id, 0x40000002u);
+}
+
+TEST_CASE(MeterDecoder, HealOnSourceTargetsTheCaster) {
+    // A drain's self-heal rides in the enemy's block with the on-source flag.
+    hub::game::ActionEffectHeader header{};
+    header.animation_target_id = 0x40000001;
+    header.action_id = 7;
+    header.num_targets = 1;
+
+    std::array<hub::game::ActionEffectEntry, 8> entries{};
+    entries[0].effect_type = 0x03;
+    entries[0].value = 12000;
+    entries[1].effect_type = 0x04;
+    entries[1].value = 3000;
+    entries[1].flags = 0x80;
+
+    const auto packets = decoder::decode_action_effects(1001, header, entries.data(), nullptr);
+    TEST_ASSERT_EQ(packets.size(), 2u);
+    TEST_ASSERT_EQ(packets[0].target_id, 0x40000001u);
+    TEST_ASSERT_EQ(packets[1].target_id, 1001u);
+}
+
+TEST_CASE(MeterDecoder, MpEffectsAreNotDecoded) {
+    hub::game::ActionEffectHeader header{};
+    header.animation_target_id = 1001;
+    header.num_targets = 1;
+
+    std::array<hub::game::ActionEffectEntry, 8> entries{};
+    entries[0].effect_type = 0x0A; // MP loss
+    entries[1].effect_type = 0x0B; // MP gain
+    TEST_ASSERT_EQ(decoder::decode_action_effects(1001, header, entries.data(), nullptr).size(), 0u);
+}
+
+TEST_CASE(MeterDecoder, OverhealSplitsAgainstMissingHp) {
+    hub::ipc::CombatActionPacket heal{};
+    heal.effect_type = static_cast<uint16_t>(EffectType::Heal);
+    heal.effective_heal = 20000;
+
+    decoder::apply_overheal(heal, 95000, 100000);
+    TEST_ASSERT_EQ(heal.effective_heal, 5000u);
+    TEST_ASSERT_EQ(heal.overheal, 15000u);
+
+    // A heal that fits entirely is all effective.
+    hub::ipc::CombatActionPacket fits{};
+    fits.effect_type = static_cast<uint16_t>(EffectType::Heal);
+    fits.effective_heal = 20000;
+    decoder::apply_overheal(fits, 50000, 100000);
+    TEST_ASSERT_EQ(fits.effective_heal, 20000u);
+    TEST_ASSERT_EQ(fits.overheal, 0u);
+
+    // Unknown HP or a non-heal is left alone.
+    hub::ipc::CombatActionPacket unknown = heal;
+    unknown.effective_heal = 20000;
+    unknown.overheal = 0;
+    decoder::apply_overheal(unknown, 0, 0);
+    TEST_ASSERT_EQ(unknown.effective_heal, 20000u);
+
+    hub::ipc::CombatActionPacket hit{};
+    hit.effect_type = static_cast<uint16_t>(EffectType::Damage);
+    hit.damage = 20000;
+    decoder::apply_overheal(hit, 95000, 100000);
+    TEST_ASSERT_EQ(hit.overheal, 0u);
+}
+
+TEST_CASE(MeterPlugin, HealsAreSplitIntoEffectiveAndOverhealBeforeRecording) {
+    hub::ipc::PacketRingBuffer ring;
+    CombatPlugin plugin;
+    plugin.initialize();
+    plugin.set_ring_buffer(&ring);
+    plugin.set_hp_resolver([](uint32_t entity_id, uint32_t& current_hp, uint32_t& max_hp) {
+        if (entity_id != 100) return false;
+        current_hp = 95000;
+        max_hp = 100000;
+        return true;
+    });
+
+    // Open the pull with a hit, then heal a player who is only 5k down.
+    hub::game::ActionEffectHeader hit{};
+    hit.animation_target_id = 0x40001;
+    hit.action_id = 31;
+    hit.num_targets = 1;
+    std::array<hub::game::ActionEffectEntry, 8> hit_entries{};
+    hit_entries[0].effect_type = 0x03;
+    hit_entries[0].value = 25000;
+    plugin.on_receive_action_effect(777, nullptr, &hit, hit_entries.data(), nullptr);
+
+    hub::game::ActionEffectHeader cure{};
+    cure.animation_target_id = 100;
+    cure.action_id = 135;
+    cure.num_targets = 1;
+    std::array<hub::game::ActionEffectEntry, 8> heal_entries{};
+    heal_entries[0].effect_type = 0x04;
+    heal_entries[0].value = 20000;
+    plugin.on_receive_action_effect(777, nullptr, &cure, heal_entries.data(), nullptr);
+
+    const auto summary = plugin.engine().current_summary();
+    TEST_ASSERT_EQ(summary.total_effective_healing, 5000u);
+    TEST_ASSERT_EQ(summary.total_overhealing, 15000u);
+    TEST_ASSERT_EQ(summary.total_healing, 20000u);
+
+    // The app's engine gets the same split, not the raw heal.
+    std::vector<uint8_t> frame;
+    bool saw_heal = false;
+    while (ring.pop(frame)) {
+        const auto header = hub::ipc::deserialize_header(frame);
+        if (!header || header->message_type != static_cast<uint16_t>(hub::MessageType::CombatAction)) continue;
+        hub::ipc::CombatActionPacket pkt{};
+        std::memcpy(&pkt, frame.data() + sizeof(hub::ipc::PacketHeader), sizeof(pkt));
+        if (pkt.effect_type != static_cast<uint16_t>(EffectType::Heal)) continue;
+        saw_heal = true;
+        TEST_ASSERT_EQ(pkt.effective_heal, 5000u);
+        TEST_ASSERT_EQ(pkt.overheal, 15000u);
+    }
+    TEST_ASSERT_TRUE(saw_heal);
+    plugin.shutdown();
+}
+
+namespace {
+
+hub::ipc::ActorInfoPacket party_actor(uint32_t id, Job job, uint32_t current_hp, uint32_t max_hp) {
+    hub::ipc::ActorInfoPacket actor{};
+    actor.entity_id = id;
+    actor.job_id = static_cast<uint32_t>(job);
+    actor.current_hp = current_hp;
+    actor.max_hp = max_hp;
+    actor.actor_type = static_cast<uint8_t>(ActorType::Player);
+    return actor;
+}
+
+} // namespace
+
+TEST_CASE(MeterEngine, DeathsArrivingAsActorInfoEndThePullAsAWipe) {
+    // The app's engine only ever learns HP from ActorInfo packets.
+    EncounterEngine engine;
+    engine.process_actor_info(party_actor(1001, Job::WAR, 80000, 80000));
+    engine.process_actor_info(party_actor(1002, Job::WHM, 60000, 60000));
+
+    hub::ipc::PartySyncPacket party{};
+    party.party_count = 2;
+    party.entity_ids[0] = 1001; party.job_ids[0] = static_cast<uint32_t>(Job::WAR);
+    party.entity_ids[1] = 1002; party.job_ids[1] = static_cast<uint32_t>(Job::WHM);
+    engine.process_party_sync(party);
+
+    auto hit = effect_packet(EffectType::Damage, 25000, 0);
+    hit.source_id = 1001;
+    hit.target_id = 0x40000001;
+    engine.process_action(hit);
+    TEST_ASSERT_TRUE(engine.in_combat());
+
+    engine.process_actor_info(party_actor(1001, Job::WAR, 0, 80000));
+    TEST_ASSERT_TRUE(engine.in_combat());
+    engine.process_actor_info(party_actor(1002, Job::WHM, 0, 60000));
+    TEST_ASSERT_FALSE(engine.in_combat());
+
+    const auto pull = engine.latest_pull();
+    TEST_ASSERT_TRUE(pull.has_value());
+    TEST_ASSERT(pull->end_reason == EncounterEndReason::Wipe);
+}
+
+TEST_CASE(MeterRegistry, UnreadHpIsNotDeath) {
+    // A party slot seen before its HP was ever read (max_hp 0) must not count as
+    // dead: an all-unread party would otherwise look wiped and block every pull.
+    CombatantRegistry reg;
+    hub::ipc::PartySyncPacket party{};
+    party.party_count = 2;
+    party.entity_ids[0] = 1001; party.job_ids[0] = static_cast<uint32_t>(Job::WAR);
+    party.entity_ids[1] = 1002; party.job_ids[1] = static_cast<uint32_t>(Job::WHM);
+    reg.sync_party(party);
+    TEST_ASSERT_FALSE(reg.is_party_wiped());
+
+    reg.register_actor(party_actor(1001, Job::WAR, 0, 0));
+    reg.register_actor(party_actor(1002, Job::WHM, 0, 0));
+    TEST_ASSERT_FALSE(reg.is_party_wiped());
+
+    // A 0 of a known max is a death, and is kept as one.
+    reg.register_actor(1001, "War", Job::WAR, 0, ActorType::Player, 80000, 0);
+    reg.register_actor(1002, "Whm", Job::WHM, 0, ActorType::Player, 60000, 0);
+    TEST_ASSERT_TRUE(reg.is_party_wiped());
+}
+
+TEST_CASE(MeterPlugin, DeathAndRaiseAreRepublished) {
+    // HP stays out of the dedupe so it does not resend every tick, but the
+    // alive/dead bit is what the app's wipe detection runs on.
+    hub::ipc::PacketRingBuffer ring;
+    hub::payload::ObjectReader reader(&ring);
+
+    hub::game::CharacterObject chr{};
+    chr.entity_id = 1001;
+    chr.object_kind = 1;
+    chr.class_job = static_cast<uint8_t>(Job::WAR);
+    chr.max_hp = 80000;
+    chr.current_hp = 80000;
+
+    reader.inspect_and_sync_actor_direct(&chr);
+    TEST_ASSERT_EQ(drain_actor_info(ring).size(), 1u);
+
+    chr.current_hp = 40000;
+    reader.inspect_and_sync_actor_direct(&chr);
+    TEST_ASSERT_EQ(drain_actor_info(ring).size(), 0u);
+
+    chr.current_hp = 0;
+    reader.inspect_and_sync_actor_direct(&chr);
+    auto published = drain_actor_info(ring);
+    TEST_ASSERT_EQ(published.size(), 1u);
+    TEST_ASSERT_EQ(published[0].current_hp, 0u);
+
+    chr.current_hp = 20000;
+    reader.inspect_and_sync_actor_direct(&chr);
+    published = drain_actor_info(ring);
+    TEST_ASSERT_EQ(published.size(), 1u);
+    TEST_ASSERT_EQ(published[0].current_hp, 20000u);
+}
+
+TEST_CASE(MeterAccumulator, LateLinkedKnownPetIsNotDoubleCountedAsPetDamage) {
+    MetricsAccumulator acc;
+    CombatantRegistry reg;
+    reg.register_actor(10, "Scholar", Job::SCH);
+    reg.register_actor(30, "Eos"); // Known pet by name, owner not linked yet
+    TEST_ASSERT_TRUE(reg.is_pet(30));
+    TEST_ASSERT_EQ(reg.resolve_owner(30), 30u);
+
+    hub::ipc::CombatActionPacket pet_hit{};
+    pet_hit.source_id = 30;
+    pet_hit.target_id = 0x40000001;
+    pet_hit.damage = 4000;
+    pet_hit.effect_type = static_cast<uint16_t>(EffectType::Damage);
+    acc.record_action(pet_hit, reg);
+
+    hub::ipc::CombatActionPacket own_hit = pet_hit;
+    own_hit.source_id = 10;
+    own_hit.damage = 6000;
+    acc.record_action(own_hit, reg);
+
+    reg.set_pet_owner(30, 10);
+    acc.recalculate(5.0, &reg);
+
+    const auto* sch = acc.find_stats(10);
+    TEST_ASSERT(sch != nullptr);
+    TEST_ASSERT_EQ(sch->total_damage, 10000u);
+    TEST_ASSERT_EQ(sch->pet_damage, 4000u);
+}
+
+TEST_CASE(MeterAccumulator, PetMergedIntoOwnerWithoutRowTakesOwnersIdentity) {
+    MetricsAccumulator acc;
+    CombatantRegistry reg;
+    reg.register_actor(10, "Scholar", Job::SCH);
+    reg.register_actor(30, "Eos");
+
+    hub::ipc::CombatActionPacket pet_hit{};
+    pet_hit.source_id = 30;
+    pet_hit.target_id = 0x40000001;
+    pet_hit.damage = 4000;
+    pet_hit.effect_type = static_cast<uint16_t>(EffectType::Damage);
+    acc.record_action(pet_hit, reg);
+    TEST_ASSERT(acc.find_stats(10) == nullptr);
+
+    reg.set_pet_owner(30, 10);
+    acc.recalculate(5.0, &reg);
+
+    const auto* sch = acc.find_stats(10);
+    TEST_ASSERT(sch != nullptr);
+    TEST_ASSERT_EQ(sch->name, std::string("Scholar"));
+    TEST_ASSERT(sch->actor_type == ActorType::Player);
+    TEST_ASSERT_FALSE(sch->is_pet);
+    TEST_ASSERT_EQ(sch->total_damage, 4000u);
+    TEST_ASSERT_EQ(sch->pet_damage, 4000u);
+    TEST_ASSERT(acc.find_stats(30) == nullptr);
 }

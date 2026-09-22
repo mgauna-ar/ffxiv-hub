@@ -315,7 +315,7 @@ void MetricsAccumulator::record_status_tick(const ipc::StatusTickPacket& packet,
     }
 }
 
-void MetricsAccumulator::merge_combatants(EntityId from_id, EntityId to_id) {
+void MetricsAccumulator::merge_combatants(EntityId from_id, EntityId to_id, const CombatantRegistry& registry) {
     if (from_id == 0 || to_id == 0 || from_id == to_id) {
         return;
     }
@@ -327,19 +327,14 @@ void MetricsAccumulator::merge_combatants(EntityId from_id, EntityId to_id) {
     CombatantStats from_stats = std::move(it_from->second);
     m_combatants.erase(it_from);
 
-    auto it_to = m_combatants.find(to_id);
-    if (it_to == m_combatants.end()) {
-        from_stats.entity_id = to_id;
-        from_stats.owner_id = 0;
-        from_stats.is_pet = false;
-        m_combatants[to_id] = std::move(from_stats);
-        return;
-    }
-
-    CombatantStats& to = it_to->second;
+    // An owner with no row yet gets one built from its own registry entry. Moving
+    // the pet's row across kept the pet's name and type, and neither metadata
+    // refresh ever replaces a name that is not a placeholder.
+    CombatantStats& to = get_or_create_stats(to_id, registry);
     to.total_damage += from_stats.total_damage;
-    // Plus the merged entry's own pet share, or a pet-of-a-pet chain loses it.
-    to.pet_damage += from_stats.total_damage + from_stats.pet_damage;
+    // All of it is pet damage from the owner's side. The merged entry's own
+    // pet_damage is already inside its total_damage, so adding it again doubles it.
+    to.pet_damage += from_stats.total_damage;
     to.damage_taken += from_stats.damage_taken;
     to.total_healing += from_stats.total_healing;
     to.effective_healing += from_stats.effective_healing;
@@ -412,7 +407,7 @@ void MetricsAccumulator::recalculate(double duration_seconds, const CombatantReg
             }
         }
         for (const auto& [pet_id, owner_id] : to_merge) {
-            merge_combatants(pet_id, owner_id);
+            merge_combatants(pet_id, owner_id, *registry);
         }
     }
 

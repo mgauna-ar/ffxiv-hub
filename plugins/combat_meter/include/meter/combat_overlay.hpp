@@ -69,8 +69,9 @@ public:
     [[nodiscard]] Rect default_geometry() const noexcept override;
 
     /// Ranked view of a summary's combatants: pets merged into owners, zero-stat
-    /// entities dropped, ties broken on the underlying total. `hide_inactive`
-    /// additionally drops anyone contributing nothing to the ranked metric.
+    /// entities dropped, ties broken on the underlying total. `party_only` keeps
+    /// the synced party (plus Limit Break), or every friendly row when solo.
+    /// `hide_inactive` additionally drops anyone contributing nothing to the ranked metric.
     [[nodiscard]] static std::vector<const CombatantStats*> sorted_combatants(
         const EncounterSummary& summary, bool party_only, bool by_healing,
         bool hide_inactive = false);

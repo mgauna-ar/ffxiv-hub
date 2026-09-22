@@ -15,6 +15,17 @@ Rect LatencyOverlay::default_geometry() const noexcept {
                 constants::DEFAULT_OVERLAY_WIDTH, constants::DEFAULT_OVERLAY_HEIGHT};
 }
 
+void LatencyOverlay::notify_spike_filtered() noexcept {
+    m_last_spike_ticks.store(std::chrono::steady_clock::now().time_since_epoch().count());
+}
+
+bool LatencyOverlay::spike_active(std::chrono::steady_clock::time_point now) const noexcept {
+    const auto ticks = m_last_spike_ticks.load();
+    if (ticks == 0) return false;
+    const std::chrono::steady_clock::time_point last{std::chrono::steady_clock::duration(ticks)};
+    return now - last <= std::chrono::milliseconds(1500);
+}
+
 } // namespace hub::mitigator
 
 #ifdef _WIN32
@@ -35,22 +46,10 @@ void LatencyOverlay::update_network_ping(double ping_ms) noexcept {
     m_network_ping_ms.store(ping_ms);
 }
 
-void LatencyOverlay::notify_spike_filtered() noexcept {
-    m_spike_active.store(true);
-    m_last_spike_time = std::chrono::steady_clock::now();
-}
-
 void LatencyOverlay::render() {
-    if (m_spike_active.load()) {
-        auto now = std::chrono::steady_clock::now();
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - m_last_spike_time).count() > 1500) {
-            m_spike_active.store(false);
-        }
-    }
-
     const float opacity = std::clamp(m_opacity.load(), 0.1f, 1.0f);
     const float scale = std::clamp(m_scale.load(), 0.5f, 3.0f);
-    const bool is_spike = m_spike_active.load();
+    const bool is_spike = spike_active(std::chrono::steady_clock::now());
     const double rtt = m_smoothed_rtt_ms.load();
     const bool has_rtt = m_has_samples.load();
     const double net_ping = m_network_ping_ms.load();
@@ -235,10 +234,6 @@ void LatencyOverlay::update_rtt(double smoothed_rtt_ms, bool has_samples) noexce
 
 void LatencyOverlay::update_network_ping(double ping_ms) noexcept {
     m_network_ping_ms.store(ping_ms);
-}
-
-void LatencyOverlay::notify_spike_filtered() noexcept {
-    m_spike_active.store(true);
 }
 
 void LatencyOverlay::render() {}
