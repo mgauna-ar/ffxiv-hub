@@ -271,7 +271,7 @@ bool ObjectReader::initialize() {
 }
 
 bool ObjectReader::read_character(uint32_t entity_id, ipc::ActorInfoPacket& out_packet) {
-    if (!m_initialized && !initialize()) return false;
+    if (!m_initialized) return false;
     return SafeReadCharacter(m_fp_get_object_by_id, m_game_object_mgr_addr, entity_id, out_packet);
 }
 
@@ -300,7 +300,7 @@ void ObjectReader::inspect_and_sync_actor(uint32_t entity_id, meter::CombatantRe
 }
 
 void ObjectReader::sync_party(meter::CombatantRegistry* registry) {
-    if (!m_initialized && !initialize()) return;
+    if (!m_initialized) return;
     if (m_group_manager_addr == 0) return;
 
     ipc::PartySyncPacket sync{};

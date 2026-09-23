@@ -28,6 +28,8 @@ public:
     explicit ObjectReader(RingBuffer* ring_buffer = nullptr);
     ~ObjectReader() = default;
 
+    /// Scans once, before hooks are installed; the detour thread reads the result
+    /// unlocked. Never retried: a missed signature stays missed until the next patch.
     bool initialize();
     bool read_character(uint32_t entity_id, ipc::ActorInfoPacket& out_packet);
     void inspect_and_sync_actor(uint32_t entity_id, meter::CombatantRegistry* registry = nullptr);

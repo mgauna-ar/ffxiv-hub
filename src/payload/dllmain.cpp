@@ -110,7 +110,8 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
     hub::os::Logger::info(std::string("Initial pipe connect -> ") + (connected_initially ? "connected" : "not connected yet, will keep retrying"));
 
     // 5. Initialize game memory readers and the meter's resolvers. Must precede
-    //    step 6: the detour thread reads the resolvers unlocked once hooks fire.
+    //    step 6: the detour thread reads the resolvers and ObjectReader's
+    //    addresses unlocked once hooks fire.
     auto object_reader = std::make_unique<hub::payload::ObjectReader>(&pipe_client->ring_buffer());
     const bool object_reader_ok = object_reader->initialize();
     hub::os::Logger::info(std::string("ObjectReader::initialize() -> ") + (object_reader_ok ? "ok" : "FAILED"));
