@@ -66,6 +66,61 @@ threading), `release-windows` (MSVC build, packaging, CI).
 
 ## 📂 Component Responsibility Matrix
 
+### Runtime topology
+
+```mermaid
+flowchart TD
+    subgraph GameProcess["ffxiv_dx11.exe (Game Process)"]
+        subgraph HubPayload["hub_payload.dll"]
+            DX11Hook["DirectX 11 Hook (Present & Resize)"]
+            WndProcHook["WndProc Hook (Mouse/Key Input)"]
+            GameHookMgr["Hook Manager (ReceiveActionEffect / UseActionLocation)"]
+            RingBuffer["Wait-Free Per-Thread-Lane Ring Buffer (4096 pkts/lane)"]
+            PipeClient["Payload IPC Client Thread"]
+            
+            subgraph InGamePlugins["In-Game Modular Plugins"]
+                CombatPlugin["Combat Meter Plugin (IPlugin)"]
+                LatencyPlugin["Latency Mitigator Plugin (IPlugin)"]
+            end
+            
+            subgraph Overlays["In-Game Overlays (Dear ImGui)"]
+                CombatOverlay["Combat Meter Overlay Window"]
+                LatencyHUD["Micro Ping HUD Window"]
+            end
+        end
+    end
+
+    subgraph DesktopManager["ffxiv-hub.exe (Desktop Manager)"]
+        PipeServer["Multiplexed IPC Server (\\.\\pipe\\ffxiv_hub_pipe)"]
+        AppState["Central App State & Config Manager"]
+        
+        subgraph DesktopUI["Dear ImGui Desktop + ImPlot"]
+            Sidebar["Navigation Sidebar"]
+            ViewDashboard["Overview Dashboard"]
+            ViewCombat["Combat Meter Inspector & Pull History"]
+            ViewLatency["Latency Mitigator Live Graph & Action Feed"]
+            ViewSettings["System Settings & Tray Manager"]
+        end
+        
+        Injector["Process Finder & DLL Injector"]
+        Tray["Windows System Tray & Notifications"]
+    end
+
+    GameHookMgr -->|1. Mitigate Lock| LatencyPlugin
+    GameHookMgr -->|2. Read Actions| CombatPlugin
+    LatencyPlugin --> LatencyHUD
+    CombatPlugin --> CombatOverlay
+    LatencyPlugin -->|Telemetry Events| RingBuffer
+    CombatPlugin -->|Combat Events| RingBuffer
+    RingBuffer --> PipeClient
+    PipeClient <===>|Multiplexed Binary IPC| PipeServer
+    PipeServer --> AppState
+    AppState --> DesktopUI
+    Injector -.->|CreateRemoteThread| HubPayload
+```
+
+### Directories
+
 Directory-level. Individual files are discoverable by search; what is recorded here is the
 responsibility boundary and the constraint that goes with it.
 

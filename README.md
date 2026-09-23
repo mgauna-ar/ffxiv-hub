@@ -5,68 +5,16 @@
 ![C++20](https://img.shields.io/badge/standard-C%2B%2B20-crimson)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-**FFXIV Hub** is a modern, unified, zero-dependency desktop manager and in-game suite for **Final Fantasy XIV (Dawntrail 7.x)** written in 100% C++20.
+A combat meter and a latency mitigator for **Final Fantasy XIV (Dawntrail 7.x)**, in one
+app with in-game overlays.
 
-It combines high-precision combat analytics (**Combat Meter**) and client-side animation lock compensation (**Latency Mitigator**) into a single, unified architecture:
-- **Single In-Game Injection**: One DLL (`hub_payload.dll`), one DirectX 11 hook, one `WndProc` hook, and one multiplexed Named Pipe.
-- **Independent Floating Overlays**: Separate, draggable in-game overlays for each active plugin rendered directly onto Final Fantasy XIV's active DirectX 11 swapchain with 100% Variable Refresh Rate (VRR / G-Sync) compatibility.
-- **Centralized Desktop Manager**: A modern desktop dashboard (`ffxiv-hub.exe`) powered by Dear ImGui (Docking) and ImPlot, featuring real-time latency graphs, action feeds, combat tables, historical pull drilldowns, and complete overlay configuration.
-- **Zero External Dependencies**: Operates without Dalamud, XIVLauncher, Python runtimes, external web servers, or kernel filter drivers (WinDivert).
+- **Combat Meter** — live DPS and HPS, who died and to what, buff and debuff uptime, and a
+  history of every pull.
+- **Latency Mitigator** — trims animation lock down to what a player next to the
+  datacenter would feel, so oGCDs weave cleanly on a high-ping connection.
 
----
-
-## 🏛️ Architecture Overview
-
-```mermaid
-flowchart TD
-    subgraph GameProcess["ffxiv_dx11.exe (Game Process)"]
-        subgraph HubPayload["hub_payload.dll"]
-            DX11Hook["DirectX 11 Hook (Present & Resize)"]
-            WndProcHook["WndProc Hook (Mouse/Key Input)"]
-            GameHookMgr["Hook Manager (ReceiveActionEffect / UseActionLocation)"]
-            RingBuffer["Wait-Free Per-Thread-Lane Ring Buffer (4096 pkts/lane)"]
-            PipeClient["Payload IPC Client Thread"]
-            
-            subgraph InGamePlugins["In-Game Modular Plugins"]
-                CombatPlugin["Combat Meter Plugin (IPlugin)"]
-                LatencyPlugin["Latency Mitigator Plugin (IPlugin)"]
-            end
-            
-            subgraph Overlays["In-Game Overlays (Dear ImGui)"]
-                CombatOverlay["Combat Meter Overlay Window"]
-                LatencyHUD["Micro Ping HUD Window"]
-            end
-        end
-    end
-
-    subgraph DesktopManager["ffxiv-hub.exe (Desktop Manager)"]
-        PipeServer["Multiplexed IPC Server (\\.\\pipe\\ffxiv_hub_pipe)"]
-        AppState["Central App State & Config Manager"]
-        
-        subgraph DesktopUI["Dear ImGui Desktop + ImPlot"]
-            Sidebar["Navigation Sidebar"]
-            ViewDashboard["Overview Dashboard"]
-            ViewCombat["Combat Meter Inspector & Pull History"]
-            ViewLatency["Latency Mitigator Live Graph & Action Feed"]
-            ViewSettings["System Settings & Tray Manager"]
-        end
-        
-        Injector["Process Finder & DLL Injector"]
-        Tray["Windows System Tray & Notifications"]
-    end
-
-    GameHookMgr -->|1. Mitigate Lock| LatencyPlugin
-    GameHookMgr -->|2. Read Actions| CombatPlugin
-    LatencyPlugin --> LatencyHUD
-    CombatPlugin --> CombatOverlay
-    LatencyPlugin -->|Telemetry Events| RingBuffer
-    CombatPlugin -->|Combat Events| RingBuffer
-    RingBuffer --> PipeClient
-    PipeClient <===>|Multiplexed Binary IPC| PipeServer
-    PipeServer --> AppState
-    AppState --> DesktopUI
-    Injector -.->|CreateRemoteThread| HubPayload
-```
+Two files, no installer. It does not need Dalamud, XIVLauncher, a Python runtime, or any
+driver, and nothing else has to be installed for it to run.
 
 ---
 
@@ -89,12 +37,19 @@ ffxiv-hub/
 Double-click `ffxiv-hub.exe`. It opens the desktop manager and places an icon in the
 notification area. There is no console window and nothing is installed.
 
+> **Windows may warn you the first time.** The binaries are not code-signed. See
+> [Troubleshooting](#-troubleshooting) below — this is expected, and the fix is two clicks.
+
 ### 3. Launch Final Fantasy XIV
 
 Start the game through your normal launcher. The Hub discovers `ffxiv_dx11.exe`, injects
 the payload once the game window is ready, and reports the attachment in the dashboard and
 as a notification. Closing the game returns it to a waiting state; closing the Hub leaves
 the game running and hides the overlays until you start it again.
+
+> **There is nothing to configure.** The Latency Mitigator measures your own round-trip
+> time and adapts on its own — you do not need to enter your ping or tune anything for it
+> to work.
 
 ---
 
@@ -114,23 +69,64 @@ configuration keys.
 
 ---
 
-## 🚀 Key Features
+## 🖥️ What the app gives you
 
-### 🎮 Unified In-Game Payload & Overlays
-- **Single Hook In-Game Pipeline**: Exactly one DirectX 11 hook (`Present` & `ResizeBuffers`), one non-destructive `WndProc` detour, and one unified `ReceiveActionEffect` hook fanning out to every registered hook consumer in registration order.
-- **Independent Floating Overlays**: Separate, draggable Dear ImGui floating windows for the Combat Meter table and Latency Micro Ping HUD rendered directly onto the game's backbuffer with 100% VRR compatibility.
-- **MRT Pipeline Protection**: Safely preserves and restores all 8 OM render target slots and depth-stencil view to protect FFXIV's deferred rendering pipeline.
-- **Process Teardown Safety**: Graceful shutdown detection via `RtlDllShutdownInProgress` and non-destructive passthroughs to coexist seamlessly with ReShade and OBS.
+- **In-game overlays** for each plugin, drawn onto the game's own backbuffer. Drag them
+  anywhere, scale them, set their opacity, lock them in place, or make them click-through.
+  They respect variable refresh rate displays and coexist with ReShade and OBS.
+- **A desktop window** with a sidebar: an overview dashboard, a page per plugin, and
+  settings. Everything reflows as you resize it.
+- **A system tray icon** with a live status tooltip. Show or hide the window, toggle
+  starting with Windows, open the config folder or the log, and exit.
+- **Settings that persist** — window and overlay positions, sizes, opacities and scales
+  are all saved as you change them.
 
-### 🖥️ Desktop Manager & System Tray
-- **Decoupled Architecture**: Strictly separates generic Hub lifecycle management from individual plugin diagnostics.
-- **Sidebar Navigation**: Instant switching between Overview Dashboard, Combat Meter inspector, Latency Mitigator feed, and System Settings.
-- **Plugin-Agnostic System Tray**: Lives unobtrusively in the Windows notification area with real-time status tooltip and context menu strictly managing Hub lifecycle (Show/Hide, Auto-Start, Config/Logs, Exit) without plugin clutter.
-- **Hub-Only Dashboard**: Displays FFXIV game process detection status, Named Pipe IPC server health, hub-measured network ping, payload hook state, and the registered plugins queried from `PluginRegistry` metadata. No plugin metrics: DPS, HPS and mitigation numbers live only in their own views.
-- **Per-Plugin Master Switch**: Every plugin can be switched off outright, from its dashboard card or its own page header. A disabled plugin consumes no game hooks, streams no telemetry and draws no in-game overlay; the choice persists to `config.json` and is re-applied when the payload next loads.
-- **Dedicated Analytical Views**: Full-featured Combat Meter inspector (damage tables with job progress bars, healing breakdowns, damage taken by ability, a death log with recaps, buff and debuff uptime, a pull list rail for switching between the live fight and archived pulls, action drilldowns) and Latency Mitigator inspector (real-time RTT curves, jitter cards, rolling action feeds). Both share one page frame, so the Settings tab lists the same sections - Plugin, In-game overlay, Display, Maintenance - in the same order for every plugin.
-- **Responsive Layout**: Card grids, stat tile rows and data tables reflow as the window resizes, down to an enforced minimum size; tables scroll horizontally rather than crushing their columns.
-- **Debounced Geometry Persistence**: Overlay positions, dimensions, opacities, and scales automatically persist to `%APPDATA%/ffxiv-hub/config.json`.
+---
+
+## ❓ Troubleshooting
+
+**Windows Defender or SmartScreen flags the download.**
+
+Expected, and safe to allow. The Hub loads its payload into the game using standard
+Windows APIs (`VirtualAllocEx` and `CreateRemoteThread`) — the same mechanism a debugger
+uses. Antivirus heuristics flag *any* unknown binary that does this unless it carries a
+commercial Extended Validation code-signing certificate, which costs several hundred
+dollars a year and is not something an open-source hobby project buys. Click
+**More info → Run anyway**, or add an exclusion. The entire source is in this repository
+and you can build it yourself.
+
+**The overlays are not showing up.**
+
+Check that the plugin's master switch is on (dashboard card or its page header), then that
+the overlay itself is enabled in that plugin's settings. Overlays can also be set to hide
+in specific situations — in a cutscene, out of combat, while a menu is open — so check the
+hide conditions in the plugin's in-game overlay settings.
+
+**How do I stop it?**
+
+Exit from the tray menu. The game keeps running, untouched — the overlays disappear and
+mitigation stops. The payload stays loaded in the game for that session by design, since
+unloading code out from under a running DirectX pipeline is riskier than leaving it
+dormant. It does nothing while the Hub is closed, and reconnects within a second if you
+open the Hub again. Fully removing it is just closing the game.
+
+To uninstall, delete the folder you extracted. Settings live in
+`%APPDATA%/ffxiv-hub/` — delete that too if you want no trace left.
+
+**Final Fantasy XIV just patched and it stopped working.**
+
+A patch can move the memory locations the Hub relies on. Check the
+[Releases](../../releases) page for an updated build. Nothing is damaged in the meantime:
+if the Hub cannot find what it needs it reports the failure and does not attach.
+
+**Does this risk my account?**
+
+It is client-side only. It does not modify network packets, alter global cooldowns, or
+automate anything — it adjusts a local timer after the server has already confirmed an
+action, and enforces a floor so that timer never goes below what a player on a fast
+connection would naturally have. The Combat Meter only reads.
+
+---
 
 
 ---
