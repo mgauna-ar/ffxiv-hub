@@ -138,6 +138,8 @@ configuration keys.
 ## ⚙️ Configuration
 
 Settings live in `%APPDATA%/ffxiv-hub/config.json`, written as you change them in the app.
+The running game also saves live overlay state every few seconds, but only into the plugin
+sections, merged into the file as it is on disk, so it never reverts a hub-level setting.
 Each plugin owns a section; hub-level keys are:
 
 | Key | Type | Default | Description |

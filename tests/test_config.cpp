@@ -213,6 +213,48 @@ TEST_CASE(Config, SaveIsAtomicOnExistingFile) {
     cfg.set_custom_path_for_testing({});
 }
 
+TEST_CASE(Config, PayloadSaveKeepsAppOnlySections) {
+    // The payload loads config.json once and autosaves every 5 s. Writing its
+    // whole root put back the hub keys it loaded at injection, reverting any app
+    // setting changed since.
+    const auto tmp = std::filesystem::temp_directory_path() / "hub_owned_sections_test.json";
+    auto sidecar = tmp;
+    sidecar += ".tmp";
+    std::filesystem::remove(tmp);
+    std::filesystem::remove(sidecar);
+
+    ConfigManager app;
+    ConfigManager payload;
+    app.set_custom_path_for_testing(tmp);
+    payload.set_custom_path_for_testing(tmp);
+
+    TEST_ASSERT(app.save());
+    payload.set_owned_sections({"combat_meter", "latency_mitigator"});
+    TEST_ASSERT(payload.load());
+
+    // The app writes behind the payload's back.
+    app.root()["hub"]["minimize_to_tray"] = JsonValue(false);
+    app.root()["hub"]["test_marker"] = JsonValue("kept");
+    app.root()["combat_meter"]["app_only_key"] = JsonValue(true);
+    TEST_ASSERT(app.save());
+
+    // The payload autosaves its live overlay state from a stale snapshot.
+    payload.root()["combat_meter"]["overlay_x"] = JsonValue(1200.0);
+    TEST_ASSERT(payload.save());
+
+    ConfigManager reader;
+    reader.set_custom_path_for_testing(tmp);
+    TEST_ASSERT(reader.load());
+    auto& root = reader.root();
+    TEST_ASSERT_FALSE(root["hub"]["minimize_to_tray"].as_bool(true));
+    TEST_ASSERT_EQ(root["hub"]["test_marker"].as_string(), "kept");
+    TEST_ASSERT_TRUE(root["combat_meter"]["app_only_key"].as_bool(false));
+    TEST_ASSERT_NEAR(root["combat_meter"]["overlay_x"].as_float(), 1200.0f, 0.01f);
+    TEST_ASSERT_FALSE(std::filesystem::exists(sidecar));
+
+    std::filesystem::remove(tmp);
+}
+
 TEST_CASE(Config, SaveReportsFailureInsteadOfClaimingSuccess) {
     // save() used to return true even when the stream never reached disk.
     auto& cfg = hub::config::ConfigManager::instance();

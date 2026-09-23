@@ -5,15 +5,22 @@
 #include <string>
 #include <filesystem>
 #include <mutex>
+#include <optional>
+#include <vector>
 
 namespace hub::config {
 
 class ConfigManager {
 public:
+    /// The process-wide document. Separate instances exist only so tests can
+    /// stand in for the app and the payload writing one file.
     static ConfigManager& instance() noexcept {
         static ConfigManager s_instance;
         return s_instance;
     }
+
+    ConfigManager();
+    ~ConfigManager() = default;
 
     /// Returns absolute path to config.json (%APPDATA%/ffxiv-hub/config.json)
     [[nodiscard]] std::filesystem::path get_config_path() const;
@@ -21,8 +28,14 @@ public:
     /// Load configuration from disk into memory
     bool load();
 
-    /// Save current configuration from memory to disk
+    /// Save current configuration from memory to disk. With owned sections set,
+    /// only those sections' keys are merged into the file as it is now on disk.
     bool save();
+
+    /// Sections this process writes back. Empty (the default) writes the whole
+    /// document. The payload scopes itself to its plugin sections so its stale
+    /// copy of app-only keys never overwrites what the app saved since.
+    void set_owned_sections(std::vector<std::string> sections);
 
     /// Access root JSON configuration document
     [[nodiscard]] JsonValue& root() noexcept { return m_root; }
@@ -40,12 +53,13 @@ public:
     }
 
 private:
-    ConfigManager();
-    ~ConfigManager() = default;
+    static std::optional<JsonValue> read_disk_document(const std::filesystem::path& path);
+    static bool write_atomic(const std::filesystem::path& path, const JsonValue& doc);
 
     std::mutex m_mutex;
     JsonValue m_root{JsonValue::ObjectType{}};
     std::filesystem::path m_custom_path;
+    std::vector<std::string> m_owned_sections;
 };
 
 } // namespace hub::config

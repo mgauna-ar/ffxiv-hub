@@ -89,6 +89,8 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
 
     // 3. Bootstrap plugin config from disk now that overlays are wired, so
     //    persisted desktop settings apply in-game without waiting for a live command.
+    //    The payload writes back only its plugin sections; the rest belongs to the app.
+    hub::config::ConfigManager::instance().set_owned_sections({"combat_meter", "latency_mitigator"});
     hub::config::ConfigManager::instance().load();
     combat_plugin->deserialize_config(hub::config::ConfigManager::instance().root()["combat_meter"]);
     latency_plugin->deserialize_config(hub::config::ConfigManager::instance().root()["latency_mitigator"]);
@@ -390,11 +392,12 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
         }
 
         // Persist live overlay/plugin state (position, lock, opacity, ...) to
-        // config.json every few seconds. This is the only place that writes the
-        // config back out, so in-game changes (dragging an overlay, the padlock
-        // icon, desktop app commands) survive a restart. Throttled since it hits
-        // disk and the game process can be killed outright on exit rather than
-        // reaching the graceful teardown path below.
+        // config.json every few seconds, so in-game changes (dragging an overlay,
+        // the padlock icon, desktop app commands) survive a restart. Only the
+        // plugin sections are merged into the file as it is now, so app-only keys
+        // saved since injection are not reverted. Throttled since it hits disk and
+        // the game process can be killed outright on exit rather than reaching
+        // the graceful teardown path below.
         if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_config_save).count() > 5000) {
             auto& config_mgr = hub::config::ConfigManager::instance();
             combat_plugin->serialize_config(config_mgr.root()["combat_meter"]);

@@ -74,25 +74,31 @@ std::filesystem::path ConfigManager::get_config_path() const {
 #endif
 }
 
-bool ConfigManager::load() {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    const auto path = get_config_path();
-
-    if (!std::filesystem::exists(path)) {
-        return false;
+std::optional<JsonValue> ConfigManager::read_disk_document(const std::filesystem::path& path) {
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec)) {
+        return std::nullopt;
     }
 
     std::ifstream file(path);
     if (!file.is_open()) {
-        return false;
+        return std::nullopt;
     }
 
     std::stringstream buffer;
     buffer << file.rdbuf();
-    const auto content = buffer.str();
 
-    auto parsed = JsonValue::parse(content);
+    auto parsed = JsonValue::parse(buffer.str());
     if (!parsed || !parsed->is_object()) {
+        return std::nullopt;
+    }
+    return parsed;
+}
+
+bool ConfigManager::load() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    auto parsed = read_disk_document(get_config_path());
+    if (!parsed) {
         return false;
     }
 
@@ -110,10 +116,38 @@ bool ConfigManager::load() {
     return true;
 }
 
+void ConfigManager::set_owned_sections(std::vector<std::string> sections) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_owned_sections = std::move(sections);
+}
+
 bool ConfigManager::save() {
     std::lock_guard<std::mutex> lock(m_mutex);
     const auto path = get_config_path();
 
+    if (m_owned_sections.empty()) {
+        return write_atomic(path, m_root);
+    }
+
+    // The other process may have written since this one loaded, so start from
+    // the file as it is now and lay only our own keys over it. A missing or
+    // unreadable file falls back to the whole document so it is still complete.
+    JsonValue doc = read_disk_document(path).value_or(m_root);
+    for (const auto& section : m_owned_sections) {
+        if (!m_root.contains(section) || !m_root[section].is_object()) {
+            continue;
+        }
+        if (!doc.contains(section) || !doc[section].is_object()) {
+            doc[section] = JsonValue(JsonValue::ObjectType{});
+        }
+        for (const auto& [k, v] : m_root[section].as_object()) {
+            doc[section][k] = v;
+        }
+    }
+    return write_atomic(path, doc);
+}
+
+bool ConfigManager::write_atomic(const std::filesystem::path& path, const JsonValue& doc) {
     try {
         const auto dir = path.parent_path();
         if (!dir.empty() && !std::filesystem::exists(dir)) {
@@ -132,7 +166,7 @@ bool ConfigManager::save() {
                 return false;
             }
 
-            file << m_root.stringify(2);
+            file << doc.stringify(2);
             file.flush();
             file.close();
 
