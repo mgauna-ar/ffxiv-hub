@@ -46,6 +46,13 @@ namespace definitions {
 
     /// Size of the Conditions flag array: 112 contiguous bools, one per condition
     constexpr size_t CONDITIONS_FLAG_COUNT = 112;
+
+    /// RIP operand of the local player id signatures, counted from the match start
+    /// (the primary match begins two bytes before its MOV).
+    constexpr size_t LOCAL_PLAYER_ID_PRIMARY_RIP_DISP_OFFSET = 4;
+    constexpr size_t LOCAL_PLAYER_ID_PRIMARY_RIP_INSN_END = 12;
+    constexpr size_t LOCAL_PLAYER_ID_FALLBACK_RIP_DISP_OFFSET = 2;
+    constexpr size_t LOCAL_PLAYER_ID_FALLBACK_RIP_INSN_END = 6;
 } // namespace definitions
 
 /// Byte indices into the game's Conditions flag array. Each entry is a bool.
@@ -151,6 +158,15 @@ namespace signatures {
     // Unique in .text; resolves into .data.
     constexpr std::string_view CONDITIONS_INSTANCE =
         "48 8D 0D ? ? ? ? 66 2B D8";
+
+    // 8. Local player entity id (static uint32, 0xE0000000 when none). Not the party
+    // list's slot 0: the list is in server order.
+    // Primary: its initializer, xor eax,eax; mov dword [rip+disp32], 0xE0000000.
+    constexpr std::string_view LOCAL_PLAYER_ENTITY_ID_PRIMARY =
+        "33 C0 C7 05 ? ? ? ? 00 00 00 E0 48 8D 0D ? ? ? ? 89 05";
+    // Fallback: the party list update handler loading it, mov ebx, [rip+disp32].
+    constexpr std::string_view LOCAL_PLAYER_ENTITY_ID_FALLBACK =
+        "8B 1D ? ? ? ? 45 8B E6 89 5C 24 4C 44 38 A5 ? ? ? ? 0F 86";
 } // namespace signatures
 
 #pragma pack(push, 1)

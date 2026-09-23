@@ -62,6 +62,8 @@ private:
     [[maybe_unused]] FnGetObjectByEntityId* m_fp_get_object_by_id{nullptr};
     [[maybe_unused]] uintptr_t m_game_object_mgr_addr{0};
     [[maybe_unused]] uintptr_t m_group_manager_addr{0};
+    /// Static uint32 holding the local player's entity id; 0 when its signature missed.
+    [[maybe_unused]] uintptr_t m_local_player_id_addr{0};
     RingBuffer* m_ring_buffer{nullptr};
     bool m_initialized{false};
 

@@ -9,9 +9,10 @@ Plugin-local rules live next to their plugin:
 touching either plugin's analytics or timing math.
 
 Occasional procedures are skills under `.claude/skills/`, loaded when their trigger
-matches: `after-game-patch` (regenerating tables, repairing signatures), `tsan-check`
-(ThreadSanitizer run after touching meter threading), `release-windows` (MSVC build,
-packaging, CI).
+matches: `after-game-patch` (regenerating tables, repairing signatures),
+`inspect-game-client` (verifying a client-behaviour premise against the local
+`ffxiv_dx11.exe` and SqPack data), `tsan-check` (ThreadSanitizer run after touching meter
+threading), `release-windows` (MSVC build, packaging, CI).
 
 ---
 
@@ -57,6 +58,7 @@ packaging, CI).
      - Critical invariants, timing thresholds, or anti-cheat guardrails → wherever that invariant lives.
      - Build, packaging or CI commands → `.claude/skills/release-windows/`.
      - Generators, signatures or game offsets → `.claude/skills/after-game-patch/`.
+     - Binary inspection tooling (`tools/inspect_exe.py`, `tools/xivbin/`) → `.claude/skills/inspect-game-client/`.
      - A user-visible setting or config key → the README that documents that key. Every key is documented in exactly one file.
    - **Never leave documentation out of sync with code.** There are now seven documentation files and they must co-evolve with every pull request and agent task.
 

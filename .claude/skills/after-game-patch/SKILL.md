@@ -98,12 +98,14 @@ Signatures come in two kinds. PRIMARY patterns are call-sites - they start `E8 ?
 and the 32-bit relative displacement is resolved at runtime to reach the target. FALLBACK
 patterns are the function's own prologue bytes.
 
-Four targets carry both tiers:
+Five targets carry both tiers:
 
 - `RECEIVE_ACTION_EFFECT_PRIMARY` / `_FALLBACK`
 - `USE_ACTION_LOCATION_PRIMARY` / `_FALLBACK`
 - `ACTION_MANAGER_INSTANCE_PRIMARY` / `_FALLBACK`
 - `GET_OBJECT_BY_ENTITY_ID` / `_FALLBACK`
+- `LOCAL_PLAYER_ENTITY_ID_PRIMARY` / `_FALLBACK`. The two tiers resolve the same global
+  through different instructions, so each has its own `LOCAL_PLAYER_ID_*_RIP_*` pair.
 
 When one tier breaks, the other usually still resolves. Use the surviving tier to locate
 the function in the copied executable, then re-cut the broken pattern from the bytes at
@@ -114,8 +116,9 @@ verified-unique prologue as its replacement, and vice versa.
 
 `PROCESS_HOT_DOT_PRIMARY`, `GAME_OBJECT_MANAGER_INSTANCE`, `GROUP_MANAGER_INSTANCE` and
 `CONDITIONS_INSTANCE` are single-pattern. If one of those breaks there is nothing to
-recover from, and locating the function is ordinary disassembly of the copied exe in IDA,
-Ghidra or x64dbg. There is no shortcut for these.
+recover from, and locating the function is ordinary disassembly of the copied exe. The
+`inspect-game-client` skill covers it: find a unique instruction that references the
+same global (`tools/inspect_exe.py xrefs`) and re-cut the pattern from its bytes.
 
 ### AMBIGUOUS is a different fix
 
@@ -139,7 +142,7 @@ rather than replacing it wholesale.
 The Latency Mitigator's timing rules rest on how the client sends an action, recorded in
 [How the client dispatches an action](../../../plugins/latency_mitigator/AGENTS.md#how-the-client-dispatches-an-action).
 A patch can change that without breaking a signature, so re-check it against the new
-executable before trusting those rules. `objdump -d --x86-asm-syntax=intel` on macOS
+executable before trusting those rules. `tools/inspect_exe.py` (see `inspect-game-client`)
 disassembles the copied exe; find the hooked `UseActionLocation` through the resolved
 `USE_ACTION_LOCATION_PRIMARY` call site and confirm:
 

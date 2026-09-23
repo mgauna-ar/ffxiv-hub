@@ -231,6 +231,16 @@ static bool SafeReadParty(
     }
 }
 
+static uint32_t SafeReadLocalPlayerId(uintptr_t addr) {
+    __try {
+        const uint32_t id = addr != 0 ? *reinterpret_cast<const uint32_t*>(addr) : 0;
+        return game::is_real_entity_id(id) ? id : 0;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
 } // namespace
 
 ObjectReader::ObjectReader(RingBuffer* ring_buffer)
@@ -265,6 +275,16 @@ bool ObjectReader::initialize() {
     uintptr_t group_ins = common::pe::scan_module_section(h_game, ".text", game::signatures::GROUP_MANAGER_INSTANCE);
     if (group_ins) {
         m_group_manager_addr = hub::memory::resolve_rip_relative(group_ins, 5, 9);
+    }
+
+    // Local player entity id: the party list cannot say which slot is us.
+    namespace defs = game::definitions;
+    if (uintptr_t ins = common::pe::scan_module_section(h_game, ".text", game::signatures::LOCAL_PLAYER_ENTITY_ID_PRIMARY)) {
+        m_local_player_id_addr = hub::memory::resolve_rip_relative(
+            ins, defs::LOCAL_PLAYER_ID_PRIMARY_RIP_DISP_OFFSET, defs::LOCAL_PLAYER_ID_PRIMARY_RIP_INSN_END);
+    } else if (uintptr_t fb = common::pe::scan_module_section(h_game, ".text", game::signatures::LOCAL_PLAYER_ENTITY_ID_FALLBACK)) {
+        m_local_player_id_addr = hub::memory::resolve_rip_relative(
+            fb, defs::LOCAL_PLAYER_ID_FALLBACK_RIP_DISP_OFFSET, defs::LOCAL_PLAYER_ID_FALLBACK_RIP_INSN_END);
     }
 
     m_initialized = (m_game_object_mgr_addr != 0 || m_group_manager_addr != 0);
@@ -309,6 +329,7 @@ void ObjectReader::sync_party(meter::CombatantRegistry* registry) {
     if (!SafeReadParty(m_group_manager_addr, sync, extracted)) {
         return;
     }
+    sync.local_player_id = SafeReadLocalPlayerId(m_local_player_id_addr);
 
     // Party members carry name/job/HP that the action hook only learns once an
     // actor has acted, so publish them as actor info too.
@@ -364,7 +385,8 @@ void ObjectReader::sync_party(meter::CombatantRegistry* registry) {
     bool party_changed = false;
     {
         std::lock_guard<std::mutex> lock(m_cache_mutex);
-        if (sync.party_count != m_last_party_sync.party_count) {
+        if (sync.party_count != m_last_party_sync.party_count ||
+            sync.local_player_id != m_last_party_sync.local_player_id) {
             party_changed = true;
         } else {
             for (uint32_t i = 0; i < sync.party_count; ++i) {

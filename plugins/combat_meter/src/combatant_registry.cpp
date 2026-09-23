@@ -84,6 +84,9 @@ void CombatantRegistry::register_actor(const ipc::ActorInfoPacket& packet) {
 
     if (resolved_owner_id != 0) {
         m_pet_to_owner[packet.entity_id] = resolved_owner_id;
+    } else if (!is_pet_actor) {
+        // A recycled pet id must not keep merging into the old owner.
+        m_pet_to_owner.erase(packet.entity_id);
     }
 }
 
@@ -159,6 +162,9 @@ Combatant& CombatantRegistry::register_actor(
 
     if (resolved_owner_id != 0) {
         m_pet_to_owner[entity_id] = resolved_owner_id;
+    } else if (!is_pet_actor) {
+        // A recycled pet id must not keep merging into the old owner.
+        m_pet_to_owner.erase(entity_id);
     }
 
     return actor;
@@ -237,23 +243,26 @@ void CombatantRegistry::sync_party(const ipc::PartySyncPacket& packet) {
         m_party_members.push_back(id);
         auto it = m_actors.find(id);
         if (it != m_actors.end()) {
-            it->second.is_party_member = true;
             if (it->second.job == Job::None && packet.job_ids[i] != 0) {
                 it->second.job = static_cast<Job>(packet.job_ids[i]);
                 it->second.role = job_to_role(it->second.job);
             }
         } else if (packet.job_ids[i] != 0) {
             Combatant& new_actor = get_or_create(id);
-            new_actor.is_party_member = true;
             new_actor.job = static_cast<Job>(packet.job_ids[i]);
             new_actor.role = job_to_role(new_actor.job);
         }
     }
 
-    // Recomputed every sync rather than latched once: the id from the previous
-    // party outlives that party otherwise, and keeps flagging a stranger as the
-    // local player for the rest of the session.
-    set_local_player((count > 0) ? packet.entity_ids[0] : 0);
+    // Recomputed for everyone, not just set on the current list: a member who
+    // left would otherwise stay a party member for the rest of the session.
+    for (auto& [id, actor] : m_actors) {
+        actor.is_party_member = is_party_member(id);
+    }
+
+    // Recomputed every sync rather than latched once. Taken from the packet, never
+    // from slot 0: the party list is in server order, so slot 0 is often someone else.
+    set_local_player(hub::game::is_real_entity_id(packet.local_player_id) ? packet.local_player_id : 0);
 }
 
 void CombatantRegistry::set_party_members(const std::vector<EntityId>& member_ids) {

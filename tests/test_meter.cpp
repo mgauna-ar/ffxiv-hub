@@ -1713,6 +1713,7 @@ TEST_CASE(MeterRegistry, LocalPlayerFollowsTheCurrentParty) {
 
     hub::ipc::PartySyncPacket first{};
     first.party_count = 2;
+    first.local_player_id = 1001;
     first.entity_ids[0] = 1001; first.job_ids[0] = static_cast<uint32_t>(Job::WAR);
     first.entity_ids[1] = 1002; first.job_ids[1] = static_cast<uint32_t>(Job::WHM);
     reg.sync_party(first);
@@ -1720,6 +1721,7 @@ TEST_CASE(MeterRegistry, LocalPlayerFollowsTheCurrentParty) {
 
     hub::ipc::PartySyncPacket second{};
     second.party_count = 2;
+    second.local_player_id = 2001;
     second.entity_ids[0] = 2001; second.job_ids[0] = static_cast<uint32_t>(Job::PCT);
     second.entity_ids[1] = 2002; second.job_ids[1] = static_cast<uint32_t>(Job::SGE);
     reg.sync_party(second);
@@ -1729,10 +1731,75 @@ TEST_CASE(MeterRegistry, LocalPlayerFollowsTheCurrentParty) {
     TEST_ASSERT(stale != nullptr);
     TEST_ASSERT_FALSE(stale->is_local_player);
 
-    // Disbanding leaves nobody to point at.
+    // An unknown id (signature missed, or the game's placeholder) leaves nobody flagged.
+    hub::ipc::PartySyncPacket unknown{};
+    unknown.local_player_id = hub::game::NO_ENTITY_ID;
+    reg.sync_party(unknown);
+    TEST_ASSERT_EQ(reg.local_player_id(), 0u);
+}
+
+TEST_CASE(MeterRegistry, LocalPlayerIsNotSlotZero) {
+    // The client fills the party list in server order; the local player can be any slot.
+    CombatantRegistry reg;
+
+    hub::ipc::PartySyncPacket party{};
+    party.party_count = 3;
+    party.local_player_id = 3003;
+    party.entity_ids[0] = 3001; party.job_ids[0] = static_cast<uint32_t>(Job::PLD);
+    party.entity_ids[1] = 3002; party.job_ids[1] = static_cast<uint32_t>(Job::AST);
+    party.entity_ids[2] = 3003; party.job_ids[2] = static_cast<uint32_t>(Job::SMN);
+    reg.sync_party(party);
+    TEST_ASSERT_EQ(reg.local_player_id(), 3003u);
+    TEST_ASSERT_FALSE(reg.find_actor(3001)->is_local_player);
+    TEST_ASSERT(reg.find_actor(3003)->is_local_player);
+
+    // Solo play has no party list but still knows who we are.
+    hub::ipc::PartySyncPacket solo{};
+    solo.local_player_id = 3003;
+    reg.sync_party(solo);
+    TEST_ASSERT_EQ(reg.local_player_id(), 3003u);
+    TEST_ASSERT(reg.find_actor(3003)->is_local_player);
+}
+
+TEST_CASE(MeterRegistry, PartySyncClearsFormerMembers) {
+    // The flag used to be set on current members only, so anyone who left kept it.
+    CombatantRegistry reg;
+
+    hub::ipc::PartySyncPacket both{};
+    both.party_count = 2;
+    both.entity_ids[0] = 1001; both.job_ids[0] = static_cast<uint32_t>(Job::WAR);
+    both.entity_ids[1] = 1002; both.job_ids[1] = static_cast<uint32_t>(Job::WHM);
+    reg.sync_party(both);
+    TEST_ASSERT(reg.find_actor(1002)->is_party_member);
+
+    hub::ipc::PartySyncPacket one{};
+    one.party_count = 1;
+    one.entity_ids[0] = 1001; one.job_ids[0] = static_cast<uint32_t>(Job::WAR);
+    reg.sync_party(one);
+    TEST_ASSERT(reg.find_actor(1001)->is_party_member);
+    TEST_ASSERT_FALSE(reg.find_actor(1002)->is_party_member);
+
     hub::ipc::PartySyncPacket empty{};
     reg.sync_party(empty);
-    TEST_ASSERT_EQ(reg.local_player_id(), 0u);
+    TEST_ASSERT_FALSE(reg.find_actor(1001)->is_party_member);
+}
+
+TEST_CASE(MeterRegistry, RecycledPetIdIsNotAPet) {
+    CombatantRegistry reg;
+    reg.register_actor(10, "Summoner Player", Job::SMN);
+    reg.register_actor(0x40000020, "Demi-Bahamut", Job::SMN, 10);
+    TEST_ASSERT(reg.is_pet(0x40000020));
+
+    // The game hands the id to a monster once the pet is gone.
+    reg.register_actor(0x40000020, "Striking Dummy", Job::None, 0, ActorType::Monster);
+    TEST_ASSERT_FALSE(reg.is_pet(0x40000020));
+    TEST_ASSERT_EQ(reg.resolve_owner(0x40000020), 0x40000020u);
+    TEST_ASSERT_FALSE(reg.is_friendly(0x40000020));
+
+    // A pet re-read without owner info keeps the link it already had.
+    reg.register_actor(0x40000030, "Demi-Bahamut", Job::SMN, 10);
+    reg.register_actor(0x40000030, "Demi-Bahamut", Job::SMN, 0);
+    TEST_ASSERT_EQ(reg.resolve_owner(0x40000030), 10u);
 }
 
 TEST_CASE(PayloadObjectReader, InvalidateCacheRepublishesEverything) {

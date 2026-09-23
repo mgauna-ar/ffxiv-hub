@@ -50,6 +50,8 @@ to the player and merges the stats there:
 
 - Unlinked pets are attributed by matching party and local player jobs.
 - Late attribution packets consolidate into the owner rather than leaving a stray row.
+- A pet's link to its owner ends when its entity id comes back as something else, so a
+  monster reusing that id is never merged into the old owner.
 - Pet damage counts toward the player's total and DPS.
 - It is also tracked separately, so you can see how much of a total came from the pet.
   A pet attributed late counts once toward that figure, and if the owner had no row yet,

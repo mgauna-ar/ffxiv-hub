@@ -149,7 +149,8 @@ static_assert(sizeof(CombatActorInfoPayload) == 64, "CombatActorInfoPayload must
 /// 0x0205: Combat Meter Party Sync Packet
 struct CombatPartySyncPayload {
     uint32_t party_count{0};
-    uint32_t reserved{0};
+    /// Read from the client, not the list: slot 0 is not the local player. 0 when unknown.
+    uint32_t local_player_id{0};
     uint32_t entity_ids[MAX_PARTY_MEMBERS]{0};
     uint32_t job_ids[MAX_PARTY_MEMBERS]{0};
 };
