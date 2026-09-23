@@ -188,10 +188,10 @@ not the intended interface.
 | `show_bars` | bool | `true` | Job-coloured progress bars behind rows. |
 | `hide_inactive` | bool | `false` | Hide combatants with no activity. |
 | `refresh_interval_ms` | int | `500` | How often the displayed snapshot refreshes. |
-| `show_col_share` | bool | — | Show the damage share column. |
-| `show_col_crit` | bool | — | Show the crit rate column. |
-| `show_col_dh` | bool | — | Show the direct hit column. |
-| `show_col_cdh` | bool | — | Show the crit-direct-hit column. |
+| `show_col_share` | bool | `true` | Show the damage share column. |
+| `show_col_crit` | bool | `true` | Show the crit rate column. |
+| `show_col_dh` | bool | `true` | Show the direct hit column. |
+| `show_col_cdh` | bool | `true` | Show the crit-direct-hit column. |
 | `overlay_metric` | int | `0` | In-game overlay metric: `0` damage, `1` healing. |
 | `track_vitals` | bool | `true` | Read HP and status lists four times a second for deaths, buffs and debuffs. Off, nothing is read. |
 | `overlay_visible` | bool | `true` | Draw the in-game overlay. |

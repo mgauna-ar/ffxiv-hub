@@ -3,7 +3,6 @@
 #include "common/ui/icons.hpp"
 #include "app/ui/theme.hpp"
 #include "app/ui/widgets.hpp"
-#include <filesystem>
 #include "common/os/auto_start.hpp"
 #include "common/os/logger.hpp"
 #include <fstream>
@@ -129,14 +128,7 @@ void render_config_card(AppState& app_state) {
         ImGui::Dummy(ImVec2(0.0f, m(8.0f)));
 
         if (button(ICON_TRASH "  Reset everything", ButtonKind::Danger, ButtonSize::Large)) {
-            const auto path = app_state.config_manager().get_config_path();
-            std::error_code ec;
-            std::filesystem::remove(path, ec);
-            // The defaults live in the ConfigManager constructor, so a load with
-            // no file on disk leaves exactly those in memory.
-            app_state.config_manager().load();
-            app_state.config_manager().save();
-            app_state.send_reload_config();
+            app_state.reset_config();
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine(0.0f, m(8.0f));

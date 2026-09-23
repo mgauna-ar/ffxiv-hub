@@ -32,6 +32,13 @@ public:
     /// only those sections' keys are merged into the file as it is now on disk.
     bool save();
 
+    /// Replaces the in-memory document with the defaults. Does not touch disk.
+    void reset_to_defaults();
+
+    /// Every key a plugin reads, at its default. Master switches are left out so
+    /// the combat meter's legacy "enabled" key keeps its meaning on load.
+    [[nodiscard]] static JsonValue default_document();
+
     /// Sections this process writes back. Empty (the default) writes the whole
     /// document. The payload scopes itself to its plugin sections so its stale
     /// copy of app-only keys never overwrites what the app saved since.
@@ -57,7 +64,7 @@ private:
     static bool write_atomic(const std::filesystem::path& path, const JsonValue& doc);
 
     std::mutex m_mutex;
-    JsonValue m_root{JsonValue::ObjectType{}};
+    JsonValue m_root;
     std::filesystem::path m_custom_path;
     std::vector<std::string> m_owned_sections;
 };

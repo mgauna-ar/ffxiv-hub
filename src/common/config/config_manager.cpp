@@ -6,9 +6,11 @@
 
 namespace hub::config {
 
-ConfigManager::ConfigManager() {
-    // Populate sensible defaults
-    m_root["hub"] = JsonValue::ObjectType{
+JsonValue ConfigManager::default_document() {
+    // A plugin keeps its current value for a key missing from the file, so a
+    // reset only takes in-game if every key it reads is listed here.
+    JsonValue root{JsonValue::ObjectType{}};
+    root["hub"] = JsonValue::ObjectType{
         {"start_with_windows", JsonValue(false)},
         {"minimize_to_tray", JsonValue(true)},
         {"show_notifications", JsonValue(true)},
@@ -17,7 +19,7 @@ ConfigManager::ConfigManager() {
     // Overlay keys are the canonical set shared by every plugin - see
     // hub::ui::serialize_overlay. A negative position means "never placed", so
     // the overlay falls back to its own default.
-    m_root["combat_meter"] = JsonValue::ObjectType{
+    root["combat_meter"] = JsonValue::ObjectType{
         {"overlay_visible", JsonValue(true)},
         {"overlay_x", JsonValue(-1.0f)},
         {"overlay_y", JsonValue(-1.0f)},
@@ -31,15 +33,24 @@ ConfigManager::ConfigManager() {
         {"party_only", JsonValue(false)},
         {"hide_inactive", JsonValue(false)},
         {"inactivity_timeout_seconds", JsonValue(7.0f)},
-        {"overlay_metric", JsonValue(0)}
+        {"overlay_metric", JsonValue(0)},
+        {"show_bars", JsonValue(true)},
+        {"refresh_interval_ms", JsonValue(500)},
+        {"show_col_share", JsonValue(true)},
+        {"show_col_crit", JsonValue(true)},
+        {"show_col_dh", JsonValue(true)},
+        {"show_col_cdh", JsonValue(true)},
+        {"track_vitals", JsonValue(true)}
     };
-    m_root["latency_mitigator"] = JsonValue::ObjectType{
+    root["latency_mitigator"] = JsonValue::ObjectType{
         {"enabled", JsonValue(true)},
         {"dry_run", JsonValue(false)},
         {"target_ping_ms", JsonValue(15.0f)},
         {"min_animation_lock_ms", JsonValue(25.0f)},
         {"max_animation_lock_ms", JsonValue(2500.0f)},
         {"spike_multiplier", JsonValue(2.5f)},
+        {"rtt_sample_window", JsonValue(10)},
+        {"safety_margin_ms", JsonValue(0.0f)},
         {"overlay_visible", JsonValue(true)},
         {"overlay_x", JsonValue(20.0f)},
         {"overlay_y", JsonValue(20.0f)},
@@ -52,6 +63,14 @@ ConfigManager::ConfigManager() {
         {"overlay_hide_conditions", JsonValue(0)},
         {"overlay_mode", JsonValue(0)}
     };
+    return root;
+}
+
+ConfigManager::ConfigManager() : m_root(default_document()) {}
+
+void ConfigManager::reset_to_defaults() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_root = default_document();
 }
 
 std::filesystem::path ConfigManager::get_config_path() const {

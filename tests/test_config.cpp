@@ -3,6 +3,8 @@
 #include "common/config/config_manager.hpp"
 #include "app/ui/config_binding.hpp"
 #include "common/ui/overlay_config.hpp"
+#include "meter/combat_plugin.hpp"
+#include "mitigator/latency_plugin.hpp"
 #include <filesystem>
 #include <fstream>
 
@@ -253,6 +255,54 @@ TEST_CASE(Config, PayloadSaveKeepsAppOnlySections) {
     TEST_ASSERT_FALSE(std::filesystem::exists(sidecar));
 
     std::filesystem::remove(tmp);
+}
+
+TEST_CASE(Config, ResetToDefaultsDiscardsEveryChange) {
+    // "Reset everything" used to delete the file and call load(), which returns
+    // early with no file and left every in-memory value as it was.
+    ConfigManager cfg;
+    cfg.root()["hub"]["minimize_to_tray"] = JsonValue(false);
+    cfg.root()["combat_meter"]["show_col_crit"] = JsonValue(false);
+    cfg.root()["latency_mitigator"]["target_ping_ms"] = JsonValue(40.0);
+    cfg.root()["stray_section"] = JsonValue(JsonValue::ObjectType{});
+
+    cfg.reset_to_defaults();
+    TEST_ASSERT_EQ(cfg.root().stringify(2), ConfigManager::default_document().stringify(2));
+}
+
+namespace {
+
+// A plugin keeps its current value for any key absent from the file, so a key
+// missing from the defaults survives a reset in-game.
+void assert_defaults_cover(const JsonValue& serialized, const char* section) {
+    const auto defaults = ConfigManager::default_document();
+    for (const auto& [key, value] : serialized.as_object()) {
+        (void)value;
+        if (key == "plugin_enabled") continue;
+        if (!defaults[section].contains(key)) {
+            TEST_ASSERT_EQ(std::string(section) + "." + key, std::string("listed in default_document()"));
+        }
+    }
+}
+
+} // namespace
+
+TEST_CASE(Config, DefaultsCoverEveryCombatMeterKey) {
+    hub::meter::CombatPlugin plugin;
+    plugin.initialize();
+    JsonValue out{JsonValue::ObjectType{}};
+    plugin.serialize_config(out);
+    assert_defaults_cover(out, "combat_meter");
+    plugin.shutdown();
+}
+
+TEST_CASE(Config, DefaultsCoverEveryLatencyMitigatorKey) {
+    hub::mitigator::LatencyPlugin plugin;
+    plugin.initialize();
+    JsonValue out{JsonValue::ObjectType{}};
+    plugin.serialize_config(out);
+    assert_defaults_cover(out, "latency_mitigator");
+    plugin.shutdown();
 }
 
 TEST_CASE(Config, SaveReportsFailureInsteadOfClaimingSuccess) {

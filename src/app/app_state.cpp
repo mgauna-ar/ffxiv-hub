@@ -3,6 +3,7 @@
 #include "common/os/process_finder.hpp"
 #include "common/os/injector.hpp"
 #include "common/os/logger.hpp"
+#include "common/os/auto_start.hpp"
 #include <algorithm>
 #include <filesystem>
 
@@ -46,14 +47,7 @@ AppState::~AppState() {
 
 bool AppState::initialize() {
     config::ConfigManager::instance().load();
-    // The mirror engine has to close pulls on the same schedule as the in-game
-    // one, or the app's history lands on different encounter boundaries.
-    const auto& meter_cfg = config::ConfigManager::instance().root()["combat_meter"];
-    if (meter_cfg.contains("inactivity_timeout_seconds")) {
-        std::lock_guard<std::mutex> lock(m_combat_mutex);
-        m_engine.set_inactivity_timeout(meter_cfg["inactivity_timeout_seconds"].as_double(
-            meter::constants::DEFAULT_INACTIVITY_TIMEOUT_SECONDS));
-    }
+    apply_config_to_mirror_engine();
     // Mirror the persisted master switches into the plugin list so the sidebar
     // and dashboard agree with what the payload will read off disk.
     for (auto& plugin : m_plugins) {
@@ -111,6 +105,32 @@ void AppState::set_plugin_enabled(PluginId id, bool enabled) {
     }
 
     m_pipe_server.send_command(id, CommandId::SetPluginEnabled, enabled ? 1u : 0u);
+}
+
+void AppState::apply_config_to_mirror_engine() {
+    // The mirror engine has to close pulls on the same schedule as the in-game
+    // one, or the app's history lands on different encounter boundaries.
+    const auto& meter_cfg = config::ConfigManager::instance().root()["combat_meter"];
+    if (meter_cfg.contains("inactivity_timeout_seconds")) {
+        std::lock_guard<std::mutex> lock(m_combat_mutex);
+        m_engine.set_inactivity_timeout(meter_cfg["inactivity_timeout_seconds"].as_double(
+            meter::constants::DEFAULT_INACTIVITY_TIMEOUT_SECONDS));
+    }
+}
+
+void AppState::reset_config() {
+    auto& cfg = config::ConfigManager::instance();
+    cfg.reset_to_defaults();
+    // The registry is the source of truth for auto-start, so config follows it.
+    cfg.root()["hub"]["start_with_windows"] = config::JsonValue(os::AutoStart::is_enabled());
+    cfg.save();
+    apply_config_to_mirror_engine();
+
+    // The defaults carry no master switch, so turn each plugin back on explicitly.
+    for (const auto& plugin : m_plugins) {
+        set_plugin_enabled(plugin.id, true);
+    }
+    send_reload_config();
 }
 
 size_t AppState::enabled_plugin_count() const noexcept {

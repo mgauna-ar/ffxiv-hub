@@ -5,6 +5,7 @@
 #include "common/ipc/pipe_server.hpp"
 #include "common/os/tray_manager.hpp"
 #include <chrono>
+#include <filesystem>
 
 using namespace hub;
 
@@ -405,4 +406,40 @@ TEST_CASE(AppState, PluginMasterSwitchPersistsAndMirrors) {
     TEST_ASSERT(state.is_plugin_enabled(PluginId::Core));
 
     state.shutdown();
+}
+
+TEST_CASE(AppState, ResetConfigRestoresDefaultsEverywhere) {
+    auto& cfg = config::ConfigManager::instance();
+    const auto tmp = std::filesystem::temp_directory_path() / "hub_reset_test.json";
+    std::filesystem::remove(tmp);
+    cfg.set_custom_path_for_testing(tmp);
+
+    app::AppState state;
+    TEST_ASSERT(state.initialize());
+
+    state.set_plugin_enabled(PluginId::CombatMeter, false);
+    cfg.root()["hub"]["minimize_to_tray"] = config::JsonValue(false);
+    cfg.root()["combat_meter"]["show_col_crit"] = config::JsonValue(false);
+    cfg.root()["latency_mitigator"]["target_ping_ms"] = config::JsonValue(40.0);
+    TEST_ASSERT(cfg.save());
+
+    state.reset_config();
+
+    TEST_ASSERT(state.is_plugin_enabled(PluginId::CombatMeter));
+    TEST_ASSERT_EQ(state.enabled_plugin_count(), 2u);
+
+    // What the payload reads back on ReloadConfig.
+    config::ConfigManager reader;
+    reader.set_custom_path_for_testing(tmp);
+    TEST_ASSERT(reader.load());
+    auto& root = reader.root();
+    TEST_ASSERT(root["hub"]["minimize_to_tray"].as_bool(false));
+    TEST_ASSERT(root["combat_meter"]["show_col_crit"].as_bool(false));
+    TEST_ASSERT(root["combat_meter"]["plugin_enabled"].as_bool(false));
+    TEST_ASSERT(root["combat_meter"]["enabled"].as_bool(false));
+    TEST_ASSERT_NEAR(root["latency_mitigator"]["target_ping_ms"].as_float(), 15.0f, 0.01f);
+
+    state.shutdown();
+    std::filesystem::remove(tmp);
+    cfg.set_custom_path_for_testing({});
 }

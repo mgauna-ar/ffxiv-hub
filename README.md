@@ -140,6 +140,9 @@ configuration keys.
 Settings live in `%APPDATA%/ffxiv-hub/config.json`, written as you change them in the app.
 The running game also saves live overlay state every few seconds, but only into the plugin
 sections, merged into the file as it is on disk, so it never reverts a hub-level setting.
+**Reset all settings** (Settings → Configuration) puts every key back to its default, in the
+app and in-game, and switches every plugin back on. Start with Windows keeps following the
+registry.
 Each plugin owns a section; hub-level keys are:
 
 | Key | Type | Default | Description |

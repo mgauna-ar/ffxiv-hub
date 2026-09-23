@@ -94,6 +94,9 @@ public:
     /// registered-plugin list, and tells the payload to stop or resume.
     void set_plugin_enabled(PluginId id, bool enabled);
     [[nodiscard]] bool is_plugin_enabled(PluginId id) const noexcept;
+
+    /// Puts every setting back to its default, on disk, in the app and in-game.
+    void reset_config();
     [[nodiscard]] size_t enabled_plugin_count() const noexcept;
 
     // ==========================================
@@ -187,6 +190,7 @@ public:
 
 private:
     void register_ipc_callbacks();
+    void apply_config_to_mirror_engine();
 
     /// Folds geometry pushed by the payload into the config root. The app loads
     /// config.json once and rewrites the whole document on every save, so
