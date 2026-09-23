@@ -1,4 +1,8 @@
 #include "app/ui/view_combat.hpp"
+#include "app/ui/combat_damage_taken.hpp"
+#include "app/ui/combat_deaths.hpp"
+#include "app/ui/combat_statuses.hpp"
+#include "app/ui/combat_view_common.hpp"
 #include "app/ui/config_binding.hpp"
 #include "common/ui/icons.hpp"
 #include "app/ui/overlay_settings.hpp"
@@ -36,18 +40,6 @@ meter::EncounterSummary s_live_summary;
 meter::EncounterSummary s_selected_pull;
 uint64_t s_cached_pull_id = 0;
 std::chrono::steady_clock::time_point s_last_snapshot{};
-
-/// Base flags every ranking table shares; the sizing policy is chosen per table
-/// by table_sizing(), which is what lets a narrow window scroll instead of
-/// crushing the columns.
-constexpr ImGuiTableFlags kTableFlags = ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY |
-                                        ImGuiTableFlags_BordersInnerV;
-
-void table_headers_row() {
-    ImGui::PushStyleColor(ImGuiCol_Text, v4(colors::TextDim));
-    ImGui::TableHeadersRow();
-    ImGui::PopStyleColor();
-}
 
 /// Position of a pull in the archive listing, or nothing if it has been evicted.
 std::optional<size_t> find_pull_index(const std::vector<meter::PullHistoryEntry>& pull_history,
@@ -171,6 +163,9 @@ void render_pull_rail(AppState& app_state, const std::vector<meter::PullHistoryE
                 if (!compact) {
                     label += "  " + format_clock_time(pull.ended_at_unix_s) + "  " +
                              format_duration(static_cast<uint64_t>(pull.duration_seconds));
+                    if (pull.death_count > 0) {
+                        label += "  " ICON_SKULL " " + std::to_string(pull.death_count);
+                    }
                 }
                 label += "##Pull" + std::to_string(pull.encounter_id);
                 if (rail_row(label.c_str(), s_selected_pull_id == pull.encounter_id,
@@ -242,6 +237,8 @@ void render_top_bar(AppState& app_state, const meter::EncounterSummary& summary,
     stat("RAID DPS", format_dps(summary.total_dps), colors::AccentHover);
     stat("RAID HPS", format_dps(summary.total_hps), colors::SuccessLight);
     stat("COMBATANTS", std::to_string(summary.combatants.size()), colors::TextPrimary);
+    stat("DEATHS", std::to_string(summary.deaths.size()),
+         summary.deaths.empty() ? colors::TextPrimary : colors::DangerLight);
 
     const float actions_w = m(metrics::ButtonMd) + m(130.0f);
     if (same_line_if_room(actions_w, metrics::Gutter)) {
@@ -291,8 +288,8 @@ void render_damage_table(const meter::EncounterSummary& summary, float height) {
     }
 
     const double top_dps = std::max(combatants.front()->dps, 1.0);
-    const auto sizing = table_sizing(700.0f, kTableFlags);
-    if (!ImGui::BeginTable("##DamageRankingTable", 9, sizing.flags, ImVec2(0.0f, height))) return;
+    const auto sizing = table_sizing(760.0f, kCombatTableFlags);
+    if (!ImGui::BeginTable("##DamageRankingTable", 10, sizing.flags, ImVec2(0.0f, height))) return;
 
     ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, m(30.0f));
     ImGui::TableSetupColumn("Job", ImGuiTableColumnFlags_WidthFixed, m(52.0f));
@@ -303,8 +300,9 @@ void render_damage_table(const meter::EncounterSummary& summary, float height) {
     ImGui::TableSetupColumn("Crit %", ImGuiTableColumnFlags_WidthFixed, m(65.0f));
     ImGui::TableSetupColumn("DH %", ImGuiTableColumnFlags_WidthFixed, m(65.0f));
     ImGui::TableSetupColumn("CDH %", ImGuiTableColumnFlags_WidthFixed, m(65.0f));
+    ImGui::TableSetupColumn("Deaths", ImGuiTableColumnFlags_WidthFixed, m(60.0f));
     ImGui::TableSetupScrollFreeze(0, 1);
-    table_headers_row();
+    combat_table_headers_row();
 
     int rank = 1;
     for (const meter::CombatantStats* cp : combatants) {
@@ -342,6 +340,9 @@ void render_damage_table(const meter::EncounterSummary& summary, float height) {
 
         ImGui::TableSetColumnIndex(8);
         text_colored_u32(colors::TextMuted, "%s", format_percentage(c.hits.cdh_rate()).c_str());
+
+        ImGui::TableSetColumnIndex(9);
+        text_colored_u32(c.deaths > 0 ? colors::DangerLight : colors::TextFaint, "%u", c.deaths);
     }
 
     ImGui::EndTable();
@@ -363,7 +364,7 @@ void render_healing_table(const meter::EncounterSummary& summary, float height) 
     }
 
     const double top_hps = std::max(combatants.front()->hps, 1.0);
-    const auto sizing = table_sizing(680.0f, kTableFlags);
+    const auto sizing = table_sizing(680.0f, kCombatTableFlags);
     if (!ImGui::BeginTable("##HealingRankingTable", 7, sizing.flags, ImVec2(0.0f, height))) return;
 
     ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, m(30.0f));
@@ -374,7 +375,7 @@ void render_healing_table(const meter::EncounterSummary& summary, float height) 
     ImGui::TableSetupColumn("Effective", ImGuiTableColumnFlags_WidthFixed, m(110.0f));
     ImGui::TableSetupColumn("Overheal", ImGuiTableColumnFlags_WidthFixed, m(90.0f));
     ImGui::TableSetupScrollFreeze(0, 1);
-    table_headers_row();
+    combat_table_headers_row();
 
     int rank = 1;
     for (const meter::CombatantStats* cp : combatants) {
@@ -424,6 +425,14 @@ void render_plugin_section(AppState& app_state) {
     if (setting_toggle("Party members only", "Exclude everyone outside your party.", &party_only)) {
         cfg_store(METER, "party_only", party_only);
         app_state.send_combat_overlay_party_only(party_only);
+    }
+
+    bool track_vitals = cfg_bool(METER, "track_vitals", true);
+    if (setting_toggle("Track deaths, buffs and debuffs",
+                       "Reads party HP and status lists 4 times a second. Off, the Deaths and "
+                       "Buffs & Debuffs tabs stay empty.", &track_vitals)) {
+        cfg_store(METER, "track_vitals", track_vitals);
+        app_state.send_combat_track_vitals(track_vitals);
     }
 
     bool hide_inactive = cfg_bool(METER, "hide_inactive", false);
@@ -586,7 +595,7 @@ void render_drilldown(const meter::EncounterSummary& summary) {
         return;
     }
 
-    const auto sizing = table_sizing(620.0f, kTableFlags);
+    const auto sizing = table_sizing(620.0f, kCombatTableFlags);
     if (ImGui::BeginTable("##DrilldownTable", 7, sizing.flags, ImVec2(0.0f, fill_h(0.0f)))) {
         ImGui::TableSetupColumn("Action", sizing.flex_flags(), sizing.flex_width(160.0f, 1.0f));
         ImGui::TableSetupColumn("Casts", ImGuiTableColumnFlags_WidthFixed, m(60.0f));
@@ -596,7 +605,7 @@ void render_drilldown(const meter::EncounterSummary& summary) {
         ImGui::TableSetupColumn("Max", ImGuiTableColumnFlags_WidthFixed, m(75.0f));
         ImGui::TableSetupColumn("Crit %", ImGuiTableColumnFlags_WidthFixed, m(65.0f));
         ImGui::TableSetupScrollFreeze(0, 1);
-        table_headers_row();
+        combat_table_headers_row();
 
         const uint64_t top_damage = std::max<uint64_t>(actions.front().total_damage, 1);
         for (const auto& act : actions) {
@@ -645,12 +654,14 @@ float ranking_table_height() {
     return s_selected_drilldown_entity != 0 ? fill_h(0.0f) * 0.55f : fill_h(0.0f);
 }
 
-/// Rail on the left, the selected pull's top bar and ranking on the right. The
-/// rail narrows to pull numbers and badges on a small window.
+/// Rail on the left, the selected pull's top bar and a tab's body on the right. The
+/// rail narrows to pull numbers and badges on a small window. Only the ranking tabs
+/// have the ability drilldown under their table.
 template <typename TableFn>
 void render_pull_view(AppState& app_state, const meter::EncounterSummary& summary,
                       const std::vector<meter::PullHistoryEntry>& pull_history,
-                      std::optional<size_t> selected_index, const char* id, TableFn&& table) {
+                      std::optional<size_t> selected_index, const char* id, TableFn&& table,
+                      bool drilldown = true) {
     const float rail_w = ImGui::GetContentRegionAvail().x < m(760.0f) ? m(130.0f) : m(210.0f);
     render_pull_rail(app_state, pull_history, !selected_index.has_value(), rail_w);
     ImGui::SameLine(0.0f, m(metrics::Gutter));
@@ -659,8 +670,12 @@ void render_pull_view(AppState& app_state, const meter::EncounterSummary& summar
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
     render_top_bar(app_state, summary, selected_index ? &pull_history[*selected_index] : nullptr);
     ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
-    table(summary, ranking_table_height());
-    render_drilldown(summary);
+    if (drilldown) {
+        table(summary, ranking_table_height());
+        render_drilldown(summary);
+    } else {
+        table(summary, fill_h(0.0f));
+    }
     ImGui::EndChild();
 }
 
@@ -670,7 +685,7 @@ void render_pull_view(AppState& app_state, const meter::EncounterSummary& summar
 void render_view_combat(AppState& app_state) {
 #ifdef HAVE_IMGUI
     render_plugin_header(app_state, PluginId::CombatMeter, ICON_SWORDS, "Combat Meter",
-                         "Per-pull damage, healing and ability breakdowns");
+                         "Per-pull damage, healing, deaths, buffs and debuffs");
     if (render_plugin_disabled_gate(app_state, PluginId::CombatMeter, "Combat Meter")) {
         return;
     }
@@ -714,6 +729,29 @@ void render_view_combat(AppState& app_state) {
             ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
             render_pull_view(app_state, current_summary, pull_history, selected_index,
                              "##HealingPane", render_healing_table);
+            ImGui::EndTabItem();
+        }
+        const bool tracking_on = cfg_bool(METER, "track_vitals", true);
+        if (ImGui::BeginTabItem(ICON_SHIELD "  Damage Taken")) {
+            ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
+            render_pull_view(app_state, current_summary, pull_history, selected_index,
+                             "##TakenPane", render_damage_taken, false);
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem(ICON_SKULL "  Deaths")) {
+            ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
+            render_pull_view(app_state, current_summary, pull_history, selected_index, "##DeathsPane",
+                             [tracking_on](const meter::EncounterSummary& summary, float height) {
+                                 render_deaths(summary, height, tracking_on);
+                             }, false);
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem(ICON_SPARKLE "  Buffs & Debuffs")) {
+            ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
+            render_pull_view(app_state, current_summary, pull_history, selected_index, "##StatusPane",
+                             [tracking_on](const meter::EncounterSummary& summary, float height) {
+                                 render_statuses(summary, height, tracking_on);
+                             }, false);
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem(ICON_SLIDERS "  Settings")) {

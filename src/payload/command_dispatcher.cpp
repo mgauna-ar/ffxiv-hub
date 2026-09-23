@@ -117,6 +117,9 @@ void dispatch_combat_meter(const CommandDispatchTargets& t, const ipc::CommandPa
                                                                  : meter::MeterMetric::Damage);
             }
             break;
+        case CommandId::SetVitalsTracking:
+            if (t.combat_plugin) t.combat_plugin->set_vitals_tracking(cmd.param_uint != 0);
+            break;
         case CommandId::ReloadConfig:
             if (t.combat_plugin) {
                 config::ConfigManager::instance().load();

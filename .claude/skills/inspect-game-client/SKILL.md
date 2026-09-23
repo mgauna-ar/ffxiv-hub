@@ -60,5 +60,6 @@ example "entry i goes to slot i", which is exactly the kind of fact premises dep
   one are found by call target rather than by function.
 - **Findings belong next to the code they justify, not here.** Record a verified model in
   the relevant `AGENTS.md`, with the patch it was read from. The mitigator's lives in
-  "How the client dispatches an action". The party list lives in the combat meter's
-  "How the client fills the party list".
+  "How the client dispatches an action". The party list and status lists live in the
+  combat meter's "How the client fills the party list" and "How the client keeps status
+  lists".

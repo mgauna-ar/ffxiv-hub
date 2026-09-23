@@ -993,10 +993,30 @@ TEST_CASE(MeterEngine, ConcurrentProducersAndReaders) {
         }
     });
 
+    // The orchestration thread's vitals pass.
+    std::thread vitals([&] {
+        uint64_t ts = 1;
+        while (!stop.load()) {
+            hub::ipc::StatusListPacket list{};
+            list.entity_id = 1003;
+            list.timestamp_us = ++ts;
+            list.count = static_cast<uint8_t>(ts % 2);
+            list.entries[0].status_id = 638;
+            list.entries[0].remaining_s = 10.0f;
+            engine.process_status_list(list);
+            for (const EntityId enemy : engine.tracked_enemies(4)) {
+                (void)enemy;
+            }
+            const LifeEventKind kind = (ts % 2) ? LifeEventKind::Death : LifeEventKind::Raise;
+            engine.process_life_event(engine.build_life_event(1003, kind, ++ts));
+        }
+    });
+
     producer.join();
     registrar.join();
     reader.join();
     ticker.join();
+    vitals.join();
 
     TEST_ASSERT(engine.current_summary().total_damage > 0u);
 }

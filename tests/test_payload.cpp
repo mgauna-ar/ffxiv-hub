@@ -770,6 +770,27 @@ TEST_CASE(Payload, DispatchesPluginMasterSwitch) {
     TEST_ASSERT(combat.is_enabled());
 }
 
+TEST_CASE(Payload, DispatchesVitalsTracking) {
+    meter::CombatPlugin combat;
+    combat.initialize();
+    payload::CommandDispatchTargets targets;
+    targets.combat_plugin = &combat;
+    TEST_ASSERT(combat.vitals_enabled());
+
+    ipc::CommandPayload cmd{};
+    cmd.command_id = static_cast<uint32_t>(CommandId::SetVitalsTracking);
+    cmd.target_plugin_id = static_cast<uint32_t>(PluginId::CombatMeter);
+    cmd.param_uint = 0;
+    payload::dispatch_command(targets, cmd);
+    TEST_ASSERT(!combat.vitals_enabled());
+    // Its own switch: the plugin stays on.
+    TEST_ASSERT(combat.is_enabled());
+
+    cmd.param_uint = 1;
+    payload::dispatch_command(targets, cmd);
+    TEST_ASSERT(combat.vitals_enabled());
+}
+
 TEST_CASE(Payload, DisabledPluginsIgnoreHookDispatch) {
     // The master switch has to stop data at the hook, not just hide the UI.
     meter::CombatPlugin combat;

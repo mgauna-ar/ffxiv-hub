@@ -40,6 +40,10 @@ Writes `include/hub/game/{actions,status,territory,limit_break,job}.hpp` and
 statuses, duties and jobs the patch added or renamed. Regeneration is deterministic - an
 unchanged install must produce byte-identical files.
 
+`game_tables.cpp` also holds the debuff set behind `status_is_detrimental`: the Status
+sheet's category column, where 1 is a buff and 2 a debuff. It is pinned against Battle
+Litany (786, a buff) and Vulnerability Up (638, a debuff); check both in the diff.
+
 - **Action and Status are large** (~45k and ~4.8k rows), so they live in one `.cpp` with
   only a declaration in the header. Do not move them into a header: pulling 1.6 MB into
   every translation unit is the difference between a 37s build and a much worse one.
@@ -154,6 +158,27 @@ disassembles the copied exe; find the hooked `UseActionLocation` through the res
 
 If any of these changed, update that section and the rules built on it before changing the
 mitigator's timing math.
+
+## 4b. Re-check the status list layout
+
+The meter reads status lists at `game::offsets::BATTLE_CHARA_STATUS_MANAGER`, and the
+local player's object at `LOCAL_PLAYER_OBJECT_FROM_ID` past its id global. No signature
+covers either, so a patch that moves them breaks nothing loudly. The payload's layout
+check switches status reads off and the payload status shows "status reads off".
+Re-verify both against the new executable with `tools/inspect_exe.py`, following
+[How the client keeps status lists](../../../plugins/combat_meter/AGENTS.md#how-the-client-keeps-status-lists):
+
+- The BattleChara vtable's `GetStatusManager` slot (`0x278` in 7.x) still reads
+  `lea rax,[rcx+0x23B0]; ret`. The same offset appears as the `lea rcx,[reg+0x23B0]` in
+  front of the StatusManager constructor call in the BattleChara init.
+- The StatusManager constructor still lays out 60 slots of `0x10` at `+0x8`, and still
+  sets the slot count at `+0x3D8` to 30. `SetStatus` still bounds the slot index by 60.
+- The local player's `Character*` still sits 8 bytes past the id global that
+  `LOCAL_PLAYER_ENTITY_ID_*` resolves. `xrefs <id global> --span 0x10` shows the two
+  written side by side.
+
+Update the offsets and the `StatusManagerObject` padding together; its `static_assert`s
+pin the slots and the count.
 
 ## 5. Verify
 

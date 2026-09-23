@@ -15,6 +15,26 @@ constexpr const char* DEFAULT_PIPE_NAME = "\\\\.\\pipe\\ffxiv_hub_pipe";
 constexpr size_t MAX_PAYLOAD_SIZE = 65536; // 64 KB safety limit
 constexpr size_t MAX_ACTOR_NAME_LEN = 32;
 constexpr size_t MAX_PARTY_MEMBERS = 8;
+constexpr size_t MAX_STATUS_LIST_ENTRIES = 30;
+constexpr size_t MAX_LIFE_EVENT_RECAP = 10;
+
+/// CombatStatusListPayload::flags bit: timers and sources are unknown (the party
+/// list's copy of the list, which the client fills with zeros for both).
+constexpr uint8_t STATUS_LIST_NO_DETAIL = 0x01;
+
+/// CombatLifeEventPayload::kind
+enum class LifeEventKind : uint8_t {
+    Death = 1,
+    Raise = 2,
+};
+
+/// CombatRecapEntry::kind
+enum class RecapKind : uint8_t {
+    Damage = 1,
+    Heal = 2,
+    DotTick = 3,
+    HotTick = 4,
+};
 
 #pragma pack(push, 1)
 
@@ -166,6 +186,50 @@ struct CombatControlPayload {
 };
 static_assert(sizeof(CombatControlPayload) == 16, "CombatControlPayload must be 16 bytes");
 
+/// One status in a CombatStatusListPayload
+struct CombatStatusEntry {
+    uint16_t status_id{0};
+    uint16_t param{0};
+    float    remaining_s{0.0f};  // 0 for a status without a timer
+    uint32_t source_id{0};       // 0xE0000000 when none
+};
+static_assert(sizeof(CombatStatusEntry) == 12, "CombatStatusEntry must be 12 bytes");
+
+/// 0x0207: An actor's whole status list, sent when it changes. count == 0 clears it.
+struct CombatStatusListPayload {
+    uint32_t entity_id{0};
+    uint8_t  count{0};
+    uint8_t  flags{0};           // STATUS_LIST_NO_DETAIL
+    uint8_t  pad[2]{0};
+    uint64_t timestamp_us{0};
+    CombatStatusEntry entries[MAX_STATUS_LIST_ENTRIES]{};
+};
+static_assert(sizeof(CombatStatusListPayload) == 376, "CombatStatusListPayload must be 376 bytes");
+
+/// One event before a death, relative to it
+struct CombatRecapEntry {
+    int32_t  offset_ms{0};       // <= 0
+    uint32_t source_id{0};
+    uint32_t action_key{0};      // Action id, or status id | STATUS_ACTION_KEY_OFFSET for a tick
+    uint32_t amount{0};
+    uint8_t  kind{0};            // RecapKind
+    uint8_t  hit_flags{0};       // Low byte of the action's hit flags
+    uint8_t  pad[2]{0};
+};
+static_assert(sizeof(CombatRecapEntry) == 20, "CombatRecapEntry must be 20 bytes");
+
+/// 0x0208: A friendly actor died or was raised. A death carries the events that led
+/// to it, oldest first, because they travel on a different lane than this packet.
+struct CombatLifeEventPayload {
+    uint32_t entity_id{0};
+    uint8_t  kind{0};            // LifeEventKind
+    uint8_t  recap_count{0};
+    uint8_t  pad[2]{0};
+    uint64_t timestamp_us{0};
+    CombatRecapEntry recap[MAX_LIFE_EVENT_RECAP]{};
+};
+static_assert(sizeof(CombatLifeEventPayload) == 216, "CombatLifeEventPayload must be 216 bytes");
+
 #pragma pack(pop)
 
 // Friendly type aliases for combat meter components
@@ -174,6 +238,8 @@ using StatusTickPacket = CombatStatusTickPayload;
 using ActorInfoPacket = CombatActorInfoPayload;
 using PartySyncPacket = CombatPartySyncPayload;
 using EncounterControlPacket = CombatControlPayload;
+using StatusListPacket = CombatStatusListPayload;
+using LifeEventPacket = CombatLifeEventPayload;
 
 /// Serialize any typed payload into a byte vector with PacketHeader
 std::vector<uint8_t> serialize_packet(

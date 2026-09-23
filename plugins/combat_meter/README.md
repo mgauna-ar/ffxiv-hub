@@ -1,7 +1,9 @@
 # ⚔️ Combat Meter
 
 Real-time damage and healing analytics: DPS, HPS with overheal separated out, crit and
-direct hit rates, per-action breakdowns, and a pull history.
+direct hit rates, per-action breakdowns, and a pull history. Each pull also records who
+died and to what, which debuffs the party picked up, how long buffs and DoTs stayed up,
+and the damage every player took, by ability.
 
 Part of [FFXIV Hub](../../README.md). Enable or disable it from its page in the desktop
 app, or from its card on the dashboard.
@@ -97,6 +99,50 @@ never toward any individual's damage, DPS or share.
 
 ---
 
+## Deaths, buffs and debuffs
+
+Action packets say what hit whom, but not who died or what statuses anyone had. The meter
+gets both by reading the game four times a second: HP for every party member (the local
+player when solo), and the status list of each party member and of the four enemies taking
+the most damage. The reads never start a pull and never keep one open: a buff ticking down
+is not combat. `track_vitals` switches the polling off entirely, and the Deaths and
+Buffs & Debuffs tabs then stay empty.
+
+### Deaths
+
+A party member whose HP drops to 0 is recorded as a death, and one who comes back as a
+raise. Each death keeps:
+
+- **The killing blow**, which is the last damage that landed before it, with its source and amount.
+- **A recap** of the last ten hits, heals and ticks within 12 seconds before it.
+- **The statuses the player had** when they died, debuffs first.
+- **How long it took to be raised.**
+
+The damage-taken row of the killing blow counts the death too, so the ability that killed
+most often stands out. A wipe is sometimes noticed a moment before the last deaths arrive.
+Deaths up to 5 seconds after the pull ended still count toward it.
+
+### Buffs and debuffs
+
+Each status is tracked per target and per source over the pull: how many times it was
+applied, how long it stayed up, and its uptime against the pull's duration. A buff that was
+already up when the pull started counts from the first second. A status that expires
+between two reads is closed at its own timer, not at the read, so an uptime is exact to
+the timer rather than to the polling interval. Debuff and buff come from the game's own
+Status sheet category.
+
+On enemies, only statuses the party applied are kept, such as DoTs and raid debuffs.
+Enemy status lists are dropped when a pull ends, so a debuff on a dead or despawned enemy
+never carries into the next pull. Party members out of range still report their statuses,
+from the party list's copy, but that copy has no timers or sources.
+
+### Damage taken
+
+Every hit, DoT tick included, that lands on a party member is booked per player, ability
+and source: hits, total, average, largest hit, and deaths caused.
+
+---
+
 ## Views
 
 **In-game overlay.** A draggable table showing the current encounter. It displays one
@@ -104,12 +150,24 @@ metric at a time — damage or healing — selected by `overlay_metric`. Rows ca
 combatant's job colour, taken from the hub's shared job style table so the overlay and the
 desktop always agree.
 
-**Desktop view.** Three tabs: **Damage**, **Healing**, and **Settings**. Damage and
-healing show a pull list rail on the left - the live fight at the top, then archived
-pulls grouped by duty with their end time, duration and a clear/wipe badge - and the
-selected pull's rankings beside it: share, crit, direct hit and crit-direct-hit rates with
-job-coloured bars, plus a per-action drilldown with min/avg/max hits and swing counts. The
-rail is the only place a pull is chosen; it narrows to pull numbers on a small window.
+**Desktop view.** Six tabs: **Damage**, **Healing**, **Damage Taken**, **Deaths**,
+**Buffs & Debuffs**, and **Settings**. Every tab but Settings shows a pull list rail on
+the left. The live fight is at the top, then archived pulls grouped by duty with their
+end time, duration, death count and a clear/wipe badge. The rail is the only place a pull
+is chosen, and it narrows to pull numbers on a small window. Beside it:
+
+- **Damage** and **Healing**: the selected pull's rankings, with share, crit, direct hit
+  and crit-direct-hit rates, job-coloured bars and a Deaths column. A per-action
+  drilldown shows min/avg/max hits and swing counts.
+- **Damage Taken**: each player's damage taken, hits and deaths. Below it, the abilities
+  that hit the selected player, or everyone.
+- **Deaths**: every death with its time, killing blow, source, debuffs and time to raise.
+  Selecting one opens its recap.
+- **Buffs & Debuffs**: debuffs on the party, buffs on the party, and statuses on the
+  enemies. Each status has its applications, time and uptime, and expands into each
+  player or source.
+
+The in-game overlay stays a damage or healing table; the new views are desktop only.
 
 Job colours are per-job, not per-role, and live in `src/common/ui/job_style.cpp` as the
 single source of truth.
@@ -135,6 +193,7 @@ not the intended interface.
 | `show_col_dh` | bool | — | Show the direct hit column. |
 | `show_col_cdh` | bool | — | Show the crit-direct-hit column. |
 | `overlay_metric` | int | `0` | In-game overlay metric: `0` damage, `1` healing. |
+| `track_vitals` | bool | `true` | Read HP and status lists four times a second for deaths, buffs and debuffs. Off, nothing is read. |
 | `overlay_visible` | bool | `true` | Draw the in-game overlay. |
 | `overlay_x`, `overlay_y` | float | `-1.0` | Position. Negative means never placed — the overlay picks its own default. |
 | `overlay_width`, `overlay_height` | float | `800.0`, `480.0` | Size. |

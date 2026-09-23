@@ -153,6 +153,16 @@ void AppState::register_ipc_callbacks() {
         m_engine.process_encounter_control(ctrl);
     });
 
+    m_pipe_server.set_combat_status_list_callback([this](const ipc::CombatStatusListPayload& list) {
+        std::lock_guard<std::mutex> lock(m_combat_mutex);
+        m_engine.process_status_list(list);
+    });
+
+    m_pipe_server.set_combat_life_event_callback([this](const ipc::CombatLifeEventPayload& event) {
+        std::lock_guard<std::mutex> lock(m_combat_mutex);
+        m_engine.process_life_event(event);
+    });
+
     m_pipe_server.set_status_callback([this](const ipc::StatusPayload& status) {
         m_hooks_installed.store(std::string_view(status.status_message).find("NOT installed") == std::string_view::npos);
         std::lock_guard<std::mutex> lock(m_status_mutex);
@@ -556,6 +566,10 @@ void AppState::send_combat_column_cdh(bool show) {
 
 void AppState::send_combat_overlay_metric(uint32_t metric) {
     m_pipe_server.send_command(PluginId::CombatMeter, CommandId::SetMeterMetric, metric);
+}
+
+void AppState::send_combat_track_vitals(bool enabled) {
+    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::SetVitalsTracking, enabled ? 1 : 0);
 }
 
 void AppState::send_combat_reset_stats() {

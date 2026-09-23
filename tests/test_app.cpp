@@ -86,6 +86,42 @@ TEST_CASE(PipeServer, MultiplexedPacketDispatch) {
     TEST_ASSERT_EQ(server.packets_received(), 3u);
 }
 
+TEST_CASE(PipeServer, VitalsPacketsReachTheirCallbacks) {
+    ipc::PipeServer server;
+
+    uint32_t list_entity = 0;
+    uint16_t list_status = 0;
+    server.set_combat_status_list_callback([&](const ipc::CombatStatusListPayload& list) {
+        list_entity = list.entity_id;
+        list_status = list.count > 0 ? list.entries[0].status_id : 0;
+    });
+    uint8_t event_kind = 0;
+    int32_t first_offset = 0;
+    server.set_combat_life_event_callback([&](const ipc::CombatLifeEventPayload& event) {
+        event_kind = event.kind;
+        first_offset = event.recap_count > 0 ? event.recap[0].offset_ms : 0;
+    });
+
+    ipc::CombatStatusListPayload list{};
+    list.entity_id = 0x10000001;
+    list.count = 1;
+    list.entries[0].status_id = 638;
+    TEST_ASSERT(server.process_raw_packet(ipc::serialize_typed_packet(
+        PluginId::CombatMeter, MessageType::CombatStatusList, 1, list)));
+    TEST_ASSERT_EQ(list_entity, 0x10000001u);
+    TEST_ASSERT_EQ(list_status, 638u);
+
+    ipc::CombatLifeEventPayload event{};
+    event.entity_id = 0x10000001;
+    event.kind = static_cast<uint8_t>(ipc::LifeEventKind::Death);
+    event.recap_count = 1;
+    event.recap[0].offset_ms = -1500;
+    TEST_ASSERT(server.process_raw_packet(ipc::serialize_typed_packet(
+        PluginId::CombatMeter, MessageType::CombatLifeEvent, 2, event)));
+    TEST_ASSERT_EQ(event_kind, static_cast<uint8_t>(ipc::LifeEventKind::Death));
+    TEST_ASSERT_EQ(first_offset, -1500);
+}
+
 TEST_CASE(AppState, InitializationAndRegisteredPlugins) {
     app::AppState state;
     TEST_ASSERT(state.initialize());

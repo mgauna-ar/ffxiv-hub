@@ -32,7 +32,49 @@ captured log lines. Preserve them when modifying the registry, accumulator or en
 - **Only Landed Damage Opens An Encounter**: `EncounterEngine::starts_encounter` gates the Idle -> InCombat transition on a `Damage`, `Blocked` or `Parried` effect carrying a non-zero damage value. Healing used to qualify, so a prepull cure opened a pull whose clock was already seconds old by the first hit, with the healer ranked in a table nobody had attacked in yet. Buffs, debuffs, misses and zero-damage effects are not a pull starting either. The rule governs the *start* only: once InCombat, a heal is recorded and refreshes `m_last_activity_time` like any other activity.
 - **Direct Action Encounter Initiation Only**: Passive DoT/HoT ticks must never initiate encounters when combat state is Idle, Wipe, or Complete.
 - **A Name The App Never Received Is Archived Forever**: The desktop app runs its own mirror `EncounterEngine` and learns a name only from a `CombatActorInfo` packet; `MetricsAccumulator` otherwise opens the row as `Entity_<id>`, and `end_encounter` snapshots it by value. Any path that resolves an actor from game memory must publish it, not just call `registry.register_actor` - that is what `ObjectReader::inspect_and_sync_actor{,_direct}` are for, and why `CombatPlugin` takes an actor resolver rather than reading the object itself. Solo is the case that exposes it: the party list is the only other publisher and it is empty.
-- **Snapshots Are Throttled, Not Per Frame**: An `EncounterSummary` carries every combatant's per-action map. The in-game overlay and the desktop Combat view both cache one and refresh on an interval. List views use `pull_history_index()` (header fields only), not `pull_history()`.
+- **Snapshots Are Throttled, Not Per Frame**: An `EncounterSummary` carries every combatant's per-action map. The in-game overlay and the desktop Combat view both cache one and refresh on an interval. The overlay and the payload's activity log line take `current_rankings()`, which leaves out the per-action maps and the detail rows they never read. List views use `pull_history_index()` (header fields only), not `pull_history()`.
+- **Detail Rows Are Flat**: A summary's deaths, damage-taken rows and status uptime rows are plain values keyed by entity id, with the names they need in `names`. The desktop view copies a summary on every snapshot, so no row may carry a map or a per-row string.
+- **Status Lists And Life Events Are Never Activity**: `process_status_list` and `process_life_event` never start a pull and never touch `m_last_activity_time`. A buff counting down or a party member lying dead is not combat, and treating either as activity would hold every pull open until the timers ran out.
+- **The Vitals Pass Writes No HP**: `CombatPlugin::on_vitals` never calls `update_hp`. Wipe detection and the packet-derived in-combat bit keep exactly the inputs they had before, `sync_party` and actor info.
+- **A Death's Recap Is Built In-Game And Shipped**: Hits travel on the main-thread lane and life events on the orchestration lane, and order is FIFO per lane only, so the app cannot rebuild a recap from its own copy of the hits. `on_vitals` builds it with `build_life_event` from the payload engine's per-target recap rings and ships it inside `CombatLifeEvent`; both engines record exactly that. The life event goes out before the same actor's status list, so the death keeps the statuses the next list drops.
+- **Late Deaths Join The Pull They Belong To**: A wipe can be detected from actor info on one lane before the deaths arrive on the other. A life event stamped after its pull was archived joins that pull if it is at most `kLateLifeEventUs` (5 s) past the pull's end, in the archive and, while the live data still describes that pull, in the live view.
+- **A Status Loss Is Dated By Its Timer**: A status missing from a list ended at the earlier of the read and its own expected end, and never before the previous read. Dating every loss at the read added up to one poll interval to each expiring buff.
+- **Enemy Statuses End With The Pull**: An enemy stops being tracked when its pull ends and its list is never read again, so `end_encounter` clears the status list of every actor that is not friendly. Otherwise the next pull's uptime opens with a stale DoT on a dead boss. The next pull can start on the same enemy before a vitals pass runs, so `on_vitals` resends every list whenever `pulls_started()` moves; without that, an unchanged list is never sent again and the new pull misses it.
+- **A Departed Actor Gets One Empty List**: `VitalsTracker::retain` sends a single empty status list for an actor that left the pass (it left the party, or an enemy dropped out of the top four), which closes its statuses on the other side. `invalidate()` resends every list when the app reconnects, for the same reason as `ObjectReader::invalidate_cache()`.
+
+## How the client keeps status lists
+
+Read from `ffxiv_dx11.exe` on 2026-09-23 with `tools/inspect_exe.py`. Addresses are for
+that build only; re-check after a patch.
+
+- **Layout.** The StatusManager constructor (`0x1408a46e0`) zeroes the owner at `+0x0`,
+  resets 60 slots of `0x10` bytes at `+0x8` (`u16 status, u16 param, float remaining,
+  u64 source`, the source reset to `0xE0000000`), and sets the `u8` slot count at
+  `+0x3D8` to 30. `SetStatus` (`0x1408a6fc0`) rejects a slot index of 60 or more and
+  grows the count to 60. It null-checks the owner and then uses it as a `Character*`, so
+  the owner is null or the owning character.
+- **Characters keep theirs at `BattleChara + 0x23B0`.** Slot `0x278` of the vtable
+  `0x1421a5ae8` (`GetStatusManager`) returns `this + 0x23B0`, and the BattleChara init runs
+  the constructor on `r14 + 0x23B0` at `0x140afdc23`. It is a base-class member, so
+  players and battle NPCs share it. The status-list packet handlers (`0x140b37f80`,
+  `0x140b381d6`) write full data there, timers and sources included.
+- **The party list's copy is second-rate.** The party list handler (`0x140b4a4b0`) fills
+  the StatusManager at `PartyMember + 0x0` with timer 0 and source 0. The payload reads it
+  only for a member out of range, and flags that list `STATUS_LIST_NO_DETAIL`.
+- **The local player's object sits next to its id.** `0x142aa0410`, 8 bytes past the id
+  global the local player signature resolves, holds its `Character*`. The id's initializer
+  (`0x14004c8b0`) resets both together, and the character manager's delete paths
+  (`0x140afde52`, `0x140afdf56`) null the pointer when that object is freed. The payload
+  still checks the object's entity id and kind before trusting it. Solo, this is the only
+  way to reach the player, since the party list is empty.
+- **`GetObjectByEntityId` (`0x140b00830`) is a binary search that writes nothing.** The
+  orchestration thread calls it while the main thread may be reshaping the array, so every
+  object it returns is checked again by entity id and object kind, inside SEH.
+- **The layout check.** A read passes when the slot count is 30 or 60 and the owner is
+  null or the object itself. Twenty failures before any read has passed switch status
+  reads off for the session, log once, and add "status reads off" to the payload status.
+  Deaths keep working without them. After one read has passed, a failure is treated as a
+  transient object and just skipped.
 
 ## How the client fills the party list
 

@@ -2,6 +2,7 @@
 #include "meter/combatant_registry.hpp"
 #include "common/sigscan.hpp"
 #include "common/pe_scanner.hpp"
+#include "common/os/logger.hpp"
 #include "hub/game/entity.hpp"
 #include <chrono>
 #include <cstring>
@@ -37,7 +38,51 @@ bool extract_character_fields(const game::CharacterObject* obj, ipc::ActorInfoPa
     return true;
 }
 
+bool extract_status_list(const game::StatusManagerObject* manager, const void* expected_owner,
+                         bool with_detail, meter::ActorVitals& out) noexcept {
+    out.count = 0;
+    out.statuses_read = false;
+    out.status_detail = with_detail;
+    if (manager == nullptr) return false;
+
+    const uint8_t slots = manager->slot_count;
+    if (slots != game::definitions::DEFAULT_STATUS_SLOTS && slots != game::definitions::MAX_STATUS_SLOTS) {
+        return false;
+    }
+    if (expected_owner != nullptr && manager->owner != nullptr && manager->owner != expected_owner) {
+        return false;
+    }
+
+    for (size_t i = 0; i < slots && i < game::definitions::MAX_STATUS_SLOTS; ++i) {
+        const game::StatusEntry& slot = manager->statuses[i];
+        if (slot.status_id == 0) continue;
+        ipc::CombatStatusEntry& entry = out.entries[out.count++];
+        entry.status_id = slot.status_id;
+        entry.param = slot.param;
+        entry.remaining_s = with_detail ? slot.remaining : 0.0f;
+        entry.source_id = with_detail ? static_cast<uint32_t>(slot.source_id) : 0;
+    }
+    out.statuses_read = true;
+    return true;
+}
+
 } // namespace detail
+
+void ObjectReader::note_status_layout(bool ok) {
+    if (ok) {
+        m_status_layout_confirmed = true;
+        m_status_layout_failures = 0;
+        return;
+    }
+    // One odd object after reads have worked is a transient, not a moved layout.
+    if (m_status_layout_confirmed || m_status_reads_disabled) return;
+    if (++m_status_layout_failures >= kStatusLayoutStrikes) {
+        m_status_reads_disabled = true;
+        hub::os::Logger::warn(
+            "Status reads switched off: no StatusManager read passed the layout check. "
+            "Its offsets in game_definitions.hpp need re-verifying for this game version.");
+    }
+}
 
 bool ObjectReader::publish_actor(const ipc::ActorInfoPacket& packet, meter::CombatantRegistry* registry) {
     bool changed = true;
@@ -241,10 +286,170 @@ static uint32_t SafeReadLocalPlayerId(uintptr_t addr) {
     }
 }
 
+/// One party slot for the vitals pass.
+struct PartyVitalsSlot {
+    uint32_t entity_id{0};
+    uint32_t current_hp{0};
+    uint32_t max_hp{0};
+    uintptr_t member_addr{0};
+};
+
+static uint8_t SafeReadPartyVitals(uintptr_t group_mgr_addr, PartyVitalsSlot* out) {
+    __try {
+        if (group_mgr_addr == 0) return 0;
+        const uintptr_t main_group = group_mgr_addr + game::offsets::GROUP_MAIN_GROUP;
+        uint8_t count = *reinterpret_cast<const uint8_t*>(main_group + game::offsets::GROUP_MEMBER_COUNT);
+        if (count > game::definitions::MAX_PARTY_MEMBERS) {
+            count = static_cast<uint8_t>(game::definitions::MAX_PARTY_MEMBERS);
+        }
+        for (uint8_t i = 0; i < count; ++i) {
+            const uintptr_t addr = main_group + (i * game::offsets::PARTY_MEMBER_SIZE);
+            const auto* member = reinterpret_cast<const game::PartyMemberObject*>(addr);
+            out[i].entity_id = member->entity_id;
+            out[i].current_hp = member->current_hp;
+            out[i].max_hp = member->max_hp;
+            out[i].member_addr = addr;
+        }
+        return count;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
+/// The BattleChara for `entity_id`: a player or a battle NPC whose id reads back
+/// the same. The lookup is a binary search the main thread may be reshaping, so
+/// the id is checked again on the object it returns.
+static const game::CharacterObject* SafeFindBattleChara(
+    FnGetObjectByEntityId* fn, uintptr_t game_obj_mgr_addr, uint32_t entity_id, uint32_t& hp, uint32_t& max_hp
+) {
+    __try {
+        if (fn == nullptr || game_obj_mgr_addr == 0 || !game::is_real_entity_id(entity_id)) return nullptr;
+        const game::CharacterObject* obj = fn(reinterpret_cast<void*>(game_obj_mgr_addr + 0x20), entity_id);
+        if (obj == nullptr || obj->entity_id != entity_id) return nullptr;
+        if (obj->object_kind != 1 && obj->object_kind != 2) return nullptr;
+        hp = obj->current_hp;
+        max_hp = obj->max_hp;
+        return obj;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return nullptr;
+    }
+}
+
+/// The local player's own Character, which the client keeps next to its id.
+static const game::CharacterObject* SafeReadLocalPlayerObject(
+    uintptr_t id_addr, uint32_t& entity_id, uint32_t& hp, uint32_t& max_hp
+) {
+    __try {
+        if (id_addr == 0) return nullptr;
+        const uint32_t id = *reinterpret_cast<const uint32_t*>(id_addr);
+        if (!game::is_real_entity_id(id)) return nullptr;
+        const auto* obj = *reinterpret_cast<const game::CharacterObject* const*>(
+            id_addr + game::definitions::LOCAL_PLAYER_OBJECT_FROM_ID);
+        if (obj == nullptr || obj->entity_id != id || obj->object_kind != 1) return nullptr;
+        entity_id = id;
+        hp = obj->current_hp;
+        max_hp = obj->max_hp;
+        return obj;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return nullptr;
+    }
+}
+
+/// False when the read faulted, which says nothing about the layout. Otherwise
+/// `layout_ok` carries the layout check's verdict.
+static bool SafeExtractStatusList(
+    uintptr_t manager_addr, const void* expected_owner, bool with_detail, meter::ActorVitals& out, bool& layout_ok
+) {
+    __try {
+        layout_ok = detail::extract_status_list(
+            reinterpret_cast<const game::StatusManagerObject*>(manager_addr), expected_owner, with_detail, out);
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        out.count = 0;
+        out.statuses_read = false;
+        return false;
+    }
+}
+
 } // namespace
 
 ObjectReader::ObjectReader(RingBuffer* ring_buffer)
     : m_ring_buffer(ring_buffer) {}
+
+size_t ObjectReader::read_vitals(std::span<const uint32_t> enemy_ids, std::span<meter::ActorVitals> out) {
+    if (!m_initialized || out.empty()) return 0;
+
+    const auto read_statuses = [this](meter::ActorVitals& vitals, uintptr_t manager_addr, const void* owner, bool detail) {
+        if (m_status_reads_disabled) return;
+        bool layout_ok = false;
+        if (SafeExtractStatusList(manager_addr, owner, detail, vitals, layout_ok)) {
+            note_status_layout(layout_ok);
+        }
+    };
+    const auto own_statuses = [](const game::CharacterObject* obj) {
+        return reinterpret_cast<uintptr_t>(obj) + game::offsets::BATTLE_CHARA_STATUS_MANAGER;
+    };
+
+    size_t filled = 0;
+    PartyVitalsSlot party[game::definitions::MAX_PARTY_MEMBERS]{};
+    const uint8_t party_count = SafeReadPartyVitals(m_group_manager_addr, party);
+    for (uint8_t i = 0; i < party_count && filled < out.size(); ++i) {
+        const PartyVitalsSlot& slot = party[i];
+        if (!game::is_real_entity_id(slot.entity_id)) continue;
+        meter::ActorVitals& vitals = out[filled++];
+        vitals = meter::ActorVitals{};
+        vitals.entity = slot.entity_id;
+        // The party list's HP, the same reading the wipe check uses.
+        vitals.hp = slot.current_hp;
+        vitals.max_hp = slot.max_hp;
+        vitals.track_life = true;
+        uint32_t hp = 0;
+        uint32_t max_hp = 0;
+        if (const auto* obj = SafeFindBattleChara(m_fp_get_object_by_id, m_game_object_mgr_addr, slot.entity_id, hp, max_hp)) {
+            read_statuses(vitals, own_statuses(obj), obj, true);
+        }
+        if (!vitals.statuses_read) {
+            // Out of range: the list's own copy, which has no timers or sources.
+            read_statuses(vitals, slot.member_addr + game::offsets::PARTY_MEMBER_STATUS_MANAGER, nullptr, false);
+        }
+    }
+
+    // Solo, the party list is empty and the local player is only in the object table.
+    if (party_count == 0 && filled < out.size()) {
+        uint32_t id = 0;
+        uint32_t hp = 0;
+        uint32_t max_hp = 0;
+        if (const auto* obj = SafeReadLocalPlayerObject(m_local_player_id_addr, id, hp, max_hp)) {
+            meter::ActorVitals& vitals = out[filled++];
+            vitals = meter::ActorVitals{};
+            vitals.entity = id;
+            vitals.hp = hp;
+            vitals.max_hp = max_hp;
+            vitals.track_life = true;
+            read_statuses(vitals, own_statuses(obj), obj, true);
+        }
+    }
+
+    for (const uint32_t id : enemy_ids) {
+        if (filled >= out.size()) break;
+        uint32_t hp = 0;
+        uint32_t max_hp = 0;
+        const auto* obj = SafeFindBattleChara(m_fp_get_object_by_id, m_game_object_mgr_addr, id, hp, max_hp);
+        if (obj == nullptr) continue;
+        meter::ActorVitals& vitals = out[filled++];
+        vitals = meter::ActorVitals{};
+        vitals.entity = id;
+        vitals.hp = hp;
+        vitals.max_hp = max_hp;
+        vitals.is_enemy = true;
+        read_statuses(vitals, own_statuses(obj), obj, true);
+    }
+    return filled;
+}
 
 bool ObjectReader::read_character_object(const void* character_ptr, ipc::ActorInfoPacket& out_packet) {
     return SafeReadCharacterFromObject(static_cast<const game::CharacterObject*>(character_ptr), out_packet);
@@ -468,6 +673,10 @@ bool ObjectReader::read_character(uint32_t, ipc::ActorInfoPacket&) {
 
 void ObjectReader::inspect_and_sync_actor(uint32_t, meter::CombatantRegistry*) {}
 void ObjectReader::sync_party(meter::CombatantRegistry*) {}
+
+size_t ObjectReader::read_vitals(std::span<const uint32_t>, std::span<meter::ActorVitals>) {
+    return 0;
+}
 
 } // namespace hub::payload
 

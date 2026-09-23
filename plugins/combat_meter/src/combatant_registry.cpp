@@ -372,6 +372,106 @@ bool CombatantRegistry::is_party_wiped() const {
     return (players_known > 0) && (players_dead == players_known);
 }
 
+void CombatantRegistry::apply_status_list(const ipc::StatusListPacket& packet, std::vector<StatusChange>& changes) {
+    if (!hub::game::is_real_entity_id(packet.entity_id)) {
+        return;
+    }
+    const size_t count = std::min<size_t>(packet.count, ipc::MAX_STATUS_LIST_ENTRIES);
+    Combatant* existing = find_actor_mut(packet.entity_id);
+    if (existing == nullptr && count == 0) {
+        return;
+    }
+    Combatant& actor = existing != nullptr ? *existing : get_or_create(packet.entity_id);
+
+    const uint64_t ts = packet.timestamp_us;
+    const bool detail = (packet.flags & ipc::STATUS_LIST_NO_DETAIL) == 0;
+    const auto source_of = [detail](const ipc::CombatStatusEntry& entry) -> EntityId {
+        return (detail && hub::game::is_real_entity_id(entry.source_id)) ? entry.source_id : 0;
+    };
+    const auto expected_end = [detail, ts](const ipc::CombatStatusEntry& entry) -> uint64_t {
+        return (detail && entry.remaining_s > 0.0f)
+            ? ts + static_cast<uint64_t>(static_cast<double>(entry.remaining_s) * 1e6)
+            : 0;
+    };
+
+    const std::vector<ActiveStatus>& current = actor.statuses;
+    std::vector<bool> taken(current.size(), false);
+    int match[ipc::MAX_STATUS_LIST_ENTRIES];
+    std::fill(std::begin(match), std::end(match), -1);
+
+    // Same status from the same source first; then an unknown source on either side
+    // (a list read without detail) still continues the status rather than restarting it.
+    for (int pass = 0; pass < 2; ++pass) {
+        for (size_t i = 0; i < count; ++i) {
+            const ipc::CombatStatusEntry& entry = packet.entries[i];
+            if (entry.status_id == 0 || match[i] >= 0) continue;
+            const EntityId source = source_of(entry);
+            for (size_t j = 0; j < current.size(); ++j) {
+                if (taken[j] || current[j].status_id != entry.status_id) continue;
+                const bool same = pass == 0
+                    ? current[j].source == source
+                    : (source == 0 || current[j].source == 0);
+                if (same) {
+                    taken[j] = true;
+                    match[i] = static_cast<int>(j);
+                    break;
+                }
+            }
+        }
+    }
+
+    std::vector<ActiveStatus> next;
+    next.reserve(count);
+    for (size_t i = 0; i < count; ++i) {
+        const ipc::CombatStatusEntry& entry = packet.entries[i];
+        if (entry.status_id == 0) continue;
+        if (match[i] >= 0) {
+            ActiveStatus kept = current[static_cast<size_t>(match[i])];
+            kept.param = entry.param;
+            kept.expected_end_us = expected_end(entry);
+            next.push_back(kept);
+            continue;
+        }
+        const EntityId source = source_of(entry);
+        next.push_back(ActiveStatus{entry.status_id, entry.param, source, ts, expected_end(entry)});
+        changes.push_back(StatusChange{packet.entity_id, entry.status_id, source, ts, true});
+    }
+
+    for (size_t j = 0; j < current.size(); ++j) {
+        if (taken[j]) continue;
+        const ActiveStatus& gone = current[j];
+        uint64_t at = ts;
+        if (gone.expected_end_us != 0 && gone.expected_end_us < at) {
+            at = gone.expected_end_us;
+        }
+        at = std::max({at, actor.statuses_seen_us, gone.since_us});
+        changes.push_back(StatusChange{packet.entity_id, gone.status_id, gone.source, std::min(at, ts), false});
+    }
+
+    actor.statuses = std::move(next);
+    actor.statuses_seen_us = ts;
+}
+
+void CombatantRegistry::clear_enemy_statuses(uint64_t at_us, std::vector<StatusChange>& changes) {
+    for (auto& [id, actor] : m_actors) {
+        if (actor.statuses.empty() || is_friendly(id)) continue;
+        for (const ActiveStatus& gone : actor.statuses) {
+            changes.push_back(StatusChange{id, gone.status_id, gone.source, std::max(at_us, gone.since_us), false});
+        }
+        actor.statuses.clear();
+    }
+}
+
+void CombatantRegistry::add_label(std::vector<ActorLabel>& names, EntityId id) const {
+    if (id == 0) return;
+    for (const ActorLabel& label : names) {
+        if (label.entity == id) return;
+    }
+    if (const Combatant* actor = find_actor(id)) {
+        names.push_back(ActorLabel{id, actor->name, actor->job});
+    }
+}
+
 void CombatantRegistry::clear() {
     m_actors.clear();
     m_pet_to_owner.clear();

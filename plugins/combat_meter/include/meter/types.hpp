@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common/ui/overlay_config.hpp"
+#include "common/ipc/protocol.hpp"
 #include "hub/game/job.hpp"
 #include "hub/game/actions.hpp"
 #include "hub/game/status.hpp"
@@ -250,7 +251,9 @@ constexpr ActionId STATUS_ACTION_KEY_OFFSET = 0x8000'0000u;
     return hub::game::status_name(status_id);
 }
 
-struct CombatantStats {
+/// Everything about a combatant's pull except the per-action breakdown, which is
+/// what makes copying a CombatantStats expensive.
+struct CombatantTotals {
     EntityId entity_id{0};
     EntityId owner_id{0};
     std::string name;
@@ -269,7 +272,8 @@ struct CombatantStats {
     HitCounts hits;
     /// Heal hits are counted apart from `hits` so they cannot dilute the crit rates.
     HitCounts heal_hit_counts;
-    std::unordered_map<ActionId, ActionSummary> actions;
+    uint32_t deaths{0};
+    uint32_t raises{0};
     bool is_pet{false};
     bool is_party_member{false};
     bool is_local_player{false};
@@ -285,6 +289,68 @@ struct CombatantStats {
         const uint64_t all_heal = effective_healing + overhealing;
         return all_heal > 0 ? (static_cast<double>(overhealing) / static_cast<double>(all_heal)) * 100.0 : 0.0;
     }
+};
+
+struct CombatantStats : CombatantTotals {
+    std::unordered_map<ActionId, ActionSummary> actions;
+};
+
+using ipc::LifeEventKind;
+using ipc::RecapKind;
+
+/// Statuses a death record keeps, debuffs first.
+constexpr size_t MAX_DEATH_STATUSES = 12;
+
+/// One event before a death. The detail rows below are flat so a snapshot stays
+/// cheap to copy; names are resolved when they are drawn.
+struct RecapEvent {
+    double offset_s{0.0};                 // <= 0, relative to the death
+    EntityId source{0};
+    ActionId action_key{0};               // Action id, or status id | STATUS_ACTION_KEY_OFFSET
+    uint32_t amount{0};
+    RecapKind kind{RecapKind::Damage};
+    uint8_t hit_flags{0};
+};
+
+struct DeathRecord {
+    EntityId entity{0};
+    double time_s{0.0};                   // Since the pull started
+    uint8_t recap_count{0};
+    int8_t killing_blow{-1};              // Index into recap; -1 when no damage was seen
+    uint8_t status_count{0};
+    RecapEvent recap[ipc::MAX_LIFE_EVENT_RECAP]{};
+    uint16_t statuses[MAX_DEATH_STATUSES]{};
+    double raised_after_s{-1.0};          // < 0 until raised
+};
+
+/// Damage one ability did to one friendly target.
+struct DamageTakenRow {
+    EntityId target{0};
+    ActionId action_key{0};               // Action id, or status id | STATUS_ACTION_KEY_OFFSET
+    EntityId source{0};
+    uint64_t hits{0};
+    uint64_t total{0};
+    uint64_t max{0};
+    uint32_t deaths_caused{0};
+};
+
+/// Time one status from one source spent on one target.
+struct StatusUptimeRow {
+    EntityId target{0};
+    uint16_t status{0};
+    EntityId source{0};                   // 0 when unknown or none
+    uint32_t applications{0};
+    double active_s{0.0};
+    double uptime_pct{0.0};
+    bool detrimental{false};
+    bool on_enemy{false};
+};
+
+/// Name for an id a detail row refers to, enemies included.
+struct ActorLabel {
+    EntityId entity{0};
+    std::string name;
+    Job job{Job::None};
 };
 
 struct EncounterSummary {
@@ -305,6 +371,12 @@ struct EncounterSummary {
     EncounterState state{EncounterState::Idle};
     EncounterEndReason end_reason{EncounterEndReason::None};
     std::vector<CombatantStats> combatants;
+
+    /// Detail rows. Empty in a rankings-only snapshot.
+    std::vector<DeathRecord> deaths;
+    std::vector<DamageTakenRow> damage_taken;
+    std::vector<StatusUptimeRow> statuses;
+    std::vector<ActorLabel> names;
 };
 
 /// Configuration options for the Combat Meter plugin
@@ -321,6 +393,8 @@ struct CombatConfig {
     bool   show_col_cdh{true};
     /// Which table the in-game overlay draws: 0 = damage, 1 = healing.
     uint32_t overlay_metric{0};
+    /// Polls HP and status lists for deaths, buffs and debuffs.
+    bool   track_vitals{true};
     /// Position, size, lock, click-through, opacity, scale, hide conditions.
     ui::OverlayConfig overlay{
         .opacity = constants::DEFAULT_WINDOW_OPACITY,

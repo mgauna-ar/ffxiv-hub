@@ -53,6 +53,13 @@ namespace definitions {
     constexpr size_t LOCAL_PLAYER_ID_PRIMARY_RIP_INSN_END = 12;
     constexpr size_t LOCAL_PLAYER_ID_FALLBACK_RIP_DISP_OFFSET = 2;
     constexpr size_t LOCAL_PLAYER_ID_FALLBACK_RIP_INSN_END = 6;
+
+    /// The local player's Character* sits right after its entity id global.
+    constexpr size_t LOCAL_PLAYER_OBJECT_FROM_ID = 0x8;
+
+    /// StatusManager slots. The client uses 30 until SetStatus grows it to 60.
+    constexpr size_t MAX_STATUS_SLOTS = 60;
+    constexpr uint8_t DEFAULT_STATUS_SLOTS = 30;
 } // namespace definitions
 
 /// Byte indices into the game's Conditions flag array. Each entry is a bool.
@@ -91,6 +98,11 @@ namespace offsets {
     constexpr size_t CHARACTER_MAX_MP = 0x1B8;
     constexpr size_t CHARACTER_CLASS_JOB = 0x1CA;
 
+    // StatusManager, embedded in BattleChara and in each party list slot
+    constexpr size_t BATTLE_CHARA_STATUS_MANAGER = 0x23B0;  // GetStatusManager, vtable slot 0x278
+    constexpr size_t STATUS_MANAGER_STATUSES = 0x8;
+    constexpr size_t STATUS_MANAGER_SLOT_COUNT = 0x3D8;
+
     // ActionManager offsets
     // Dispatch behaviour behind these: plugins/latency_mitigator/AGENTS.md.
     constexpr size_t ACTION_MANAGER_ANIMATION_LOCK = 0x08;     // A send writes a provisional 0.5s
@@ -105,6 +117,7 @@ namespace offsets {
     constexpr size_t GROUP_MAIN_GROUP = 0x20;
     constexpr size_t GROUP_MEMBER_COUNT = 0x7FDC;
     constexpr size_t PARTY_MEMBER_SIZE = 0x490;
+    constexpr size_t PARTY_MEMBER_STATUS_MANAGER = 0x0;     // Written with timer and source 0
     constexpr size_t PARTY_MEMBER_ENTITY_ID = 0x400;
     constexpr size_t PARTY_MEMBER_CURRENT_HP = 0x40C;
     constexpr size_t PARTY_MEMBER_MAX_HP = 0x410;
@@ -229,6 +242,26 @@ struct CharacterObject {
     uint8_t pad_1bc[0x0E]{0};                // 0x1BC - 0x1CA
     uint8_t class_job{0};                    // 0x1CA: Job ID (e.g. 21=WAR, 41=VPR, 42=PCT)
 };
+
+/// One StatusManager slot (0x10 bytes)
+struct StatusEntry {
+    uint16_t status_id{0};                   // 0x00: Status sheet row; 0 = empty slot
+    uint16_t param{0};                       // 0x02: Stacks, or a status-specific value
+    float remaining{0.0f};                   // 0x04: Seconds left; 0 for a status without a timer
+    uint64_t source_id{0};                   // 0x08: Applier's id (low 32 bits); 0xE0000000 when none
+};
+static_assert(sizeof(StatusEntry) == 0x10, "StatusEntry must be 0x10 bytes");
+
+/// StatusManager as embedded in BattleChara and PartyMember. Only the owner, the slots
+/// and the slot count are read; the size past the count is not verified.
+struct StatusManagerObject {
+    const void* owner{nullptr};              // 0x000: Owning Character*, or null (party list copy)
+    StatusEntry statuses[definitions::MAX_STATUS_SLOTS]{}; // 0x008 - 0x3C8
+    uint8_t pad_3c8[0x10]{0};                // 0x3C8 - 0x3D8
+    uint8_t slot_count{0};                   // 0x3D8: 30, or 60 once grown
+};
+static_assert(offsetof(StatusManagerObject, statuses) == offsets::STATUS_MANAGER_STATUSES, "StatusManagerObject::statuses offset mismatch");
+static_assert(offsetof(StatusManagerObject, slot_count) == offsets::STATUS_MANAGER_SLOT_COUNT, "StatusManagerObject::slot_count offset mismatch");
 
 /// In-game PartyMember structure (0x490 bytes) within GroupManager
 struct PartyMemberObject {

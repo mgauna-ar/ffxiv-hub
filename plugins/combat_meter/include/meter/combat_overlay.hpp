@@ -90,7 +90,7 @@ private:
 
     std::atomic<MeterMetric> m_metric{MeterMetric::Damage};
 
-    /// Rebuilding the summary is O(combatants x actions); the game presents far
+    /// A rankings-only snapshot, refreshed on an interval: the game presents far
     /// faster than the numbers meaningfully change.
     EncounterSummary m_cached_summary;
     std::chrono::steady_clock::time_point m_last_refresh{};

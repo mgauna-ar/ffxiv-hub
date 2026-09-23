@@ -3,8 +3,10 @@
 #include "hub/game_definitions.hpp"
 #include "common/ipc/protocol.hpp"
 #include "common/ipc/ring_buffer.hpp"
+#include "meter/vitals.hpp"
 #include <cstdint>
 #include <unordered_map>
+#include <span>
 #include <string>
 #include <chrono>
 #include <mutex>
@@ -14,6 +16,17 @@ namespace hub::meter {
 }
 
 namespace hub::payload {
+
+namespace detail {
+
+/// Copies a StatusManager's occupied slots into `out`. False when the layout check
+/// fails: a slot count other than 30 or 60, or, with `expected_owner` set, an owner
+/// that is neither null nor that object. Without detail (the party list's copy)
+/// timers and sources are left at 0.
+bool extract_status_list(const game::StatusManagerObject* manager, const void* expected_owner,
+                         bool with_detail, meter::ActorVitals& out) noexcept;
+
+} // namespace detail
 
 /**
  * @brief SEH-protected memory scanner for in-game Character objects and PartyList.
@@ -35,6 +48,15 @@ public:
     void inspect_and_sync_actor(uint32_t entity_id, meter::CombatantRegistry* registry = nullptr);
     void inspect_and_sync_actor_direct(const void* character_ptr, meter::CombatantRegistry* registry = nullptr);
     void sync_party(meter::CombatantRegistry* registry = nullptr);
+
+    /// HP and status lists for one vitals pass: each party member (the local player
+    /// when solo), then `enemy_ids`. Fills `out` from the front and returns how many
+    /// entries it filled. Allocates nothing. Orchestration thread only.
+    size_t read_vitals(std::span<const uint32_t> enemy_ids, std::span<meter::ActorVitals> out);
+
+    /// False once status reads were switched off because the StatusManager layout
+    /// check never passed: the offsets need re-verifying after a patch.
+    [[nodiscard]] bool status_reads_enabled() const noexcept { return !m_status_reads_disabled; }
 
     /// Drops every cached actor, party and territory value so the next read
     /// republishes them. The caches exist to keep the same packet off the wire
@@ -58,6 +80,11 @@ private:
     /// Cache, register and publish a freshly read actor. Returns false when the
     /// cached copy is identical, i.e. nothing was sent.
     bool publish_actor(const ipc::ActorInfoPacket& packet, meter::CombatantRegistry* registry);
+
+    /// Counts a status read against the layout check. Until one read has passed,
+    /// kStatusLayoutStrikes failures switch status reads off.
+    void note_status_layout(bool ok);
+    static constexpr uint32_t kStatusLayoutStrikes = 20;
 
     [[maybe_unused]] FnGetObjectByEntityId* m_fp_get_object_by_id{nullptr};
     [[maybe_unused]] uintptr_t m_game_object_mgr_addr{0};
@@ -93,6 +120,11 @@ private:
     uint16_t m_last_territory{0};
     /// False until m_last_territory has been announced; 0 is a real value to send.
     bool m_territory_published{false};
+
+    // Status layout check; orchestration thread only.
+    uint32_t m_status_layout_failures{0};
+    bool m_status_layout_confirmed{false};
+    bool m_status_reads_disabled{false};
 };
 
 } // namespace hub::payload

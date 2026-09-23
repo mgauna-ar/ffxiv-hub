@@ -33,6 +33,8 @@ enum class MessageType : uint16_t {
     CombatActorInfo     = 0x0204,
     CombatPartySync     = 0x0205,
     CombatControl       = 0x0206,
+    CombatStatusList    = 0x0207,
+    CombatLifeEvent     = 0x0208,
 };
 
 /// Runtime command IDs sent from desktop manager to payload plugins
@@ -78,6 +80,8 @@ enum class CommandId : uint32_t {
     SetMeterMetric      = 35,
     /// Master switch for a whole plugin: hooks, telemetry and overlay all stop
     SetPluginEnabled    = 36,
+    /// param_uint 0/1: the combat meter's death and status polling
+    SetVitalsTracking   = 37,
 };
 
 /// 2D Floating-point rectangle coordinates for overlay geometry

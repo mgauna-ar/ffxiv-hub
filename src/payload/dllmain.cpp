@@ -14,8 +14,10 @@
 #include "mitigator/latency_plugin.hpp"
 #include "mitigator/latency_overlay.hpp"
 
+#include <array>
 #include <atomic>
 #include <chrono>
+#include <span>
 #include <thread>
 #include <memory>
 #include <string>
@@ -190,6 +192,11 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
     auto last_heartbeat = std::chrono::steady_clock::now();
     auto last_geometry_sync = std::chrono::steady_clock::now();
     auto last_game_state_push = std::chrono::steady_clock::now();
+    auto last_vitals = std::chrono::steady_clock::now();
+    auto last_vitals_warning = std::chrono::steady_clock::time_point{};
+    // Party (8) or the local player, plus the tracked enemies.
+    constexpr size_t kTrackedEnemies = 4;
+    std::array<hub::meter::ActorVitals, hub::game::definitions::MAX_PARTY_MEMBERS + kTrackedEnemies> vitals_buffer{};
     uint32_t last_game_state_flags = 0;
     const auto payload_start = std::chrono::steady_clock::now();
     uint32_t heartbeat_sequence = 0;
@@ -214,10 +221,11 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
             hub::os::Logger::info(std::string("Pipe connection state changed -> ") + (connected ? "connected" : "disconnected"));
             latency_plugin->set_connected(connected);
             if (connected) {
-                // Whoever just connected has none of the names, party or zone
-                // this session already published. The caches suppress repeats,
-                // so without this they would never be sent again.
+                // Whoever just connected has none of the names, party, zone or
+                // status lists this session already published. The caches
+                // suppress repeats, so without this they would never be sent again.
                 object_reader->invalidate_cache();
+                combat_plugin->invalidate_published_vitals();
             }
             if (!connected) {
                 latency_overlay_prev_visible = latency_overlay->is_visible();
@@ -234,6 +242,30 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
             std::chrono::duration_cast<std::chrono::milliseconds>(now - last_reconnect_attempt).count() > 2000) {
             pipe_client->connect(500);
             last_reconnect_attempt = now;
+        }
+
+        // Deaths and status lists every 250 ms. Ahead of the party sync, so a death
+        // lands in its pull before the wipe check can close it. With track_vitals off
+        // nothing is read; on_vitals then only clears what was published before.
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_vitals).count() >= 250) {
+            const auto pass_start = std::chrono::steady_clock::now();
+            size_t vitals_count = 0;
+            if (combat_plugin->vitals_enabled()) {
+                const auto enemies = combat_plugin->engine().tracked_enemies(kTrackedEnemies);
+                vitals_count = object_reader->read_vitals(enemies, vitals_buffer);
+            }
+            const auto now_us = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(pass_start.time_since_epoch()).count());
+            combat_plugin->on_vitals(std::span<const hub::meter::ActorVitals>(vitals_buffer.data(), vitals_count), now_us);
+
+            const auto pass_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - pass_start).count();
+            if (pass_us > 2000 && now - last_vitals_warning > std::chrono::minutes(1)) {
+                hub::os::Logger::warn("Vitals pass took " + std::to_string(pass_us) + " us for " +
+                                      std::to_string(vitals_count) + " actor(s)");
+                last_vitals_warning = now;
+            }
+            last_vitals = now;
         }
 
         // Sync party composition every 1.5 seconds
@@ -263,7 +295,7 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
         // Report combat-meter activity so an empty overlay can be told apart from
         // an overlay that never received any action data.
         if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_meter_report).count() > 3000) {
-            const auto summary = combat_plugin->engine().current_summary();
+            const auto summary = combat_plugin->engine().current_rankings();
             if (summary.combatants.size() != last_combatant_count) {
                 hub::os::Logger::info(
                     "CombatMeter: " + std::to_string(summary.combatants.size()) + " combatant(s), " +
@@ -301,6 +333,9 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
                 : std::string("Hooks NOT installed: ") + hook_mgr.last_error();
             if (!game_state_reader.is_initialized()) {
                 msg += std::string(" | ") + game_state_reader.last_error();
+            }
+            if (!object_reader->status_reads_enabled()) {
+                msg += " | status reads off";
             }
             std::snprintf(status.status_message, sizeof(status.status_message), "%s", msg.c_str());
             auto status_packet = hub::ipc::serialize_typed_packet(

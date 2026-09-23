@@ -1,5 +1,6 @@
 #include "meter/encounter_engine.hpp"
 #include <algorithm>
+#include <unordered_set>
 
 namespace hub::meter {
 
@@ -105,6 +106,46 @@ void EncounterEngine::process_encounter_control(const ipc::EncounterControlPacke
     }
 }
 
+void EncounterEngine::process_status_list(const ipc::StatusListPacket& packet) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    m_status_changes.clear();
+    m_registry.apply_status_list(packet, m_status_changes);
+    m_uptime.apply(m_status_changes);
+}
+
+void EncounterEngine::process_life_event(const ipc::LifeEventPacket& packet) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    const uint64_t ts = packet.timestamp_us;
+    if (m_state == EncounterState::InCombat && ts >= m_start_time_us) {
+        m_death_log.record(packet, m_start_time_us, m_registry, m_accumulator);
+        return;
+    }
+    if (m_pull_history.empty()) {
+        return;
+    }
+    EncounterSummary& pull = m_pull_history.back();
+    if (ts < pull.start_time_us || ts > pull.end_time_us + kLateLifeEventUs) {
+        return;
+    }
+    DeathLog::record_into(pull, packet, m_registry);
+    if (m_live_holds_latest_pull) {
+        m_death_log.record(packet, pull.start_time_us, m_registry, m_accumulator);
+    }
+}
+
+ipc::LifeEventPacket EncounterEngine::build_life_event(EntityId entity, LifeEventKind kind, uint64_t timestamp_us) const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    return DeathLog::build_event(entity, kind, timestamp_us, m_accumulator);
+}
+
+std::vector<EntityId> EncounterEngine::tracked_enemies(size_t max) const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (m_state != EncounterState::InCombat) {
+        return {};
+    }
+    return m_accumulator.top_enemies(max, m_registry);
+}
+
 void EncounterEngine::update(TimePoint now) {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
 
@@ -141,6 +182,10 @@ void EncounterEngine::start_encounter_locked(TimePoint now, uint64_t timestamp_u
         : static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count());
     m_state = EncounterState::InCombat;
     m_dirty = false;
+    ++m_pulls_started;
+    m_death_log.clear();
+    m_uptime.start(m_start_time_us, m_registry);
+    m_live_holds_latest_pull = false;
 }
 
 void EncounterEngine::end_encounter(EncounterEndReason reason, TimePoint now, uint64_t timestamp_us) {
@@ -184,11 +229,19 @@ void EncounterEngine::end_encounter_locked(EncounterEndReason reason, TimePoint 
     summary.state = (reason == EncounterEndReason::Wipe) ? EncounterState::Wipe : EncounterState::Complete;
     summary.end_reason = reason;
     summary.combatants = m_accumulator.sorted_by_dps();
+    m_uptime.stop(summary.end_time_us);
+    add_detail_rows_locked(summary, summary.end_time_us);
+
+    // An enemy's list is never refreshed once it stops being tracked, so it must
+    // not be carried into the next pull's uptime.
+    m_status_changes.clear();
+    m_registry.clear_enemy_statuses(summary.end_time_us, m_status_changes);
 
     while (m_pull_history.size() >= m_history_capacity && !m_pull_history.empty()) {
         m_pull_history.pop_front();
     }
     m_pull_history.push_back(std::move(summary));
+    m_live_holds_latest_pull = true;
 
     m_state = (reason == EncounterEndReason::Wipe) ? EncounterState::Wipe : EncounterState::Complete;
     apply_pending_zone_locked();
@@ -217,6 +270,9 @@ void EncounterEngine::reset_current() {
 
 void EncounterEngine::reset_current_locked() {
     m_accumulator.clear();
+    m_death_log.clear();
+    m_uptime.clear();
+    m_live_holds_latest_pull = false;
     m_state = EncounterState::Idle;
     m_dirty = false;
     apply_pending_zone_locked();
@@ -273,6 +329,7 @@ std::vector<PullHistoryEntry> EncounterEngine::pull_history_index() const {
             .total_dps = pull.total_dps,
             .total_hps = pull.total_hps,
             .combatant_count = pull.combatants.size(),
+            .death_count = pull.deaths.size(),
             .state = pull.state,
             .end_reason = pull.end_reason
         });
@@ -305,7 +362,42 @@ std::optional<EncounterSummary> EncounterEngine::latest_pull() const {
 
 EncounterSummary EncounterEngine::current_summary(TimePoint now) {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    return summary_locked(now, true);
+}
 
+EncounterSummary EncounterEngine::current_rankings(TimePoint now) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    return summary_locked(now, false);
+}
+
+void EncounterEngine::add_detail_rows_locked(EncounterSummary& summary, uint64_t end_us) const {
+    summary.deaths = m_death_log.deaths();
+    summary.damage_taken = m_accumulator.damage_taken_rows();
+    summary.statuses = m_uptime.rows(end_us, m_registry);
+
+    std::unordered_set<EntityId> ids;
+    for (const DeathRecord& death : summary.deaths) {
+        ids.insert(death.entity);
+        for (uint8_t i = 0; i < death.recap_count; ++i) ids.insert(death.recap[i].source);
+    }
+    for (const DamageTakenRow& row : summary.damage_taken) {
+        ids.insert(row.target);
+        ids.insert(row.source);
+    }
+    for (const StatusUptimeRow& row : summary.statuses) {
+        ids.insert(row.target);
+        ids.insert(row.source);
+    }
+    summary.names.clear();
+    summary.names.reserve(ids.size());
+    for (const EntityId id : ids) {
+        if (const Combatant* actor = m_registry.find_actor(id)) {
+            summary.names.push_back(ActorLabel{id, actor->name, actor->job});
+        }
+    }
+}
+
+EncounterSummary EncounterEngine::summary_locked(TimePoint now, bool with_detail) {
     double dur = 0.0;
     if (m_state == EncounterState::InCombat) {
         dur = std::chrono::duration<double>(now - m_start_time).count();
@@ -333,7 +425,10 @@ EncounterSummary EncounterEngine::current_summary(TimePoint now) {
     summary.total_hps = m_accumulator.total_hps();
     summary.state = m_state;
     summary.end_reason = EncounterEndReason::None;
-    summary.combatants = m_accumulator.sorted_by_dps();
+    summary.combatants = m_accumulator.sorted_by_dps(true, with_detail);
+    if (with_detail) {
+        add_detail_rows_locked(summary, summary.end_time_us);
+    }
 
     return summary;
 }

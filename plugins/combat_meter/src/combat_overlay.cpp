@@ -462,7 +462,8 @@ void CombatOverlay::render() {
             const auto now = std::chrono::steady_clock::now();
             const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_last_refresh);
             if (age.count() >= static_cast<long long>(m_refresh_interval_ms.load())) {
-                m_cached_summary = m_engine->current_summary();
+                // The tables read only the rankings, not the per-action maps or detail rows.
+                m_cached_summary = m_engine->current_rankings();
                 m_last_refresh = now;
             }
         }

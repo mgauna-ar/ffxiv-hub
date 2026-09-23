@@ -106,7 +106,7 @@ plugin's page or its dashboard card.
 
 | Plugin | What it does |
 |---|---|
-| [**Combat Meter**](plugins/combat_meter/README.md) | DPS and HPS with overheal separated, crit/DH/CDH rates, automatic pet attribution, encounter tracking and pull history |
+| [**Combat Meter**](plugins/combat_meter/README.md) | DPS and HPS with overheal separated, crit/DH/CDH rates, automatic pet attribution, deaths with killing blow and recap, buff/debuff/DoT uptime, damage taken by ability, encounter tracking and pull history |
 | [**Latency Mitigator**](plugins/latency_mitigator/README.md) | Animation lock compensation for clean double-weaving on high latency, with a live ping/RTT HUD |
 
 Each plugin's own README documents how it works, its in-game overlay, and its
@@ -128,7 +128,7 @@ configuration keys.
 - **Plugin-Agnostic System Tray**: Lives unobtrusively in the Windows notification area with real-time status tooltip and context menu strictly managing Hub lifecycle (Show/Hide, Auto-Start, Config/Logs, Exit) without plugin clutter.
 - **Hub-Only Dashboard**: Displays FFXIV game process detection status, Named Pipe IPC server health, hub-measured network ping, payload hook state, and the registered plugins queried from `PluginRegistry` metadata. No plugin metrics: DPS, HPS and mitigation numbers live only in their own views.
 - **Per-Plugin Master Switch**: Every plugin can be switched off outright, from its dashboard card or its own page header. A disabled plugin consumes no game hooks, streams no telemetry and draws no in-game overlay; the choice persists to `config.json` and is re-applied when the payload next loads.
-- **Dedicated Analytical Views**: Full-featured Combat Meter inspector (damage tables with job progress bars, healing breakdowns, a pull list rail for switching between the live fight and archived pulls, action drilldowns) and Latency Mitigator inspector (real-time RTT curves, jitter cards, rolling action feeds). Both share one page frame, so the Settings tab lists the same sections - Plugin, In-game overlay, Display, Maintenance - in the same order for every plugin.
+- **Dedicated Analytical Views**: Full-featured Combat Meter inspector (damage tables with job progress bars, healing breakdowns, damage taken by ability, a death log with recaps, buff and debuff uptime, a pull list rail for switching between the live fight and archived pulls, action drilldowns) and Latency Mitigator inspector (real-time RTT curves, jitter cards, rolling action feeds). Both share one page frame, so the Settings tab lists the same sections - Plugin, In-game overlay, Display, Maintenance - in the same order for every plugin.
 - **Responsive Layout**: Card grids, stat tile rows and data tables reflow as the window resizes, down to an enforced minimum size; tables scroll horizontally rather than crushing their columns.
 - **Debounced Geometry Persistence**: Overlay positions, dimensions, opacities, and scales automatically persist to `%APPDATA%/ffxiv-hub/config.json`.
 

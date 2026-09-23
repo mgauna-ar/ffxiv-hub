@@ -18,6 +18,8 @@ using CombatStatusTickCallback = std::function<void(const CombatStatusTickPayloa
 using CombatActorInfoCallback = std::function<void(const CombatActorInfoPayload&)>;
 using CombatPartySyncCallback = std::function<void(const CombatPartySyncPayload&)>;
 using CombatControlCallback = std::function<void(const CombatControlPayload&)>;
+using CombatStatusListCallback = std::function<void(const CombatStatusListPayload&)>;
+using CombatLifeEventCallback = std::function<void(const CombatLifeEventPayload&)>;
 
 using MitigatorTelemetryCallback = std::function<void(const MitigatorTelemetryPayload&)>;
 
@@ -76,6 +78,8 @@ public:
     void set_combat_actor_info_callback(CombatActorInfoCallback cb) { m_on_actor_info = std::move(cb); }
     void set_combat_party_sync_callback(CombatPartySyncCallback cb) { m_on_party_sync = std::move(cb); }
     void set_combat_control_callback(CombatControlCallback cb) { m_on_combat_control = std::move(cb); }
+    void set_combat_status_list_callback(CombatStatusListCallback cb) { m_on_status_list = std::move(cb); }
+    void set_combat_life_event_callback(CombatLifeEventCallback cb) { m_on_life_event = std::move(cb); }
 
     void set_mitigator_telemetry_callback(MitigatorTelemetryCallback cb) { m_on_mitigator_telemetry = std::move(cb); }
 
@@ -113,6 +117,8 @@ private:
     CombatActorInfoCallback m_on_actor_info;
     CombatPartySyncCallback m_on_party_sync;
     CombatControlCallback m_on_combat_control;
+    CombatStatusListCallback m_on_status_list;
+    CombatLifeEventCallback m_on_life_event;
 
     MitigatorTelemetryCallback m_on_mitigator_telemetry;
 

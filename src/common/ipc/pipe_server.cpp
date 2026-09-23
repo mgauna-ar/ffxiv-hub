@@ -196,6 +196,20 @@ bool PipeServer::process_raw_packet(std::span<const uint8_t> data) {
                     m_on_combat_control(payload);
                 }
                 break;
+            case MessageType::CombatStatusList:
+                if (payload_span.size() >= sizeof(CombatStatusListPayload) && m_on_status_list) {
+                    CombatStatusListPayload payload{};
+                    std::memcpy(&payload, payload_span.data(), sizeof(payload));
+                    m_on_status_list(payload);
+                }
+                break;
+            case MessageType::CombatLifeEvent:
+                if (payload_span.size() >= sizeof(CombatLifeEventPayload) && m_on_life_event) {
+                    CombatLifeEventPayload payload{};
+                    std::memcpy(&payload, payload_span.data(), sizeof(payload));
+                    m_on_life_event(payload);
+                }
+                break;
             default:
                 break;
         }

@@ -118,6 +118,11 @@ void MetricsAccumulator::record_damage_hit(
     if (hub::game::is_real_entity_id(target_id)) {
         CombatantStats& target_stats = get_or_create_stats(target_id, registry);
         target_stats.damage_taken += packet.damage;
+        if (packet.damage > 0 && is_friendly_target(target_id, registry)) {
+            record_taken(target_id, RecapSample{
+                packet.timestamp_us, static_cast<EntityId>(packet.source_id), packet.action_id,
+                packet.damage, RecapKind::Damage, static_cast<uint8_t>(packet.hit_flags)}, true);
+        }
     }
 }
 
@@ -182,6 +187,13 @@ void MetricsAccumulator::record_action(const ipc::CombatActionPacket& packet, co
         stats.total_healing += raw_heal;
         stats.effective_healing += eff_heal;
         stats.overhealing += over_heal;
+
+        const EntityId target_id = static_cast<EntityId>(packet.target_id);
+        if (eff_heal > 0 && is_friendly_target(target_id, registry)) {
+            record_taken(target_id, RecapSample{
+                packet.timestamp_us, raw_source_id, packet.action_id,
+                eff_heal, RecapKind::Heal, static_cast<uint8_t>(packet.hit_flags)}, false);
+        }
 
         if (source_friendly) {
             m_total_healing += raw_heal;
@@ -284,6 +296,11 @@ void MetricsAccumulator::record_status_tick(const ipc::StatusTickPacket& packet,
         if (hub::game::is_real_entity_id(packet.target_id)) {
             CombatantStats& target_stats = get_or_create_stats(packet.target_id, registry);
             target_stats.damage_taken += packet.damage_or_heal;
+            if (is_friendly_target(packet.target_id, registry)) {
+                record_taken(packet.target_id, RecapSample{
+                    packet.timestamp_us, raw_source_id, action_key,
+                    packet.damage_or_heal, RecapKind::DotTick, 0}, true);
+            }
         }
     } else if (effect == EffectType::Heal) {
         stats.total_healing += packet.damage_or_heal;
@@ -312,7 +329,78 @@ void MetricsAccumulator::record_status_tick(const ipc::StatusTickPacket& packet,
             act.max_heal = packet.damage_or_heal;
         }
         act.heal_hit_counts.tick_hits++;
+
+        if (is_friendly_target(packet.target_id, registry)) {
+            record_taken(packet.target_id, RecapSample{
+                packet.timestamp_us, raw_source_id, action_key,
+                packet.damage_or_heal, RecapKind::HotTick, 0}, false);
+        }
     }
+}
+
+bool MetricsAccumulator::is_friendly_target(EntityId target_id, const CombatantRegistry& registry) {
+    return hub::game::is_real_entity_id(target_id)
+        && target_id != hub::game::LIMIT_BREAK_COMBATANT_ID
+        && registry.is_friendly(target_id)
+        && !registry.is_pet(target_id);
+}
+
+void MetricsAccumulator::record_taken(EntityId target_id, const RecapSample& sample, bool is_damage) {
+    m_recaps[target_id].push(sample);
+    if (!is_damage) {
+        return;
+    }
+    DamageTakenRow& row = m_damage_taken[DamageTakenKey{target_id, sample.action_key, sample.source}];
+    row.target = target_id;
+    row.action_key = sample.action_key;
+    row.source = sample.source;
+    row.hits++;
+    row.total += sample.amount;
+    row.max = std::max<uint64_t>(row.max, sample.amount);
+}
+
+std::vector<DamageTakenRow> MetricsAccumulator::damage_taken_rows() const {
+    std::vector<DamageTakenRow> rows;
+    rows.reserve(m_damage_taken.size());
+    for (const auto& [key, row] : m_damage_taken) {
+        rows.push_back(row);
+    }
+    std::sort(rows.begin(), rows.end(), [](const DamageTakenRow& a, const DamageTakenRow& b) {
+        if (a.total != b.total) return a.total > b.total;
+        if (a.target != b.target) return a.target < b.target;
+        if (a.action_key != b.action_key) return a.action_key < b.action_key;
+        return a.source < b.source;
+    });
+    return rows;
+}
+
+void MetricsAccumulator::add_death_caused(EntityId target, ActionId action_key, EntityId source) {
+    auto it = m_damage_taken.find(DamageTakenKey{target, action_key, source});
+    if (it != m_damage_taken.end()) {
+        it->second.deaths_caused++;
+    }
+}
+
+const RecapRing* MetricsAccumulator::recap_for(EntityId target) const {
+    auto it = m_recaps.find(target);
+    return it != m_recaps.end() ? &it->second : nullptr;
+}
+
+std::vector<EntityId> MetricsAccumulator::top_enemies(size_t max, const CombatantRegistry& registry) const {
+    std::vector<std::pair<uint64_t, EntityId>> enemies;
+    for (const auto& [id, stats] : m_combatants) {
+        if (stats.damage_taken == 0 || !hub::game::is_real_entity_id(id)) continue;
+        if (id == hub::game::LIMIT_BREAK_COMBATANT_ID || registry.is_friendly(id)) continue;
+        enemies.emplace_back(stats.damage_taken, id);
+    }
+    std::sort(enemies.begin(), enemies.end(), [](const auto& a, const auto& b) {
+        return a.first != b.first ? a.first > b.first : a.second < b.second;
+    });
+    std::vector<EntityId> ids;
+    for (size_t i = 0; i < enemies.size() && i < max; ++i) {
+        ids.push_back(enemies[i].second);
+    }
+    return ids;
 }
 
 void MetricsAccumulator::merge_combatants(EntityId from_id, EntityId to_id, const CombatantRegistry& registry) {
@@ -339,6 +427,8 @@ void MetricsAccumulator::merge_combatants(EntityId from_id, EntityId to_id, cons
     to.total_healing += from_stats.total_healing;
     to.effective_healing += from_stats.effective_healing;
     to.overhealing += from_stats.overhealing;
+    to.deaths += from_stats.deaths;
+    to.raises += from_stats.raises;
 
     add_hit_counts(to.hits, from_stats.hits);
     add_hit_counts(to.heal_hit_counts, from_stats.heal_hit_counts);
@@ -435,7 +525,7 @@ const CombatantStats* MetricsAccumulator::find_stats(EntityId entity_id) const {
     return nullptr;
 }
 
-std::vector<CombatantStats> MetricsAccumulator::sorted_by_dps(bool friendly_only) const {
+std::vector<CombatantStats> MetricsAccumulator::sorted_by_dps(bool friendly_only, bool with_actions) const {
     std::vector<CombatantStats> list;
     list.reserve(m_combatants.size());
     for (const auto& [id, stats] : m_combatants) {
@@ -450,7 +540,13 @@ std::vector<CombatantStats> MetricsAccumulator::sorted_by_dps(bool friendly_only
                 continue;
             }
         }
-        list.push_back(stats);
+        if (with_actions) {
+            list.push_back(stats);
+        } else {
+            CombatantStats totals;
+            static_cast<CombatantTotals&>(totals) = stats;
+            list.push_back(std::move(totals));
+        }
     }
 
     std::sort(list.begin(), list.end(), [](const CombatantStats& a, const CombatantStats& b) {
@@ -500,6 +596,8 @@ double MetricsAccumulator::overheal_pct() const noexcept {
 
 void MetricsAccumulator::clear() {
     m_combatants.clear();
+    m_damage_taken.clear();
+    m_recaps.clear();
     m_total_damage = 0;
     m_total_healing = 0;
     m_total_effective_healing = 0;

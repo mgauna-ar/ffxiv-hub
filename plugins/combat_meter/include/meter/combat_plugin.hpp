@@ -2,9 +2,13 @@
 
 #include "hub/plugin_api.hpp"
 #include "meter/encounter_engine.hpp"
+#include "meter/vitals.hpp"
 #include "common/ipc/ring_buffer.hpp"
+#include <atomic>
 #include <functional>
 #include <memory>
+#include <span>
+#include <vector>
 
 namespace hub::meter {
 
@@ -54,6 +58,19 @@ public:
     void set_enabled(bool enabled) noexcept;
     [[nodiscard]] bool is_enabled() const noexcept { return m_config.enabled; }
 
+    /// One vitals pass, from the payload's orchestration thread: each actor's death
+    /// or raise first, then its status list if it changed, both applied locally and
+    /// published. With track_vitals off nothing is read, and every list published
+    /// so far is cleared once.
+    void on_vitals(std::span<const ActorVitals> actors, uint64_t now_us);
+
+    /// Whether the payload should read vitals at all this pass.
+    [[nodiscard]] bool vitals_enabled() const noexcept;
+    void set_vitals_tracking(bool enabled) noexcept;
+
+    /// A listener that just connected has none of the lists already published.
+    void invalidate_published_vitals();
+
     [[nodiscard]] CombatConfig& config() noexcept { return m_config; }
     [[nodiscard]] const CombatConfig& config() const noexcept { return m_config; }
 
@@ -100,6 +117,14 @@ private:
     CombatOverlay* m_overlay{nullptr};
     GameStateProvider* m_game_state{nullptr};
     uint32_t m_sequence{0};
+
+    /// Read off the orchestration thread; set from the pipe reader thread.
+    std::atomic<bool> m_track_vitals{true};
+    // Orchestration thread only, under the engine lock.
+    VitalsTracker m_vitals;
+    std::vector<EntityId> m_vitals_seen;
+    uint32_t m_vitals_sequence{0};
+    uint64_t m_vitals_pulls_seen{0};
 };
 
 } // namespace hub::meter

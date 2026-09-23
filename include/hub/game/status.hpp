@@ -19,4 +19,8 @@ namespace hub::game {
     return name.empty() ? "Status " + std::to_string(id) : std::string(name);
 }
 
+/// True for a status the game files as a debuff (Status sheet category 2), whoever
+/// applied it. Defined in src/common/game_tables.cpp.
+[[nodiscard]] bool status_is_detrimental(uint32_t id) noexcept;
+
 } // namespace hub::game

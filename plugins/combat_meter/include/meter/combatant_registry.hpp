@@ -11,6 +11,24 @@
 
 namespace hub::meter {
 
+/// A status an actor has as of the last status list applied to it.
+struct ActiveStatus {
+    uint16_t status_id{0};
+    uint16_t param{0};
+    EntityId source{0};           // 0 when unknown or none
+    uint64_t since_us{0};
+    uint64_t expected_end_us{0};  // 0 without a timer, or when the list carried none
+};
+
+/// A status that started or stopped on an actor.
+struct StatusChange {
+    EntityId target{0};
+    uint16_t status_id{0};
+    EntityId source{0};
+    uint64_t at_us{0};
+    bool gained{false};
+};
+
 struct Combatant {
     EntityId entity_id{0};
     EntityId owner_id{0};
@@ -24,6 +42,10 @@ struct Combatant {
     bool is_pet{false};
     bool is_party_member{false};
     bool is_local_player{false};
+    std::vector<ActiveStatus> statuses;
+    /// When the last status list was applied. A status missing from the next list
+    /// was still there at this point.
+    uint64_t statuses_seen_us{0};
 };
 
 class CombatantRegistry {
@@ -93,6 +115,17 @@ public:
 
     /// Checks if all known party members are dead (current_hp == 0).
     [[nodiscard]] bool is_party_wiped() const;
+
+    /// Replaces an actor's status list and appends what started or stopped to
+    /// `changes`. A status that vanished ended when its own timer ran out, if that
+    /// was before the list was read, and otherwise when the list was read.
+    void apply_status_list(const ipc::StatusListPacket& packet, std::vector<StatusChange>& changes);
+
+    /// Drops the status lists of every actor that is not friendly, as lost at `at_us`.
+    void clear_enemy_statuses(uint64_t at_us, std::vector<StatusChange>& changes);
+
+    /// Appends a label for `id` unless `names` already holds one or the actor is unknown.
+    void add_label(std::vector<ActorLabel>& names, EntityId id) const;
 
     /// Total number of tracked actors.
     [[nodiscard]] size_t actor_count() const noexcept {

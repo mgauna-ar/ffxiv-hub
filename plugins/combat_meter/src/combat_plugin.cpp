@@ -3,6 +3,9 @@
 #include "meter/combat_overlay.hpp"
 #include "common/config/json.hpp"
 #include "hub/game_definitions.hpp"
+#include "hub/game/entity.hpp"
+#include "hub/game/status.hpp"
+#include <algorithm>
 #include <cstring>
 #include <string>
 
@@ -75,6 +78,26 @@ bool SafeReadSourceFields(const void* chr, SourceFields& out) {
 }
 #endif
 
+/// The list a vitals read becomes on the wire: nameless statuses dropped, and an
+/// enemy's reduced to what the party applied.
+ipc::StatusListPacket make_status_list(const ActorVitals& vitals, const CombatantRegistry& registry, uint64_t now_us) {
+    ipc::StatusListPacket list{};
+    list.entity_id = vitals.entity;
+    list.timestamp_us = now_us;
+    list.flags = vitals.status_detail ? 0 : ipc::STATUS_LIST_NO_DETAIL;
+    const size_t slots = std::min<size_t>(vitals.count, game::definitions::MAX_STATUS_SLOTS);
+    for (size_t i = 0; i < slots && list.count < ipc::MAX_STATUS_LIST_ENTRIES; ++i) {
+        const ipc::CombatStatusEntry& entry = vitals.entries[i];
+        if (entry.status_id == 0 || hub::game::status_sheet_name(entry.status_id).empty()) continue;
+        if (vitals.is_enemy) {
+            if (!hub::game::is_real_entity_id(entry.source_id)) continue;
+            if (!registry.is_friendly(registry.resolve_owner(entry.source_id))) continue;
+        }
+        list.entries[list.count++] = entry;
+    }
+    return list;
+}
+
 } // namespace
 
 CombatPlugin::CombatPlugin() = default;
@@ -103,6 +126,72 @@ void CombatPlugin::set_enabled(bool enabled) noexcept {
     }
 }
 
+bool CombatPlugin::vitals_enabled() const noexcept {
+    return m_initialized && m_config.enabled && m_track_vitals.load(std::memory_order_relaxed);
+}
+
+void CombatPlugin::set_vitals_tracking(bool enabled) noexcept {
+    m_config.track_vitals = enabled;
+    m_track_vitals.store(enabled, std::memory_order_relaxed);
+}
+
+void CombatPlugin::invalidate_published_vitals() {
+    m_engine.with_registry([&](CombatantRegistry&) { m_vitals.invalidate(); });
+}
+
+void CombatPlugin::on_vitals(std::span<const ActorVitals> actors, uint64_t now_us) {
+    if (!m_initialized || !m_config.enabled) {
+        return;
+    }
+    const bool tracking = m_track_vitals.load(std::memory_order_relaxed);
+
+    const auto publish = [this](MessageType type, const auto& packet) {
+        if (m_ring_buffer) {
+            m_ring_buffer->push(ipc::serialize_typed_packet(PluginId::CombatMeter, type, ++m_vitals_sequence, packet));
+        }
+    };
+
+    m_engine.with_registry([&](CombatantRegistry& registry) {
+        m_vitals_seen.clear();
+        // A pull's end drops every enemy's list, and the next pull can start on the
+        // same enemy before a pass notices. Sending everything again restores it.
+        const uint64_t pulls = m_engine.pulls_started();
+        if (pulls != m_vitals_pulls_seen) {
+            m_vitals_pulls_seen = pulls;
+            m_vitals.invalidate();
+        }
+        if (tracking) {
+            for (const ActorVitals& vitals : actors) {
+                if (!hub::game::is_real_entity_id(vitals.entity)) continue;
+                m_vitals_seen.push_back(vitals.entity);
+
+                // Before the status list: a death's record keeps the statuses the
+                // next list will have dropped.
+                if (vitals.track_life) {
+                    if (const auto kind = m_vitals.observe_life(vitals)) {
+                        const ipc::LifeEventPacket event = m_engine.build_life_event(vitals.entity, *kind, now_us);
+                        m_engine.process_life_event(event);
+                        publish(MessageType::CombatLifeEvent, event);
+                    }
+                }
+                if (!vitals.statuses_read) continue;
+                const ipc::StatusListPacket list = make_status_list(vitals, registry, now_us);
+                if (m_vitals.status_list_changed(list)) {
+                    m_engine.process_status_list(list);
+                    publish(MessageType::CombatStatusList, list);
+                }
+            }
+        }
+        for (const EntityId gone : m_vitals.retain(m_vitals_seen)) {
+            ipc::StatusListPacket empty{};
+            empty.entity_id = gone;
+            empty.timestamp_us = now_us;
+            m_engine.process_status_list(empty);
+            publish(MessageType::CombatStatusList, empty);
+        }
+    });
+}
+
 void CombatPlugin::shutdown() {
     m_initialized = false;
     m_engine.reset_current();
@@ -120,6 +209,7 @@ void CombatPlugin::serialize_config(config::JsonValue& out) const {
     out["show_col_dh"] = config::JsonValue(m_config.show_col_dh);
     out["show_col_cdh"] = config::JsonValue(m_config.show_col_cdh);
     out["overlay_metric"] = config::JsonValue(m_config.overlay_metric);
+    out["track_vitals"] = config::JsonValue(m_track_vitals.load(std::memory_order_relaxed));
 
     // The overlay is the source of truth for anything that can change live
     // (dragging/resizing the window, opacity/scale commands from the desktop
@@ -151,6 +241,7 @@ void CombatPlugin::deserialize_config(const config::JsonValue& in) {
     if (in.contains("show_col_dh")) m_config.show_col_dh = in["show_col_dh"].as_bool(m_config.show_col_dh);
     if (in.contains("show_col_cdh")) m_config.show_col_cdh = in["show_col_cdh"].as_bool(m_config.show_col_cdh);
     if (in.contains("overlay_metric")) m_config.overlay_metric = static_cast<uint32_t>(in["overlay_metric"].as_int(static_cast<int>(m_config.overlay_metric)));
+    if (in.contains("track_vitals")) set_vitals_tracking(in["track_vitals"].as_bool(m_config.track_vitals));
     m_config.overlay = ui::deserialize_overlay(in, m_config.overlay);
 
     if (m_overlay) {
