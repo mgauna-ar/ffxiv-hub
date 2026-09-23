@@ -109,36 +109,13 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
     const bool connected_initially = pipe_client->connect(10000);
     hub::os::Logger::info(std::string("Initial pipe connect -> ") + (connected_initially ? "connected" : "not connected yet, will keep retrying"));
 
-    // 5. Initialize HookManager and attach consumers
-    auto& hook_mgr = hub::payload::HookManager::instance();
-    // Registration order is dispatch order. Mitigator before meter, per
-    // AGENTS.md invariant 1.
-    if (!hook_mgr.register_consumer(latency_plugin.get())) {
-        hub::os::Logger::warn("Failed to register the latency mitigator as a hook consumer");
-    }
-    if (!hook_mgr.register_consumer(combat_plugin.get())) {
-        hub::os::Logger::warn("Failed to register the combat meter as a hook consumer");
-    }
-    hook_mgr.set_ring_buffer(&pipe_client->ring_buffer());
-
-    hub::os::Logger::info("Installing game hooks...");
-    const bool hooks_installed = hook_mgr.install();
-    hub::os::Logger::info(
-        "HookManager::install() -> " + std::string(hooks_installed ? "ok" : "FAILED") +
-        " (" + std::to_string(hook_mgr.active_hook_count()) +
-        "/" + std::to_string(hub::game::definitions::TOTAL_AVAILABLE_HOOKS) + " hooks active)" +
-        " [" + hook_mgr.last_error() + "]"
-    );
-    hub::os::Logger::info(
-        std::string("ActionManager instance -> ") + (hook_mgr.action_manager() ? "resolved" : "NOT FOUND (mitigation waits for first action)")
-    );
-
-    // 6. Initialize ObjectReader
+    // 5. Initialize game memory readers and the meter's resolvers. Must precede
+    //    step 6: the detour thread reads the resolvers unlocked once hooks fire.
     auto object_reader = std::make_unique<hub::payload::ObjectReader>(&pipe_client->ring_buffer());
     const bool object_reader_ok = object_reader->initialize();
     hub::os::Logger::info(std::string("ObjectReader::initialize() -> ") + (object_reader_ok ? "ok" : "FAILED"));
 
-    // 6b. Resolve the Conditions array that drives overlay visibility conditions.
+    // 5b. Resolve the Conditions array that drives overlay visibility conditions.
     hub::payload::GameStateReader game_state_reader;
     const bool game_state_ok = game_state_reader.initialize();
     hub::os::Logger::info(
@@ -173,6 +150,30 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
                 return true;
             });
         }
+    );
+
+    // 6. Initialize HookManager and attach consumers
+    auto& hook_mgr = hub::payload::HookManager::instance();
+    // Registration order is dispatch order. Mitigator before meter, per
+    // AGENTS.md invariant 1.
+    if (!hook_mgr.register_consumer(latency_plugin.get())) {
+        hub::os::Logger::warn("Failed to register the latency mitigator as a hook consumer");
+    }
+    if (!hook_mgr.register_consumer(combat_plugin.get())) {
+        hub::os::Logger::warn("Failed to register the combat meter as a hook consumer");
+    }
+    hook_mgr.set_ring_buffer(&pipe_client->ring_buffer());
+
+    hub::os::Logger::info("Installing game hooks...");
+    const bool hooks_installed = hook_mgr.install();
+    hub::os::Logger::info(
+        "HookManager::install() -> " + std::string(hooks_installed ? "ok" : "FAILED") +
+        " (" + std::to_string(hook_mgr.active_hook_count()) +
+        "/" + std::to_string(hub::game::definitions::TOTAL_AVAILABLE_HOOKS) + " hooks active)" +
+        " [" + hook_mgr.last_error() + "]"
+    );
+    hub::os::Logger::info(
+        std::string("ActionManager instance -> ") + (hook_mgr.action_manager() ? "resolved" : "NOT FOUND (mitigation waits for first action)")
     );
 
     // 7. Install DirectX 11 Hook (Present & ResizeBuffers)

@@ -63,6 +63,8 @@ public:
     /// Supplies a lookup that fills in an actor's name/job/HP from the game's
     /// object table. Action packets only carry a character pointer for the
     /// source, and not always, so targets are otherwise unidentifiable.
+    /// All three resolvers must be set before the hooks are installed: the
+    /// detour thread reads them without a lock.
     void set_actor_resolver(std::function<void(uint32_t)> resolver) { m_actor_resolver = std::move(resolver); }
 
     /// Same job for a source the hook did hand a character pointer for. The
