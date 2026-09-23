@@ -29,8 +29,9 @@ public:
     void disconnect();
     void start_worker_threads();
 
-    /// Alias shared with HookManager/ObjectReader/plugin producers so they can all
-    /// push directly onto this client's outbound buffer.
+    /// Alias shared with the plugins, ObjectReader and the orchestration loop,
+    /// which push onto this client's outbound buffer. Any long-lived thread may
+    /// push; each gets its own lane.
     using RingBuffer = PacketRingBuffer;
 
     bool push_raw(const std::vector<uint8_t>& packet) noexcept;

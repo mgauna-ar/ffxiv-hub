@@ -1,6 +1,6 @@
 ---
 name: tsan-check
-description: Build and run the test suite under ThreadSanitizer to prove EncounterEngine locking is intact. Use after touching any EncounterEngine, CombatantRegistry or MetricsAccumulator entry point, or when changing what locks the combat meter takes - a missing lock is invisible to a normal `make test` and only reports under TSan.
+description: Build and run the test suite under ThreadSanitizer to prove EncounterEngine locking and the multi-producer IPC ring buffer are intact. Use after touching any EncounterEngine, CombatantRegistry or MetricsAccumulator entry point, when changing what locks the combat meter takes, or when touching src/common/ipc/ring_buffer.hpp or adding a thread that pushes outbound packets - a race there is invisible to a normal `make test` and only reports under TSan.
 ---
 
 # Checking `EncounterEngine` Locking
@@ -18,7 +18,8 @@ clang++ -std=c++20 -fsanitize=thread -g -O1 \
 ```
 
 Run it after touching any `EncounterEngine`, `CombatantRegistry` or `MetricsAccumulator`
-entry point. It must report zero data races.
+entry point, `src/common/ipc/ring_buffer.hpp`, or the set of threads that push outbound
+packets. It must report zero data races.
 
 ## What it is protecting
 
@@ -33,3 +34,13 @@ lifecycle calls re-enter each other. The registry must be reached through
 single-threaded use only. Adding an entry point that skips the mutex, or reaching the
 registry through a raw accessor from one of those four threads, is exactly what this run
 catches.
+
+## The outbound packet queue
+
+The same run covers `IPC.PacketRingBufferConcurrentProducers`. It pushes onto the real
+`PacketRingBuffer` from two threads, the way the game's detour thread and the payload
+orchestration thread do, while one consumer drains it. `PacketRingBuffer` gives each
+producer thread its own SPSC lane (root `AGENTS.md`, invariant 3). If the alias is
+pointed back at a plain `SpscRingBuffer`, or a lane ends up with two producers, TSan
+reports the race on the slot's `std::vector`. The test also fails on its own when a
+packet is torn, lost or duplicated.

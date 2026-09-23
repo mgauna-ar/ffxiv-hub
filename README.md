@@ -24,7 +24,7 @@ flowchart TD
             DX11Hook["DirectX 11 Hook (Present & Resize)"]
             WndProcHook["WndProc Hook (Mouse/Key Input)"]
             GameHookMgr["Hook Manager (ReceiveActionEffect / UseActionLocation)"]
-            RingBuffer["Wait-Free SPSC Ring Buffer (4096 pkts)"]
+            RingBuffer["Wait-Free Per-Thread-Lane Ring Buffer (4096 pkts/lane)"]
             PipeClient["Payload IPC Client Thread"]
             
             subgraph InGamePlugins["In-Game Modular Plugins"]
