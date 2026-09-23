@@ -81,7 +81,10 @@ void EncounterEngine::process_party_sync(const ipc::PartySyncPacket& packet) {
 void EncounterEngine::process_encounter_control(const ipc::EncounterControlPacket& packet, TimePoint now) {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
 
-    if (packet.zone_id != 0 && packet.zone_id != m_current_zone_id) {
+    // A zone-only announcement is authoritative, 0 (unknown) included. On any
+    // other control packet 0 just means it carries no zone.
+    const bool zone_only = packet.in_combat_flag == 0 && packet.control_command == 0;
+    if (zone_only || packet.zone_id != 0) {
         set_zone_locked(packet.zone_id, "", now);
     }
 
@@ -188,6 +191,15 @@ void EncounterEngine::end_encounter_locked(EncounterEndReason reason, TimePoint 
     m_pull_history.push_back(std::move(summary));
 
     m_state = (reason == EncounterEndReason::Wipe) ? EncounterState::Wipe : EncounterState::Complete;
+    apply_pending_zone_locked();
+}
+
+void EncounterEngine::apply_pending_zone_locked() {
+    if (m_zone_unknown_pending) {
+        m_current_zone_id = 0;
+        m_current_zone_name.clear();
+        m_zone_unknown_pending = false;
+    }
 }
 
 void EncounterEngine::split_encounter(TimePoint now) {
@@ -207,6 +219,7 @@ void EncounterEngine::reset_current_locked() {
     m_accumulator.clear();
     m_state = EncounterState::Idle;
     m_dirty = false;
+    apply_pending_zone_locked();
 }
 
 void EncounterEngine::set_zone(uint32_t zone_id, std::string zone_name, TimePoint now) {
@@ -215,6 +228,13 @@ void EncounterEngine::set_zone(uint32_t zone_id, std::string zone_name, TimePoin
 }
 
 void EncounterEngine::set_zone_locked(uint32_t zone_id, std::string zone_name, TimePoint now) {
+    // Losing sight of the zone is not moving (a party can disband mid-pull on a
+    // dummy), so the pull runs on and is filed under the zone it started in.
+    if (zone_id == 0 && m_current_zone_id != 0 && m_state == EncounterState::InCombat) {
+        m_zone_unknown_pending = true;
+        return;
+    }
+    m_zone_unknown_pending = false;
     if (zone_id != m_current_zone_id) {
         if (m_state == EncounterState::InCombat) {
             end_encounter_locked(EncounterEndReason::ZoneChange, now);

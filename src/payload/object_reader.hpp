@@ -42,8 +42,8 @@ public:
     /// otherwise never be told any name it missed.
     void invalidate_cache();
 
-    /// Territory the party is in as of the last sync_party(); 0 when unknown
-    /// (solo play leaves the party list empty).
+    /// Territory the party is in as of the last sync_party(); 0 when unknown,
+    /// which includes solo play (the party list is empty then).
     [[nodiscard]] uint16_t current_territory() const noexcept { return m_last_territory; }
 
     void set_ring_buffer(RingBuffer* ring_buffer) noexcept { m_ring_buffer = ring_buffer; }
@@ -89,6 +89,8 @@ private:
     std::unordered_map<uint32_t, CachedActor> m_actor_cache;
     ipc::PartySyncPacket m_last_party_sync{};
     uint16_t m_last_territory{0};
+    /// False until m_last_territory has been announced; 0 is a real value to send.
+    bool m_territory_published{false};
 };
 
 } // namespace hub::payload

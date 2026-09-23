@@ -595,6 +595,88 @@ TEST_CASE(MeterEngine, ZoneChangeArchivesPullAndTagsSummary) {
     TEST_ASSERT_EQ(pull->zone_id, 1000u);
 }
 
+TEST_CASE(MeterEngine, ZoneOnlyAnnouncementOfZeroClearsZone) {
+    EncounterEngine engine;
+    const auto t0 = std::chrono::steady_clock::now();
+
+    hub::ipc::EncounterControlPacket zone{};
+    zone.zone_id = 1000;
+    engine.process_encounter_control(zone, t0);
+
+    // Going solo after a duty: the zone becomes unknown instead of sticking.
+    zone.zone_id = 0;
+    engine.process_encounter_control(zone, t0 + std::chrono::seconds(1));
+    TEST_ASSERT_EQ(engine.current_zone_id(), 0u);
+    TEST_ASSERT_EQ(engine.state(), EncounterState::Idle);
+
+    hub::ipc::CombatActionPacket act{};
+    act.source_id = 1;
+    act.damage = 4200;
+    act.effect_type = static_cast<uint16_t>(EffectType::Damage);
+    engine.process_action(act, t0 + std::chrono::seconds(2));
+    engine.end_encounter(EncounterEndReason::Manual, t0 + std::chrono::seconds(3));
+
+    const auto pull = engine.latest_pull();
+    TEST_ASSERT(pull.has_value());
+    TEST_ASSERT_EQ(pull->zone_id, 0u);
+}
+
+TEST_CASE(MeterEngine, ControlPacketWithCommandIgnoresZeroZone) {
+    EncounterEngine engine;
+    const auto t0 = std::chrono::steady_clock::now();
+
+    hub::ipc::EncounterControlPacket zone{};
+    zone.zone_id = 1000;
+    engine.process_encounter_control(zone, t0);
+
+    // A combat-start packet carries no zone; its 0 must not clear the known one.
+    hub::ipc::EncounterControlPacket start{};
+    start.in_combat_flag = 1;
+    engine.process_encounter_control(start, t0 + std::chrono::seconds(1));
+    TEST_ASSERT_EQ(engine.current_zone_id(), 1000u);
+    TEST_ASSERT_EQ(engine.state(), EncounterState::InCombat);
+}
+
+TEST_CASE(MeterEngine, UnknownZoneMidPullDoesNotSplit) {
+    EncounterEngine engine;
+    const auto t0 = std::chrono::steady_clock::now();
+    engine.set_zone(1000, "", t0);
+
+    hub::ipc::CombatActionPacket act{};
+    act.source_id = 1;
+    act.damage = 4200;
+    act.effect_type = static_cast<uint16_t>(EffectType::Damage);
+    engine.process_action(act, t0);
+    TEST_ASSERT_EQ(engine.state(), EncounterState::InCombat);
+
+    // The party disbanding mid-pull hides the zone but the player has not moved.
+    engine.set_zone(0, "", t0 + std::chrono::seconds(1));
+    TEST_ASSERT_EQ(engine.state(), EncounterState::InCombat);
+    TEST_ASSERT(!engine.latest_pull().has_value());
+
+    engine.end_encounter(EncounterEndReason::Manual, t0 + std::chrono::seconds(2));
+    const auto pull = engine.latest_pull();
+    TEST_ASSERT(pull.has_value());
+    TEST_ASSERT_EQ(pull->zone_id, 1000u);
+    TEST_ASSERT_EQ(engine.current_zone_id(), 0u);
+}
+
+TEST_CASE(MeterEngine, UnknownZoneMidPullAppliesOnReset) {
+    EncounterEngine engine;
+    const auto t0 = std::chrono::steady_clock::now();
+    engine.set_zone(1000, "", t0);
+
+    hub::ipc::CombatActionPacket act{};
+    act.source_id = 1;
+    act.damage = 4200;
+    act.effect_type = static_cast<uint16_t>(EffectType::Damage);
+    engine.process_action(act, t0);
+
+    engine.set_zone(0, "", t0 + std::chrono::seconds(1));
+    engine.reset_current();
+    TEST_ASSERT_EQ(engine.current_zone_id(), 0u);
+}
+
 TEST_CASE(MeterEngine, ZoneLabelPrefersNameThenTableThenId) {
     // An explicitly supplied name always wins.
     TEST_ASSERT(zone_label(1238, "The Omega Protocol") == "The Omega Protocol");

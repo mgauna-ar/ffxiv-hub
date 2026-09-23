@@ -97,6 +97,7 @@ void ObjectReader::invalidate_cache() {
     m_actor_cache.clear();
     m_last_party_sync = ipc::PartySyncPacket{};
     m_last_territory = 0;
+    m_territory_published = false;
 }
 
 } // namespace hub::payload
@@ -389,13 +390,17 @@ void ObjectReader::sync_party(meter::CombatantRegistry* registry) {
         ));
     }
 
-    // The party list is the only place the payload can see a territory id, so a
-    // zone change is only observable while grouped.
+    // The party list is the only place the payload can see a territory id. An
+    // empty list means solo, so the zone becomes unknown instead of staying on
+    // whatever duty the last party was in; a list with no territory tells nothing.
+    const bool territory_known = extracted.count == 0 || extracted.territory_type != 0;
     bool territory_changed = false;
     {
         std::lock_guard<std::mutex> lock(m_cache_mutex);
-        if (extracted.territory_type != 0 && extracted.territory_type != m_last_territory) {
+        if (territory_known &&
+            (!m_territory_published || extracted.territory_type != m_last_territory)) {
             m_last_territory = extracted.territory_type;
+            m_territory_published = true;
             territory_changed = true;
             // Nothing from the old zone's object table is coming back, and the
             // cache would otherwise keep every actor id seen this session.
@@ -405,7 +410,7 @@ void ObjectReader::sync_party(meter::CombatantRegistry* registry) {
 
     if (territory_changed && m_ring_buffer) {
         // in_combat_flag and control_command stay 0: this packet only announces
-        // the zone, it must not start or end an encounter on the app side.
+        // the zone (0 = unknown), it must not start or end an encounter on the app side.
         ipc::EncounterControlPacket ctrl{};
         ctrl.zone_id = extracted.territory_type;
         ctrl.timestamp_us = static_cast<uint64_t>(

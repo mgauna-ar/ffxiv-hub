@@ -31,7 +31,10 @@ It ends in one of four ways:
    Party HP is read from the party list on each sync (every 1.5 s); a death or a raise is
    republished to the desktop app so both sides see the wipe. A member whose HP has never
    been read is not counted as dead.
-3. **Zone change** — any in-progress pull is finalised and archived.
+3. **Zone change** — any in-progress pull is finalised and archived. The zone is read from
+   the party list, so solo play has no zone and pulls are filed under *Unknown zone*.
+   Going solo mid-pull (the party disbanding) is not a zone change: the pull carries on
+   and keeps the zone it started in.
 4. **Manual** — ended from the desktop app.
 
 Duration is measured to the *last combat action*, not to the moment the timeout fired, so

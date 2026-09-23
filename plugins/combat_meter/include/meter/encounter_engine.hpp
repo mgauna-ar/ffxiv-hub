@@ -152,6 +152,7 @@ private:
     void end_encounter_locked(EncounterEndReason reason, TimePoint now, uint64_t timestamp_us = 0);
     void reset_current_locked();
     void set_zone_locked(uint32_t zone_id, std::string zone_name, TimePoint now);
+    void apply_pending_zone_locked();
     [[nodiscard]] const EncounterSummary* latest_pull_locked() const noexcept;
 
     mutable std::recursive_mutex m_mutex;
@@ -165,6 +166,8 @@ private:
 
     uint32_t m_current_zone_id{0};
     std::string m_current_zone_name;
+    /// Zone went unknown mid-pull; applied once the pull is archived under its real zone.
+    bool m_zone_unknown_pending{false};
 
     TimePoint m_start_time{};
     TimePoint m_last_activity_time{};
