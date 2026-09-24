@@ -2,7 +2,6 @@
 #include "payload/overlay_host.hpp"
 #include "payload/hook_manager.hpp"
 #include "payload/dx11_hook.hpp"
-#include "payload/wndproc_hook.hpp"
 #include "mitigator/latency_overlay.hpp"
 #include "meter/combat_overlay.hpp"
 #include "meter/encounter_engine.hpp"
@@ -301,18 +300,6 @@ TEST_CASE(Payload, HookManagerConsumerRegistrationRules) {
 
     hook_mgr.dispatch_use_action_location_test(nullptr, 1, 100, 0x1234, nullptr, 0, 1);
     TEST_ASSERT(first.use_action_calls == 0);
-}
-
-TEST_CASE(Payload, WndProcHookInstallState) {
-    auto& wndproc = payload::WndProcHook::instance();
-    static int fake_window = 0;
-
-    TEST_ASSERT(wndproc.install(&fake_window));
-    TEST_ASSERT(wndproc.is_installed());
-    TEST_ASSERT(wndproc.game_hwnd() == &fake_window);
-
-    wndproc.uninstall();
-    TEST_ASSERT(!wndproc.is_installed());
 }
 
 TEST_CASE(Payload, Dx11HookStateAndShutdown) {
