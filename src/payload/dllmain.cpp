@@ -212,14 +212,14 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
 
         auto now = std::chrono::steady_clock::now();
 
-        // Loader-disconnect safety: suppress the latency HUD and stop applying
+        // Loader-disconnect safety: suppress both overlays and stop applying
         // mitigation write-backs while nobody is listening, without touching the
-        // user's dry_run or HUD visibility preference.
+        // user's dry_run or overlay visibility preferences.
         const bool connected = pipe_client->is_connected();
         if (connected != prev_connected) {
             hub::os::Logger::info(std::string("Pipe connection state changed -> ") + (connected ? "connected" : "disconnected"));
             latency_plugin->set_connected(connected);
-            // The meter keeps counting in-game but queues nothing for nobody.
+            // The meter keeps counting but draws and queues nothing.
             combat_plugin->set_connected(connected);
             if (connected) {
                 // Whoever just connected has none of the names, party, zone or

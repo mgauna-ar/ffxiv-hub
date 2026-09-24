@@ -764,6 +764,40 @@ TEST_CASE(Payload, DispatchesPluginMasterSwitch) {
     TEST_ASSERT(latency_overlay.should_render());
 }
 
+TEST_CASE(Payload, MeterOverlayHidesWhileDisconnected) {
+    // With the app closed nothing can hide or configure the meter overlay, so it
+    // goes too. The player's visibility choice, which the autosave persists,
+    // stays as it was.
+    meter::CombatPlugin combat;
+    meter::CombatOverlay overlay;
+    combat.set_overlay(&overlay);
+    TEST_ASSERT(overlay.should_render());
+
+    combat.set_connected(false);
+    TEST_ASSERT(!overlay.should_render());
+    TEST_ASSERT(overlay.is_visible());
+    config::JsonValue saved{config::JsonValue::ObjectType{}};
+    combat.serialize_config(saved);
+    TEST_ASSERT(saved["overlay_visible"].as_bool(false));
+
+    // Neither the master switch nor a config load brings it back while the app
+    // is away.
+    combat.set_enabled(false);
+    combat.set_enabled(true);
+    TEST_ASSERT(!overlay.should_render());
+    combat.deserialize_config(saved);
+    TEST_ASSERT(!overlay.should_render());
+
+    combat.set_connected(true);
+    TEST_ASSERT(overlay.should_render());
+
+    // Reconnecting does not override the master switch.
+    combat.set_enabled(false);
+    combat.set_connected(false);
+    combat.set_connected(true);
+    TEST_ASSERT(!overlay.should_render());
+}
+
 TEST_CASE(Payload, DispatchesVitalsTracking) {
     meter::CombatPlugin combat;
     combat.initialize();

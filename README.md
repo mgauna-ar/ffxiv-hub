@@ -190,8 +190,8 @@ FFXIV Hub runs entirely on your PC and stays within what the server already allo
 - **Nothing leaves your PC.** The only network traffic the Hub makes is an ICMP ping to
   the game server you are already connected to.
 - **It goes quiet when you close it.** With the Hub closed, the payload is dormant until
-  the Hub reconnects: the ping HUD hides, mitigation stops and nothing is queued for the
-  Hub. The in-game combat meter keeps counting and stays on screen.
+  the Hub reconnects: the overlays hide, mitigation stops and nothing is queued for the
+  Hub. The combat meter keeps counting in the background.
 
 **Keep it to yourself.** Square Enix takes action when a third-party tool is brought up
 in game or used against other players. So don't mention it in chat, and never use its
@@ -286,13 +286,13 @@ Folder* takes you to it.
 
 <br>
 
-Exit from the tray menu. The game keeps running, untouched: the ping HUD disappears and
-mitigation stops. The in-game combat meter stays up and keeps counting.
+Exit from the tray menu. The game keeps running, untouched: the overlays disappear and
+mitigation stops. The combat meter keeps counting in the background.
 
 The payload stays loaded for the rest of that game session by design. Unloading code
 from under a running DirectX pipeline is riskier than leaving it dormant. While the Hub
-is closed only the in-game combat meter keeps running, and the payload reconnects within
-a second when you open the Hub again.
+is closed it only keeps the combat meter counting, and reconnects within a second when
+you open the Hub again.
 
 To switch it off for the rest of the session, use **Hub Settings → Unload payload**. Its
 hooks become pass-throughs, and it stays off until the game restarts.

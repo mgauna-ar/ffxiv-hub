@@ -173,6 +173,7 @@ and source: hits, total, average, largest hit, and deaths caused.
   table, so the overlay and the desktop always agree.
 - The Job column shows a three-letter abbreviation. Hover it for the full job name, or
   *Limit Break* on the LB row.
+- It is hidden while the Hub is closed. The meter keeps counting in the background.
 
 <!-- ![The Combat Meter's Damage tab with the pull list rail](../../docs/images/combat-damage-tab.png) -->
 

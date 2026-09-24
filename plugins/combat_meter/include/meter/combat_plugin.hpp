@@ -58,10 +58,10 @@ public:
     void set_enabled(bool enabled) noexcept;
     [[nodiscard]] bool is_enabled() const noexcept { return m_enabled.load(std::memory_order_relaxed); }
 
-    /// Stops streaming while the desktop app is disconnected: a backlog queued for
-    /// nobody would reach the next app at once and be booked as a pull milliseconds
-    /// long. The in-game engine and overlay keep running.
-    void set_connected(bool connected) noexcept { m_connected.store(connected, std::memory_order_relaxed); }
+    /// Stops streaming and hides the overlay while the desktop app is disconnected:
+    /// a backlog queued for nobody would reach the next app at once and be booked as
+    /// a pull milliseconds long. The in-game engine keeps counting.
+    void set_connected(bool connected) noexcept;
 
     /// One vitals pass, from the payload's orchestration thread: each actor's death
     /// or raise first, then its status list if it changed, both applied locally and
@@ -115,6 +115,9 @@ private:
     [[nodiscard]] bool streaming() const noexcept {
         return m_ring_buffer != nullptr && m_connected.load(std::memory_order_relaxed);
     }
+
+    /// The overlay shows only while the plugin is on and the app is listening.
+    void refresh_overlay_suppression() noexcept;
 
     EncounterEngine m_engine;
     CombatConfig m_config;

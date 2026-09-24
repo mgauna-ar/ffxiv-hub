@@ -126,18 +126,25 @@ void CombatPlugin::update(double /*delta_seconds*/) {
 void CombatPlugin::set_enabled(bool enabled) noexcept {
     m_config.enabled = enabled;
     m_enabled.store(enabled, std::memory_order_relaxed);
-    // A disabled plugin must not leave its overlay painted over the game.
-    // Suppressed rather than hidden: overlay_visible is the player's choice and
-    // the autosave would persist a hide.
-    if (m_overlay) {
-        m_overlay->set_suppressed(!enabled);
-    }
+    refresh_overlay_suppression();
+}
+
+void CombatPlugin::set_connected(bool connected) noexcept {
+    m_connected.store(connected, std::memory_order_relaxed);
+    refresh_overlay_suppression();
 }
 
 void CombatPlugin::set_overlay(CombatOverlay* overlay) noexcept {
     m_overlay = overlay;
+    refresh_overlay_suppression();
+}
+
+void CombatPlugin::refresh_overlay_suppression() noexcept {
+    // A disabled plugin must not leave its overlay painted over the game, and
+    // without the app nothing can hide it. Suppressed rather than hidden:
+    // overlay_visible is the player's choice and the autosave would persist a hide.
     if (m_overlay) {
-        m_overlay->set_suppressed(!is_enabled());
+        m_overlay->set_suppressed(!is_enabled() || !m_connected.load(std::memory_order_relaxed));
     }
 }
 
@@ -272,7 +279,7 @@ void CombatPlugin::deserialize_config(const config::JsonValue& in) {
         m_overlay->set_metric(m_config.overlay_metric == 1 ? MeterMetric::Healing : MeterMetric::Damage);
         m_overlay->apply_config(m_config.overlay);
         // The master switch may have just changed.
-        m_overlay->set_suppressed(!m_config.enabled);
+        refresh_overlay_suppression();
     }
 }
 
