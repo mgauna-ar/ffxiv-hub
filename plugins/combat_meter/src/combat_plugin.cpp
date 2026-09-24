@@ -383,6 +383,14 @@ void CombatPlugin::on_status_tick(
         ).count()
     );
 
+    // Split like a direct heal, before either engine sees it. The tick moves no HP
+    // itself; its HP arrives in a separate packet the server may send either side.
+    uint32_t current_hp = 0;
+    uint32_t max_hp = 0;
+    if (is_heal && m_hp_resolver && m_hp_resolver(target_entity_id, current_hp, max_hp)) {
+        decoder::apply_overheal(tick, current_hp, max_hp);
+    }
+
     m_engine.process_status_tick(tick);
 
     if (streaming()) {

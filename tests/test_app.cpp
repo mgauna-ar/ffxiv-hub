@@ -123,6 +123,33 @@ TEST_CASE(PipeServer, VitalsPacketsReachTheirCallbacks) {
     TEST_ASSERT_EQ(first_offset, -1500);
 }
 
+TEST_CASE(PipeServer, StatusTickFromAnOlderPayload) {
+    // The payload stays loaded across app restarts, so a tick without the overheal
+    // field must still arrive rather than be dropped as too short.
+    ipc::PipeServer server;
+    uint32_t amount = 0;
+    uint32_t overheal = 1;
+    server.set_combat_tick_callback([&](const ipc::CombatStatusTickPayload& tick) {
+        amount = tick.damage_or_heal;
+        overheal = tick.overheal;
+    });
+
+    ipc::CombatStatusTickPayload tick{};
+    tick.target_id = 0x10000001;
+    tick.damage_or_heal = 2200;
+    tick.overheal = 700;
+    const auto* bytes = reinterpret_cast<const uint8_t*>(&tick);
+    TEST_ASSERT(server.process_raw_packet(ipc::serialize_packet(
+        PluginId::CombatMeter, MessageType::CombatStatusTick, 1,
+        std::span<const uint8_t>(bytes, ipc::COMBAT_STATUS_TICK_V1_SIZE))));
+    TEST_ASSERT_EQ(amount, 2200u);
+    TEST_ASSERT_EQ(overheal, 0u);
+
+    TEST_ASSERT(server.process_raw_packet(ipc::serialize_typed_packet(
+        PluginId::CombatMeter, MessageType::CombatStatusTick, 2, tick)));
+    TEST_ASSERT_EQ(overheal, 700u);
+}
+
 TEST_CASE(AppState, InitializationAndRegisteredPlugins) {
     app::AppState state;
     TEST_ASSERT(state.initialize());

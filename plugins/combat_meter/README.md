@@ -96,6 +96,12 @@ attack (a drain) is measured against the caster, not the enemy. Two heals landin
 same target before the game applies either one both see the same missing HP, so overheal
 is slightly under-counted in that case.
 
+HoT ticks are split the same way as they land. A tick carries no HP of its own, and the
+game may update the target's HP just before or just after it. A tick on a target already
+at full counts as overheal either way. When the update comes first, a tick landing while
+the target is missing less than two ticks' worth of HP can count up to one tick more
+overheal than it should.
+
 ### Limit Break
 
 The game reports the casting player as the source of a Limit Break, so attributing it by
@@ -116,7 +122,8 @@ never toward any individual's damage, DPS or share.
 - **Enemy damage to players** is tracked as damage taken on the target, and never added to
   raid DPS. Each hit of an AoE is booked on the target it actually hit, so a self-centred
   AoE never lands on its caster and a raidwide never lands on the boss.
-- **Crit and direct hit** come from the game's severity bits (`0x20` and `0x40`) only.
+- **Crit and direct hit** come from the game's own flags only: `0x20` and `0x40` on a
+  hit's severity byte, and `0x20` on the byte after it for a heal. Heals never direct hit.
 
 ---
 

@@ -1,4 +1,5 @@
 #include "common/ipc/pipe_server.hpp"
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 
@@ -169,9 +170,11 @@ bool PipeServer::process_raw_packet(std::span<const uint8_t> data) {
                 }
                 break;
             case MessageType::CombatStatusTick:
-                if (payload_span.size() >= sizeof(CombatStatusTickPayload) && m_on_combat_tick) {
+                // A payload loaded before this app may send the shorter tick; its
+                // missing overheal reads as 0.
+                if (payload_span.size() >= COMBAT_STATUS_TICK_V1_SIZE && m_on_combat_tick) {
                     CombatStatusTickPayload payload{};
-                    std::memcpy(&payload, payload_span.data(), sizeof(payload));
+                    std::memcpy(&payload, payload_span.data(), std::min(payload_span.size(), sizeof(payload)));
                     m_on_combat_tick(payload);
                 }
                 break;

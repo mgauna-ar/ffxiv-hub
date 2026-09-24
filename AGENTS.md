@@ -181,6 +181,7 @@ These two live here rather than in the meter's own file because the payload and 
   - **Only long-lived threads may push.** A lane stays bound to its thread for the queue's life. The reader thread is recreated on every reconnect, so a command response has to be pushed from the orchestration thread. Once all four lanes are taken, a further thread's packets are dropped and counted.
   - **Never share a raw `SpscRingBuffer` between two producers.** They write the same slot, lose or tear packets, and race on the `std::vector` in it. `IPC.PacketRingBufferConcurrentProducers` under the `tsan-check` run catches that.
 - **Exact Binary Struct Packing**: All IPC structs use `#pragma pack(push, 1)` and are verified with `static_assert(sizeof(...) == N)`.
+- **A Payload Grows At Its End**: The payload stays loaded in the game across app restarts, so the app can be newer than the payload it talks to. A new field goes at the end of its struct, and the app accepts the old size with that field zeroed; an older app reads the fields it knows and ignores the rest. `CombatStatusTickPayload::overheal` was added this way, with `COMBAT_STATUS_TICK_V1_SIZE` as the old size.
 
 ### 4. Hook Lifecycle, DirectX 11 & OS Teardown Safety
 - **Persistent In-Game Payload**: The payload DLL remains resident in `ffxiv_dx11.exe` for the life of the game session once injected.

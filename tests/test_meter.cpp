@@ -94,7 +94,7 @@ TEST_CASE(MeterDecoder, HealingAndMissAndBlocked) {
     // Heal
     entries[0].effect_type = 0x04;
     entries[0].value = 18000;
-    entries[0].hit_severity = 0x20; // Crit heal (0x20)
+    entries[0].param = 0x20; // A heal's crit is in byte 2
 
     auto packets = decoder::decode_action_effects(2001, header, entries.data(), nullptr);
     TEST_ASSERT_EQ(packets.size(), 1u);
@@ -139,6 +139,33 @@ TEST_CASE(MeterDecoder, HealingAndMissAndBlocked) {
     TEST_ASSERT_EQ(packets[0].effect_type, static_cast<uint16_t>(EffectType::Parried));
     TEST_ASSERT_EQ(packets[0].damage, 6200u);
     TEST_ASSERT((packets[0].hit_flags & HitFlags::Parried) != 0);
+}
+
+TEST_CASE(MeterDecoder, HealCritComesFromTheParamByte) {
+    // The client prints "Critical!" for a heal on byte 2's 0x20 and reads byte 1 only
+    // for damage, so the old byte-1 read never counted a heal crit.
+    hub::game::ActionEffectHeader header{};
+    header.animation_target_id = 0x1000;
+    header.action_id = 120; // Cure
+    header.num_targets = 1;
+
+    std::array<hub::game::ActionEffectEntry, 8> entries{};
+    entries[0].effect_type = 0x04;
+    entries[0].value = 18000;
+    entries[0].hit_severity = 0x60;
+    auto packets = decoder::decode_action_effects(2001, header, entries.data(), nullptr);
+    TEST_ASSERT_EQ(packets.size(), 1u);
+    TEST_ASSERT_EQ(packets[0].severity, static_cast<uint8_t>(HitSeverity::Normal));
+    TEST_ASSERT((packets[0].hit_flags & HitFlags::Crit) == 0);
+    TEST_ASSERT((packets[0].hit_flags & HitFlags::DirectHit) == 0);
+
+    // Damage keeps both in byte 1; its byte 2 is attack type and element.
+    entries[0] = {};
+    entries[0].effect_type = 0x03;
+    entries[0].value = 9000;
+    entries[0].param = 0x20;
+    packets = decoder::decode_action_effects(2001, header, entries.data(), nullptr);
+    TEST_ASSERT_EQ(packets[0].severity, static_cast<uint8_t>(HitSeverity::Normal));
 }
 
 TEST_CASE(MeterDecoder, MultiTargetAoEDistribution) {
@@ -1284,6 +1311,46 @@ TEST_CASE(MeterAccumulator, DotTicksDoNotDiluteCritRate) {
     TEST_ASSERT_NEAR(blm->hits.crit_rate(), 100.0, 0.01);
 }
 
+TEST_CASE(MeterAccumulator, HealTickOverhealAccounting) {
+    MetricsAccumulator acc;
+    CombatantRegistry reg;
+    reg.register_actor(10, "White Mage", Job::WHM, 0, ActorType::Player);
+    reg.register_actor(20, "Warrior", Job::WAR, 0, ActorType::Player);
+
+    hub::ipc::StatusTickPacket tick{};
+    tick.source_id = 10;
+    tick.target_id = 20;
+    tick.status_id = 158; // Regen
+    tick.effect_type = static_cast<uint8_t>(EffectType::Heal);
+    tick.damage_or_heal = 2000;
+    tick.overheal = 1500;
+    acc.record_status_tick(tick, reg);
+
+    tick.overheal = 2000; // Landed on a target already at full
+    acc.record_status_tick(tick, reg);
+
+    const auto* whm = acc.find_stats(10);
+    TEST_ASSERT(whm != nullptr);
+    TEST_ASSERT_EQ(whm->total_healing, 4000u);
+    TEST_ASSERT_EQ(whm->effective_healing, 500u);
+    TEST_ASSERT_EQ(whm->overhealing, 3500u);
+    TEST_ASSERT_EQ(acc.total_effective_healing(), 500u);
+    TEST_ASSERT_EQ(acc.total_overhealing(), 3500u);
+
+    const auto& regen = whm->actions.at(158 | STATUS_ACTION_KEY_OFFSET);
+    TEST_ASSERT_EQ(regen.effective_healing, 500u);
+    TEST_ASSERT_EQ(regen.overhealing, 3500u);
+    TEST_ASSERT_EQ(regen.min_heal, 0u);
+    TEST_ASSERT_EQ(regen.max_heal, 500u);
+    TEST_ASSERT_EQ(regen.heal_hit_counts.tick_hits, 2u);
+
+    // Only the tick that landed reaches the recap, as with direct heals.
+    const auto* recap = acc.recap_for(20);
+    TEST_ASSERT(recap != nullptr);
+    TEST_ASSERT_EQ(recap->size(), 1u);
+    TEST_ASSERT_EQ(recap->at(0).amount, 500u);
+}
+
 TEST_CASE(MeterAccumulator, StatusIdDoesNotCollideWithActionId) {
     // Statuses and actions are separate id spaces, so sharing one map merged a DoT
     // into an unrelated ability's row.
@@ -2078,6 +2145,34 @@ TEST_CASE(MeterDecoder, OverhealSplitsAgainstMissingHp) {
     TEST_ASSERT_EQ(hit.overheal, 0u);
 }
 
+TEST_CASE(MeterDecoder, TickOverhealSplitsAgainstMissingHp) {
+    hub::ipc::StatusTickPacket tick{};
+    tick.effect_type = static_cast<uint8_t>(EffectType::Heal);
+    tick.damage_or_heal = 20000;
+
+    decoder::apply_overheal(tick, 95000, 100000);
+    TEST_ASSERT_EQ(tick.damage_or_heal, 20000u);
+    TEST_ASSERT_EQ(tick.overheal, 15000u);
+
+    // A target already at full takes none of it.
+    hub::ipc::StatusTickPacket full = tick;
+    full.overheal = 0;
+    decoder::apply_overheal(full, 100000, 100000);
+    TEST_ASSERT_EQ(full.overheal, 20000u);
+
+    // Unknown HP or a DoT tick is left alone.
+    hub::ipc::StatusTickPacket unknown = tick;
+    unknown.overheal = 0;
+    decoder::apply_overheal(unknown, 0, 0);
+    TEST_ASSERT_EQ(unknown.overheal, 0u);
+
+    hub::ipc::StatusTickPacket dot{};
+    dot.effect_type = static_cast<uint8_t>(EffectType::Damage);
+    dot.damage_or_heal = 20000;
+    decoder::apply_overheal(dot, 95000, 100000);
+    TEST_ASSERT_EQ(dot.overheal, 0u);
+}
+
 TEST_CASE(MeterPlugin, HealsAreSplitIntoEffectiveAndOverhealBeforeRecording) {
     hub::ipc::PacketRingBuffer ring;
     CombatPlugin plugin;
@@ -2128,6 +2223,52 @@ TEST_CASE(MeterPlugin, HealsAreSplitIntoEffectiveAndOverhealBeforeRecording) {
         TEST_ASSERT_EQ(pkt.overheal, 15000u);
     }
     TEST_ASSERT_TRUE(saw_heal);
+    plugin.shutdown();
+}
+
+TEST_CASE(MeterPlugin, HealTicksAreSplitBeforeRecording) {
+    // Every HoT tick used to count as fully effective, whatever the target's HP.
+    hub::ipc::PacketRingBuffer ring;
+    CombatPlugin plugin;
+    plugin.initialize();
+    plugin.set_ring_buffer(&ring);
+    plugin.set_hp_resolver([](uint32_t entity_id, uint32_t& current_hp, uint32_t& max_hp) {
+        if (entity_id != 100) return false;
+        current_hp = 95000;
+        max_hp = 100000;
+        return true;
+    });
+
+    // Open the pull with a hit, then a Regen tick on a player only 5k down.
+    hub::game::ActionEffectHeader hit{};
+    hit.animation_target_id = 0x40001;
+    hit.action_id = 31;
+    hit.num_targets = 1;
+    std::array<hub::game::ActionEffectEntry, 8> hit_entries{};
+    hit_entries[0].effect_type = 0x03;
+    hit_entries[0].value = 25000;
+    plugin.on_receive_action_effect(777, nullptr, &hit, hit_entries.data(), nullptr);
+
+    plugin.on_status_tick(100, 777, 158, 20000, /*is_heal=*/true);
+
+    const auto summary = plugin.engine().current_summary();
+    TEST_ASSERT_EQ(summary.total_effective_healing, 5000u);
+    TEST_ASSERT_EQ(summary.total_overhealing, 15000u);
+    TEST_ASSERT_EQ(summary.total_healing, 20000u);
+
+    // The app's engine gets the same split.
+    std::vector<uint8_t> frame;
+    bool saw_tick = false;
+    while (ring.pop(frame)) {
+        const auto header = hub::ipc::deserialize_header(frame);
+        if (!header || header->message_type != static_cast<uint16_t>(hub::MessageType::CombatStatusTick)) continue;
+        hub::ipc::StatusTickPacket pkt{};
+        std::memcpy(&pkt, frame.data() + sizeof(hub::ipc::PacketHeader), sizeof(pkt));
+        saw_tick = true;
+        TEST_ASSERT_EQ(pkt.damage_or_heal, 20000u);
+        TEST_ASSERT_EQ(pkt.overheal, 15000u);
+    }
+    TEST_ASSERT_TRUE(saw_tick);
     plugin.shutdown();
 }
 

@@ -218,8 +218,8 @@ static_assert(sizeof(ActionEffectHeader) == 0x28, "ActionEffectHeader must be 0x
 /// Individual effect entry inside an action packet (8 bytes)
 struct ActionEffectEntry {
     uint8_t effect_type{0};                  // 0x00: 0x01=Miss, 0x03=Damage, 0x04=Heal, 0x05=Blocked, 0x06=Parried, 0x0A=Buff
-    uint8_t hit_severity{0};                 // 0x01: Bit 5 (0x20)=Crit, Bit 6 (0x40)=Direct Hit, 0x60=Crit DH
-    uint8_t param{0};                        // 0x02: Damage modifier / element flags
+    uint8_t hit_severity{0};                 // 0x01: Damage, blocked, parried: 0x20=Crit, 0x40=Direct Hit
+    uint8_t param{0};                        // 0x02: Damage: attack type (low nibble), element (high). Heal: 0x20=Crit
     uint8_t bonus_percent{0};                // 0x03: Multiplier / combo flags
     uint8_t high_byte{0};                    // 0x04: High byte of 24-bit value when flags & 0x40
     uint8_t flags{0};                        // 0x05: Bit 6 (0x40) indicates 24-bit extended value

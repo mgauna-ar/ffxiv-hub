@@ -149,8 +149,12 @@ struct CombatStatusTickPayload {
     uint8_t  effect_type{0};
     uint8_t  is_crit{0};
     uint64_t timestamp_us{0};
+    uint32_t overheal{0};         // Part of damage_or_heal a HoT tick's target had no room for
 };
-static_assert(sizeof(CombatStatusTickPayload) == 24, "CombatStatusTickPayload must be 24 bytes");
+static_assert(sizeof(CombatStatusTickPayload) == 28, "CombatStatusTickPayload must be 28 bytes");
+/// What a payload from before `overheal` sends. It can still be loaded in the game.
+constexpr size_t COMBAT_STATUS_TICK_V1_SIZE = 24;
+static_assert(offsetof(CombatStatusTickPayload, overheal) == COMBAT_STATUS_TICK_V1_SIZE, "overheal must follow the old layout");
 
 /// 0x0204: Combat Meter Actor Info Packet
 struct CombatActorInfoPayload {

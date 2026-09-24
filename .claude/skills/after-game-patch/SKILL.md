@@ -215,6 +215,24 @@ reset and the zone-init setter. Confirm:
 If the client now writes `0xE0000000` while a character is in the world, the overlays
 vanish there. Fix `ObjectReader::in_lobby()` and that section before shipping the patch.
 
+## 4e. Re-check the effect entry bits
+
+The decoder reads crit and direct hit from fixed bits of each `ActionEffectEntry`, as
+recorded in
+[How the client reads an effect entry](../../../plugins/combat_meter/AGENTS.md#how-the-client-reads-an-effect-entry).
+A patch can move them without breaking a signature. From the function
+`RECEIVE_ACTION_EFFECT_*` resolves to, follow the call that takes the header, effect
+blocks and target list down to the per-effect handler, the one switching on the entry's
+first byte, and confirm:
+
+- The heal case (type 4) picks LogMessage 520 ("Critical!") over 519 on `byte[2] & 0x20`.
+- The damage case (type 3) picks its "Critical!" and "Direct hit!" rows on `byte[1]`'s
+  `0x20` and `0x40`.
+
+Read the row texts from the LogMessage sheet with `tools/xivdata`, since the same patch
+can renumber them. If a bit moved, update the decoder's constants, the `ActionEffectEntry`
+comments and that section together.
+
 ## 5. Verify
 
 ```bash

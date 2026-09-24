@@ -1,6 +1,7 @@
 #include "meter/action_decoder.hpp"
 #include <chrono>
 #include <algorithm>
+#include <optional>
 
 namespace hub::meter::decoder {
 
@@ -9,9 +10,20 @@ namespace {
     constexpr uint8_t EFFECT_FLAG_EXTENDED_VALUE = 0x40; // high_byte holds bits 16-23 of the value
     constexpr uint8_t EFFECT_FLAG_ON_SOURCE = 0x80;      // lands on the source, e.g. a drain's self-heal
 
-    /// ActionEffectEntry::hit_severity bits for damage.
+    /// ActionEffectEntry::hit_severity bits for damage, blocked and parried hits.
     constexpr uint8_t SEVERITY_CRIT = 0x20;
     constexpr uint8_t SEVERITY_DIRECT_HIT = 0x40;
+    /// ActionEffectEntry::param bit for a heal, which never direct hits.
+    constexpr uint8_t HEAL_PARAM_CRIT = 0x20;
+
+    /// The part of `heal` the target had no room for, or nothing when its HP is unknown.
+    std::optional<uint32_t> overheal_of(uint32_t heal, uint32_t current_hp, uint32_t max_hp) noexcept {
+        if (max_hp == 0 || current_hp > max_hp) {
+            return std::nullopt;
+        }
+        const uint32_t missing = max_hp - current_hp;
+        return heal > missing ? heal - missing : 0;
+    }
 }
 
 size_t decode_action_effects(
@@ -112,11 +124,18 @@ size_t decode_action_effects(
                 continue;
             }
 
-            if (entry.hit_severity & SEVERITY_CRIT) {
-                flags |= HitFlags::Crit;
-            }
-            if (entry.hit_severity & SEVERITY_DIRECT_HIT) {
-                flags |= HitFlags::DirectHit;
+            // The client reads a heal's crit from the next byte, and neither on a miss.
+            if (effect_type == EffectType::Heal) {
+                if (entry.param & HEAL_PARAM_CRIT) {
+                    flags |= HitFlags::Crit;
+                }
+            } else if (effect_type != EffectType::Miss) {
+                if (entry.hit_severity & SEVERITY_CRIT) {
+                    flags |= HitFlags::Crit;
+                }
+                if (entry.hit_severity & SEVERITY_DIRECT_HIT) {
+                    flags |= HitFlags::DirectHit;
+                }
             }
 
             const HitSeverity severity = hit_flags_to_severity(flags);
@@ -146,13 +165,23 @@ size_t decode_action_effects(
 }
 
 void apply_overheal(ipc::CombatActionPacket& packet, uint32_t current_hp, uint32_t max_hp) noexcept {
-    if (static_cast<EffectType>(packet.effect_type) != EffectType::Heal || max_hp == 0 || current_hp > max_hp) {
+    if (static_cast<EffectType>(packet.effect_type) != EffectType::Heal) {
         return;
     }
     const uint32_t heal = packet.effective_heal + packet.overheal;
-    const uint32_t missing = max_hp - current_hp;
-    packet.overheal = (heal > missing) ? heal - missing : 0;
-    packet.effective_heal = heal - packet.overheal;
+    if (const auto over = overheal_of(heal, current_hp, max_hp)) {
+        packet.overheal = *over;
+        packet.effective_heal = heal - *over;
+    }
+}
+
+void apply_overheal(ipc::StatusTickPacket& tick, uint32_t current_hp, uint32_t max_hp) noexcept {
+    if (static_cast<EffectType>(tick.effect_type) != EffectType::Heal) {
+        return;
+    }
+    if (const auto over = overheal_of(tick.damage_or_heal, current_hp, max_hp)) {
+        tick.overheal = *over;
+    }
 }
 
 std::vector<ipc::CombatActionPacket> decode_action_effects(

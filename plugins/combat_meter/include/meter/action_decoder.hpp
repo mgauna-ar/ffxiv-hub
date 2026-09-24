@@ -52,4 +52,10 @@ size_t decode_action_effects(
  */
 void apply_overheal(ipc::CombatActionPacket& packet, uint32_t current_hp, uint32_t max_hp) noexcept;
 
+/**
+ * @brief Splits a HoT tick the same way: `damage_or_heal` keeps the full tick, and
+ * `overheal` gets the part the target had no room for.
+ */
+void apply_overheal(ipc::StatusTickPacket& tick, uint32_t current_hp, uint32_t max_hp) noexcept;
+
 } // namespace hub::meter::decoder

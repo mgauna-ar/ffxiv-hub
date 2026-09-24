@@ -62,5 +62,6 @@ example "entry i goes to slot i", which is exactly the kind of fact premises dep
   the relevant `AGENTS.md`, with the patch it was read from. The mitigator's lives in
   "How the client dispatches an action". The party list and status lists live in the
   combat meter's "How the client fills the party list" and "How the client keeps status
-  lists". The lobby marker lives in the root `AGENTS.md`'s "How the client marks the
-  lobby".
+  lists", ticks and effect entries in its "How the client reports DoT and HoT ticks" and
+  "How the client reads an effect entry". The lobby marker lives in the root
+  `AGENTS.md`'s "How the client marks the lobby".

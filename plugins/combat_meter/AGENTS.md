@@ -17,7 +17,7 @@ captured log lines. Preserve them when modifying the registry, accumulator or en
 - **Effect Blocks Map To `targets[t]`**: Every effect block, slot 0 included, belongs to the matching entry of the target list; `animation_target_id` is only the fallback for a null list or empty slot. A self-centred AoE animates on its caster.
 - **Safe Duration Floor (Anti-Division-by-Zero)**: Combat duration must be clamped to `std::max(duration_seconds, 1.0)`.
 - **Accurate Overheal Accounting**: HPS is strictly `effective_healing / duration`. Total healing is `effective_healing + overhealing`. Overheal percentage evaluates against total healing without division-by-zero when healing is zero.
-- **Overheal Is Split Before Anything Records It**: The decoder emits a heal as all effective. `CombatPlugin` splits it with `decoder::apply_overheal` against the target's pre-heal HP from its `HpResolver` *before* `process_action` and the ring-buffer push, so the in-game and desktop engines hold identical numbers. Nothing downstream may re-split. A heal flagged on-source (`flags & 0x80`) targets the caster.
+- **Overheal Is Split Before Anything Records It**: The decoder emits a heal as all effective. `CombatPlugin` splits it with `decoder::apply_overheal` against the target's pre-heal HP from its `HpResolver` *before* `process_action` and the ring-buffer push, so the in-game and desktop engines hold identical numbers. A HoT tick is split the same way in `on_status_tick`: `damage_or_heal` stays the full tick and `CombatStatusTickPayload::overheal` carries the part that overhealed. Nothing downstream may re-split. A heal flagged on-source (`flags & 0x80`) targets the caster. The client applies an action's HP after its effect, which makes the pre-heal reading hold; a tick's HP comes in a separate packet whose order the server decides. See "How the client reads an effect entry" and "How the client reports DoT and HoT ticks".
 - **Party Wipe State Invariance**: A wipe triggers only when all tracked synced party members are confirmed dead (`party_dead == m_party_members.size()`). A surviving player or revive cancels the wipe. *Confirmed dead* is `max_hp > 0 && current_hp == 0`: an unread HP proves nothing, and `register_actor` keeps a real 0 as 0. Solo, the party is the local player alone: with no synced party the check reads `m_local_player_id` and nothing else. Counting every player ever registered let a former party member, a stranger or a pet last read alive block every solo wipe. With no local id the old all-players count stands, pets excluded.
 - **HP Must Keep Flowing**: Wipe detection is only as live as the HP it reads. `ObjectReader::sync_party` calls `update_hp` on every sync, and the actor cache's dedupe carries an alive/dead bit so a death or raise republishes `CombatActorInfo` to the app. Taking HP out of that path, or out of the dedupe entirely, silently turns every wipe into an inactivity end. Solo the party list is empty, so `sync_party` reads the local player's own object instead and publishes it through the same dedupe.
 - **7.0s Inactivity Timeout & Duration Accuracy**: Encounters auto-split after 7.0 seconds without combat activity. Duration is calculated from the time of the last combat activity (`m_last_activity_time - m_start_time`), not inflated by the 7.0s timeout window. The same trim applies to wipes and zone changes, which are also detected after the fact; only an explicit `Manual` end takes the full elapsed time.
@@ -28,6 +28,7 @@ captured log lines. Preserve them when modifying the registry, accumulator or en
 - **`0xE0000000` Is A Placeholder, Not An Actor**: `hub::game::NO_ENTITY_ID` fills the owner slot of an ownerless actor and the target slot of an effect that hit nothing - 891 such ability lines in one Zeromus EX clear. It is never a source, never a Limit Break, and must never open a combatant row; guard both slots with `is_real_entity_id`.
 - **Mitigated Hits Are Still Damage**: `Blocked` and `Parried` effects carry a damage value and go through `record_damage_hit` like a full hit; only the block/parry counters are extra.
 - **Ticks Carry No Severity**: `ProcessHotDot` reports no crit flag, so DoT/HoT ticks increment `HitCounts::tick_hits` and stay out of `rated_hits()`, the denominator for crit/DH/CDH rates. Heal hits are counted in `heal_hit_counts` for the same reason.
+- **A Heal's Crit Is Byte 2**: Damage, blocked and parried hits keep crit and direct hit in `hit_severity` (byte 1, `0x20` and `0x40`). A heal keeps its crit in `param` (byte 2, `0x20`) and never direct hits; the client reads a heal's byte 1 only to pick a message. Reading byte 1 for heals counted no heal crit at all, so every heal crit rate read 0%. See "How the client reads an effect entry".
 - **Only Effect Kinds 3 And 4 Are Ticks**: `ProcessHotDot` also carries MP (11) and job gauge (14) gains, and its last argument is an attack type or a flag, always `0` on the classic tick category. The detour classifies by kind alone through `hot_dot_is_heal`: 3 is damage, 4 is healing, and anything else is dropped before a consumer sees it. Deciding by that last argument booked every classic-category DoT tick as healing, and MP and Esprit gains with it. See "How the client reports DoT and HoT ticks".
 - **Friendly Raid Damage Isolation**: Enemy incoming damage to players is tracked under `damage_taken` on the target. Enemy damage must never be added to `m_total_damage` or raid DPS.
 - **Only Landed Damage Opens An Encounter**: `EncounterEngine::starts_encounter` gates the Idle -> InCombat transition on a `Damage`, `Blocked` or `Parried` effect carrying a non-zero damage value. Healing used to qualify, so a prepull cure opened a pull whose clock was already seconds old by the first hit, with the healer ranked in a table nobody had attacked in yet. Buffs, debuffs, misses and zero-damage effects are not a pull starting either. The rule governs the *start* only: once InCombat, a heal is recorded and refreshes `m_last_activity_time` like any other activity.
@@ -100,6 +101,34 @@ Read from `ffxiv_dx11.exe` on 2026-09-22 with `tools/inspect_exe.py` (see the
   (`0x140b26dd0`) bounds the index by `MemberCount`. Most client checks read the count as
   "> 1 means grouped".
 
+## How the client reads an effect entry
+
+Read from `ffxiv_dx11.exe` on 2026-09-24 with `tools/inspect_exe.py`, and the LogMessage
+sheet with `tools/xivdata`. Addresses are for that build only; re-check after a patch.
+
+- **Effects are queued, then run.** `ReceiveActionEffect` (`0x140902eb0`) passes the
+  header, effect blocks and target list through `0x140902d80` to `0x1409011b0`, which
+  copies each target's eight entries unchanged into a 32-slot queue of `0x78`-byte
+  records (`0x140901b60`). Running a record (`0x140901f40`) calls the per-effect handler
+  `0x1408ffbf0` once per entry, which switches on the entry's first byte.
+- **Byte 1 is the damage severity.** The damage case (`0x1408ffd52`) picks LogMessage
+  505/511 ("Critical!") on `0x20`, 447/448 ("Direct hit!") on `0x40`, and 450/451
+  ("Critical direct hit!") on both. The hit-effect function `0x1408fec50`, run for each
+  entry just before, plays the crit effect on the same `0x20` for damage, blocked and
+  parried hits. The battle log never shows a crit on a block or a parry.
+- **A heal's crit is byte 2.** The heal case (`0x1409002cb`) picks LogMessage 520
+  ("Critical! … recover(s) … HP.") over 519 on `byte[2] & 0x20`, and the hit-effect
+  function's heal case (`0x1408ff3de`) plays its crit effect on the same bit. A heal's
+  byte 1 is only compared with 1 and 3, which pick other message rows. Nothing reads a
+  direct hit on a heal.
+- **For damage, byte 2 is attack type and element.** Its low nibble goes through
+  `0x1408e0160`, the mapping `0x605` ticks use for their last argument, and the high
+  nibble picks the element's hit effect.
+- **HP moves when the effect result arrives.** The effect-result handlers (HP stores at
+  `0x140b38ffb` and `0x140b39397`) find the queued record by sequence and target
+  (`0x140901dc0`), run it (`0x140902150`), and only then write the target's HP. The HP
+  read when `ReceiveActionEffect` fires is the pre-heal value the overheal split needs.
+
 ## How the client reports DoT and HoT ticks
 
 Read from `ffxiv_dx11.exe` on 2026-09-24 with `tools/inspect_exe.py`. Addresses are for
@@ -114,10 +143,21 @@ that build only; re-check after a patch.
   - `0x605`: kind 3, amount = param2, source = param3, last argument = param4.
 - **The kind is the game's effect numbering.** The function handles 3 (damage), 4
   (healing), 11 (MP gains such as Auto-ether and Sole Survivor), 14 (job gauge, such as
-  Dancer's Esprit and Fan Dance) and 30. Only 3 and 4 move HP.
+  Dancer's Esprit and Fan Dance) and 30. Only 3 and 4 are damage or healing.
 - **The last argument is not a direction.** It is 0 for every `0x17` packet. On `0x605`
   it is an attack type: `0x1408e0160` maps 1-4 to one damage kind, 5 to another, and 0
   or anything else to a third, and a negative value skips it. On `0x604` a few HoT
   statuses use it to pick their flytext.
 - **Amount and source are always the fifth and sixth arguments,** whichever packet
   called, and the second is the target Character. The detour forwards exactly those.
+- **A tick moves no HP itself.** `ProcessHotDot` only prints the log line and flytext and
+  plays a hit effect, and none of the three packets carries HP. The target's HP arrives
+  in the HP/MP update packet (handler `0x140b38040`: `u32` HP, `u16` MP, `u16` GP, also
+  copied into the party list), a status list or an effect result. Whether the server
+  sends it before or after the tick is not in the client.
+- **The tick split holds up under either order.** `on_status_tick` reads the target's HP
+  at the hook, like an action. A tick on a target already at full reads full HP either
+  way and is all overheal, which is right. If the HP update comes after the tick, the
+  split is exact. If it comes first, a tick landing while the target is missing less than
+  two ticks' worth of HP books up to one tick of extra overheal. Counting every tick as
+  fully effective was off by all of its overheal.

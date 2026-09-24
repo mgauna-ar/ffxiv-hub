@@ -303,11 +303,17 @@ void MetricsAccumulator::record_status_tick(const ipc::StatusTickPacket& packet,
             }
         }
     } else if (effect == EffectType::Heal) {
+        // Split in-game like a direct heal. Min, max and the recap use what landed.
+        const uint32_t over_heal = std::min(packet.overheal, packet.damage_or_heal);
+        const uint32_t eff_heal = packet.damage_or_heal - over_heal;
+
         stats.total_healing += packet.damage_or_heal;
-        stats.effective_healing += packet.damage_or_heal;
+        stats.effective_healing += eff_heal;
+        stats.overhealing += over_heal;
         if (source_friendly) {
             m_total_healing += packet.damage_or_heal;
-            m_total_effective_healing += packet.damage_or_heal;
+            m_total_effective_healing += eff_heal;
+            m_total_overhealing += over_heal;
         }
 
         stats.heal_hit_counts.tick_hits++;
@@ -321,19 +327,20 @@ void MetricsAccumulator::record_status_tick(const ipc::StatusTickPacket& packet,
         act.hit_count++;
         act.heal_hits++;
         act.total_healing += packet.damage_or_heal;
-        act.effective_healing += packet.damage_or_heal;
-        if (act.heal_hits == 1 || packet.damage_or_heal < act.min_heal) {
-            act.min_heal = packet.damage_or_heal;
+        act.effective_healing += eff_heal;
+        act.overhealing += over_heal;
+        if (act.heal_hits == 1 || eff_heal < act.min_heal) {
+            act.min_heal = eff_heal;
         }
-        if (packet.damage_or_heal > act.max_heal) {
-            act.max_heal = packet.damage_or_heal;
+        if (eff_heal > act.max_heal) {
+            act.max_heal = eff_heal;
         }
         act.heal_hit_counts.tick_hits++;
 
-        if (is_friendly_target(packet.target_id, registry)) {
+        if (eff_heal > 0 && is_friendly_target(packet.target_id, registry)) {
             record_taken(packet.target_id, RecapSample{
                 packet.timestamp_us, raw_source_id, action_key,
-                packet.damage_or_heal, RecapKind::HotTick, 0}, false);
+                eff_heal, RecapKind::HotTick, 0}, false);
         }
     }
 }
