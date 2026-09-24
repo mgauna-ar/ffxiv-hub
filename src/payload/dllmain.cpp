@@ -204,20 +204,16 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
     uint32_t heartbeat_sequence = 0;
     size_t last_combatant_count = 0;
     bool prev_connected = pipe_client->is_connected();
-    bool latency_overlay_prev_visible = latency_overlay->is_visible();
     latency_plugin->set_connected(prev_connected);
-    if (!prev_connected) {
-        latency_overlay->set_visible(false);
-    }
 
     while (!g_shutdown_requested.load() && !hub::payload::Dx11Hook::is_shutting_down()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
         auto now = std::chrono::steady_clock::now();
 
-        // Loader-disconnect safety: hide the latency HUD and stop applying
+        // Loader-disconnect safety: suppress the latency HUD and stop applying
         // mitigation write-backs while nobody is listening, without touching the
-        // user's configured dry_run preference. Restore prior visibility on reconnect.
+        // user's dry_run or HUD visibility preference.
         const bool connected = pipe_client->is_connected();
         if (connected != prev_connected) {
             hub::os::Logger::info(std::string("Pipe connection state changed -> ") + (connected ? "connected" : "disconnected"));
@@ -228,14 +224,6 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
                 // suppress repeats, so without this they would never be sent again.
                 object_reader->invalidate_cache();
                 combat_plugin->invalidate_published_vitals();
-            }
-            if (!connected) {
-                latency_overlay_prev_visible = latency_overlay->is_visible();
-                latency_overlay->set_visible(false);
-            } else {
-                // Never resurrect the HUD of a plugin the user switched off.
-                latency_overlay->set_visible(latency_overlay_prev_visible &&
-                                            latency_plugin->is_plugin_enabled());
             }
             prev_connected = connected;
         }
@@ -288,11 +276,13 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
         combat_plugin->update(0.05);
         latency_plugin->update(0.05);
 
-        // Update latency overlay with smoothed RTT
+        // Update latency overlay with smoothed RTT and what mitigation is doing
         latency_overlay->update_rtt(
             latency_plugin->mitigator().get_rtt_tracker().get_smoothed_rtt_ms(),
             latency_plugin->mitigator().get_rtt_tracker().sample_count() > 0
         );
+        const auto mitigation_cfg = latency_plugin->mitigator().get_config();
+        latency_overlay->set_mitigation_mode(mitigation_cfg.enabled, mitigation_cfg.dry_run);
 
         // Report combat-meter activity so an empty overlay can be told apart from
         // an overlay that never received any action data.

@@ -192,6 +192,13 @@ TEST_CASE(AppState, MitigatorTelemetryHistoryAndMetrics) {
     app::AppState state;
     state.initialize();
 
+    uint32_t packet_seq = 0;
+    const auto send = [&](const ipc::MitigatorTelemetryPayload& telem) {
+        auto pkt = ipc::serialize_typed_packet(PluginId::LatencyMitigator, MessageType::MitigatorTelemetry,
+                                               ++packet_seq, telem);
+        state.pipe_server().process_raw_packet(pkt);
+    };
+
     ipc::MitigatorTelemetryPayload telem1{};
     telem1.action_id = 31;
     telem1.sequence = 10;
@@ -199,9 +206,8 @@ TEST_CASE(AppState, MitigatorTelemetryHistoryAndMetrics) {
     telem1.smoothed_rtt_ms = 50.0f;
     telem1.jitter_ms = 2.0f;
     telem1.delay_reduced_ms = 35.0f;
-
-    auto pkt1 = ipc::serialize_typed_packet(PluginId::LatencyMitigator, MessageType::MitigatorTelemetry, 1, telem1);
-    state.pipe_server().process_raw_packet(pkt1);
+    telem1.applied = 1;
+    send(telem1);
 
     ipc::MitigatorTelemetryPayload telem2{};
     telem2.action_id = 32;
@@ -211,21 +217,48 @@ TEST_CASE(AppState, MitigatorTelemetryHistoryAndMetrics) {
     telem2.jitter_ms = 5.0f;
     telem2.delay_reduced_ms = 37.0f;
     telem2.spike_filtered = 1;
+    telem2.applied = 1;
+    send(telem2);
 
-    auto pkt2 = ipc::serialize_typed_packet(PluginId::LatencyMitigator, MessageType::MitigatorTelemetry, 2, telem2);
-    state.pipe_server().process_raw_packet(pkt2);
+    // Dry-run reports what it would have trimmed, but nothing was saved.
+    ipc::MitigatorTelemetryPayload telem3{};
+    telem3.action_id = 33;
+    telem3.sequence = 12;
+    telem3.measured_rtt_ms = 60.0f;
+    telem3.smoothed_rtt_ms = 53.0f;
+    telem3.delay_reduced_ms = 40.0f;
+    telem3.clamped_floor = 1;
+    telem3.dry_run = 1;
+    send(telem3);
+
+    // A cast carries no round trip, which must not read as a 0 ms sample.
+    ipc::MitigatorTelemetryPayload telem4{};
+    telem4.action_id = 34;
+    telem4.sequence = 13;
+    telem4.smoothed_rtt_ms = 53.0f;
+    telem4.cast_active = 1;
+    send(telem4);
 
     auto metrics = state.get_mitigator_metrics();
     TEST_ASSERT_EQ(metrics.total_actions_mitigated, 2u);
     TEST_ASSERT_EQ(metrics.spike_filtered_count, 1u);
-    TEST_ASSERT_NEAR(metrics.latest_measured_rtt_ms, 180.0f, 0.01f);
-    TEST_ASSERT_NEAR(metrics.latest_smoothed_rtt_ms, 52.0f, 0.01f);
+    TEST_ASSERT_EQ(metrics.floor_clamp_count, 0u);
+    TEST_ASSERT_NEAR(metrics.latest_measured_rtt_ms, 60.0f, 0.01f);
+    TEST_ASSERT_NEAR(metrics.latest_smoothed_rtt_ms, 53.0f, 0.01f);
     TEST_ASSERT_NEAR(metrics.total_delay_reduced_ms, 72.0f, 0.01f);
 
     auto history = state.get_recent_telemetry();
-    TEST_ASSERT_EQ(history.size(), 2u);
+    TEST_ASSERT_EQ(history.size(), 4u);
     TEST_ASSERT_EQ(history[0].sequence, 10u);
-    TEST_ASSERT_EQ(history[1].sequence, 11u);
+    TEST_ASSERT_EQ(history[3].sequence, 13u);
+
+    // Reset statistics clears the app's copy too, not just the payload's.
+    state.clear_mitigator_stats();
+    metrics = state.get_mitigator_metrics();
+    TEST_ASSERT_EQ(metrics.total_actions_mitigated, 0u);
+    TEST_ASSERT_EQ(metrics.spike_filtered_count, 0u);
+    TEST_ASSERT_NEAR(metrics.total_delay_reduced_ms, 0.0f, 0.01f);
+    TEST_ASSERT_TRUE(state.get_recent_telemetry().empty());
 
     state.shutdown();
 }

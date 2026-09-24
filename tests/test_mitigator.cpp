@@ -547,3 +547,86 @@ TEST_CASE(Mitigator, FilteredSpikeLightsTheHud) {
     TEST_ASSERT_TRUE(hud.spike_active(now));
     TEST_ASSERT_FALSE(hud.spike_active(now + std::chrono::milliseconds(2000)));
 }
+
+TEST_CASE(Mitigator, HudVisibilitySurvivesDisconnectAndDisable) {
+    // Hiding the HUD because the app went away or the plugin was switched off must
+    // not rewrite the player's own visibility choice, which the autosave persists.
+    LatencyPlugin plugin;
+    LatencyOverlay hud;
+    plugin.set_overlay(&hud);
+
+    // A plugin starts out disconnected.
+    TEST_ASSERT_FALSE(hud.should_render());
+    plugin.set_connected(true);
+    TEST_ASSERT_TRUE(hud.should_render());
+
+    hub::config::JsonValue json{hub::config::JsonValue::ObjectType{}};
+    plugin.set_connected(false);
+    TEST_ASSERT_FALSE(hud.should_render());
+    TEST_ASSERT_TRUE(hud.is_visible());
+    plugin.serialize_config(json);
+    TEST_ASSERT_TRUE(json["overlay_visible"].as_bool(false));
+
+    plugin.set_connected(true);
+    plugin.set_plugin_enabled(false);
+    TEST_ASSERT_FALSE(hud.should_render());
+    plugin.serialize_config(json);
+    TEST_ASSERT_TRUE(json["overlay_visible"].as_bool(false));
+
+    plugin.set_plugin_enabled(true);
+    TEST_ASSERT_TRUE(hud.should_render());
+
+    // A config load can switch the plugin off, and the player's own choice to
+    // hide the HUD still holds once it is back on.
+    json["plugin_enabled"] = hub::config::JsonValue(false);
+    plugin.deserialize_config(json);
+    TEST_ASSERT_FALSE(hud.should_render());
+    json["plugin_enabled"] = hub::config::JsonValue(true);
+    json["overlay_visible"] = hub::config::JsonValue(false);
+    plugin.deserialize_config(json);
+    TEST_ASSERT_FALSE(hud.should_render());
+    TEST_ASSERT_FALSE(hud.is_visible());
+}
+
+TEST_CASE(Mitigator, SendWithoutCastEndsTrackedCast) {
+    // A cancelled cast sends no effect, so the only sign it ended is the next
+    // action going out with no cast in progress.
+    LatencyPlugin plugin;
+    plugin.initialize();
+
+    std::vector<uint8_t> mgr_buf(0x200, 0);
+    uint8_t casting = 1;
+    const float cast_total = 2.5f;
+    std::memcpy(mgr_buf.data() + game::offsets::ACTION_MANAGER_IS_CASTING, &casting, sizeof(casting));
+    std::memcpy(mgr_buf.data() + game::offsets::ACTION_MANAGER_CAST_TIME, &cast_total, sizeof(cast_total));
+
+    const auto start = std::chrono::steady_clock::now();
+    plugin.on_use_action_location(mgr_buf.data(), 0, 960, 0, nullptr, 0, /*result=*/1);
+    TEST_ASSERT_TRUE(plugin.mitigator().is_casting(start + std::chrono::milliseconds(500)));
+
+    casting = 0;
+    std::memcpy(mgr_buf.data() + game::offsets::ACTION_MANAGER_IS_CASTING, &casting, sizeof(casting));
+    plugin.on_use_action_location(mgr_buf.data(), 0, 961, 0, nullptr, 0, /*result=*/1);
+    TEST_ASSERT_FALSE(plugin.mitigator().is_casting(start + std::chrono::milliseconds(500)));
+}
+
+TEST_CASE(Mitigator, DisabledMitigationReportsNoChange) {
+    // Switched off, nothing is written, so the result must not show a reduction
+    // or a floor clamp. Measuring carries on.
+    MitigationConfig cfg;
+    cfg.enabled = false;
+    AnimationLockMitigator mit(cfg);
+    const auto t0 = std::chrono::steady_clock::now();
+
+    // Switched on, this would clamp to the floor: 50 - (100 - 15) < 25.
+    mit.record_action_request(970, 1, t0);
+    const auto res = mit.calculate_mitigation(970, 1, 50.0, t0 + std::chrono::milliseconds(100));
+
+    TEST_ASSERT_FALSE(res.applied);
+    TEST_ASSERT_FALSE(res.clamped_by_floor);
+    TEST_ASSERT_NEAR(res.adjusted_lock_ms, 50.0, 0.01);
+    TEST_ASSERT_NEAR(res.delay_reduced_ms, 0.0, 0.01);
+    TEST_ASSERT_NEAR(res.measured_rtt_ms, 100.0, 1.0);
+    TEST_ASSERT_EQ(mit.get_rtt_tracker().sample_count(), 1u);
+    TEST_ASSERT_EQ(mit.get_session_stats().total_floor_clamps, 0u);
+}

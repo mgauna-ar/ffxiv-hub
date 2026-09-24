@@ -13,6 +13,7 @@
 #include <atomic>
 #include <memory>
 #include <chrono>
+#include <optional>
 
 namespace hub::app {
 
@@ -155,6 +156,8 @@ public:
     void send_mitigator_hud_display_mode(uint32_t mode);
     void send_mitigator_enabled(bool enabled);
     void send_mitigator_reset_stats();
+    /// Clears the app's own copy of the telemetry: the tiles, graph and feed.
+    void clear_mitigator_stats();
     void send_mitigator_reset_overlay_geometry();
 
     /// Tells the payload to re-read config.json. Without it the payload keeps its
@@ -215,7 +218,8 @@ private:
     std::chrono::steady_clock::time_point m_last_process_check{};
 
     os::NetworkMonitor m_network_monitor;
-    double m_last_sent_ping_ms{-1.0};
+    /// Unset until the connected payload has been sent a ping.
+    std::optional<double> m_last_sent_ping_ms;
     std::chrono::steady_clock::time_point m_last_ping_check{};
 
     std::vector<RegisteredPluginInfo> m_plugins;

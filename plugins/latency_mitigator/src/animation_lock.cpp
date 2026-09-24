@@ -136,6 +136,13 @@ MitigationResult AnimationLockMitigator::calculate_mitigation(
         return res;
     }
 
+    // Switched off, the lock is left as the server sent it, so the result says so.
+    // Dry-run is different: it reports what it would have done.
+    if (!m_config.enabled && !m_config.dry_run) {
+        res.adjusted_lock_ms = original_lock_ms;
+        return res;
+    }
+
     double latency_delta = (effective_rtt - m_config.target_ping_ms) - m_config.safety_margin_ms;
     if (latency_delta < 0.0) {
         latency_delta = 0.0;
@@ -146,21 +153,18 @@ MitigationResult AnimationLockMitigator::calculate_mitigation(
     if (target_lock < m_config.min_animation_lock_ms) {
         target_lock = m_config.min_animation_lock_ms;
         res.clamped_by_floor = true;
-        ++m_total_floor_clamps;
     }
 
     res.adjusted_lock_ms = target_lock;
     res.delay_reduced_ms = std::max(0.0, original_lock_ms - res.adjusted_lock_ms);
-
-    if (m_config.dry_run || !m_config.enabled) {
-        res.applied = false;
-    } else {
-        res.applied = (res.delay_reduced_ms > 0.0);
-    }
+    res.applied = !m_config.dry_run && res.delay_reduced_ms > 0.0;
 
     if (res.applied) {
         ++m_total_actions_mitigated;
         m_cumulative_time_saved_ms += res.delay_reduced_ms;
+        if (res.clamped_by_floor) {
+            ++m_total_floor_clamps;
+        }
     }
 
     return res;

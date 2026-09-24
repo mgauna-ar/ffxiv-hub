@@ -8,6 +8,7 @@
 #include "mitigator/latency_plugin.hpp"
 #include "payload/command_dispatcher.hpp"
 #include "meter/combat_plugin.hpp"
+#include "common/config/json.hpp"
 #include <array>
 #include <atomic>
 #include "hub/game_definitions.hpp"
@@ -706,12 +707,20 @@ TEST_CASE(Payload, DispatchesPluginMasterSwitch) {
     // the mitigation switch, which only stops the memory write-back.
     meter::CombatPlugin combat;
     mitigator::LatencyPlugin latency;
+    meter::CombatOverlay combat_overlay;
+    mitigator::LatencyOverlay latency_overlay;
+    combat.set_overlay(&combat_overlay);
+    latency.set_overlay(&latency_overlay);
+    latency.set_connected(true);
+
     payload::CommandDispatchTargets targets;
     targets.combat_plugin = &combat;
     targets.latency_plugin = &latency;
 
     TEST_ASSERT(combat.is_enabled());
     TEST_ASSERT(latency.is_plugin_enabled());
+    TEST_ASSERT(combat_overlay.should_render());
+    TEST_ASSERT(latency_overlay.should_render());
 
     ipc::CommandPayload cmd{};
     cmd.command_id = static_cast<uint32_t>(CommandId::SetPluginEnabled);
@@ -730,12 +739,28 @@ TEST_CASE(Payload, DispatchesPluginMasterSwitch) {
     // rewrite the user's mitigation preference.
     TEST_ASSERT(latency.mitigator().get_config().enabled);
 
+    // Off hides both overlays, but the player's visibility choice, which the
+    // autosave persists, stays as it was.
+    TEST_ASSERT(!combat_overlay.should_render());
+    TEST_ASSERT(!latency_overlay.should_render());
+    TEST_ASSERT(combat_overlay.is_visible());
+    TEST_ASSERT(latency_overlay.is_visible());
+    config::JsonValue saved{config::JsonValue::ObjectType{}};
+    combat.serialize_config(saved);
+    TEST_ASSERT(saved["overlay_visible"].as_bool(false));
+    latency.serialize_config(saved);
+    TEST_ASSERT(saved["overlay_visible"].as_bool(false));
+
     cmd.param_uint = 1;
     payload::dispatch_command(targets, cmd);
     TEST_ASSERT(latency.is_plugin_enabled());
     cmd.target_plugin_id = static_cast<uint32_t>(PluginId::CombatMeter);
     payload::dispatch_command(targets, cmd);
     TEST_ASSERT(combat.is_enabled());
+
+    // Back on, both come back without the player having to re-enable them.
+    TEST_ASSERT(combat_overlay.should_render());
+    TEST_ASSERT(latency_overlay.should_render());
 }
 
 TEST_CASE(Payload, DispatchesVitalsTracking) {

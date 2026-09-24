@@ -121,8 +121,17 @@ void CombatPlugin::update(double /*delta_seconds*/) {
 void CombatPlugin::set_enabled(bool enabled) noexcept {
     m_config.enabled = enabled;
     // A disabled plugin must not leave its overlay painted over the game.
-    if (!enabled && m_overlay) {
-        m_overlay->set_visible(false);
+    // Suppressed rather than hidden: overlay_visible is the player's choice and
+    // the autosave would persist a hide.
+    if (m_overlay) {
+        m_overlay->set_suppressed(!enabled);
+    }
+}
+
+void CombatPlugin::set_overlay(CombatOverlay* overlay) noexcept {
+    m_overlay = overlay;
+    if (m_overlay) {
+        m_overlay->set_suppressed(!m_config.enabled);
     }
 }
 
@@ -255,9 +264,8 @@ void CombatPlugin::deserialize_config(const config::JsonValue& in) {
         m_overlay->set_show_col_cdh(m_config.show_col_cdh);
         m_overlay->set_metric(m_config.overlay_metric == 1 ? MeterMetric::Healing : MeterMetric::Damage);
         m_overlay->apply_config(m_config.overlay);
-        // apply_config restores the persisted visibility, which a disabled plugin
-        // must not get back.
-        if (!m_config.enabled) m_overlay->set_visible(false);
+        // The master switch may have just changed.
+        m_overlay->set_suppressed(!m_config.enabled);
     }
 }
 

@@ -108,9 +108,24 @@ void LatencyPlugin::update(double /*delta_seconds*/) {
 
 void LatencyPlugin::set_plugin_enabled(bool enabled) noexcept {
     m_plugin_enabled.store(enabled);
-    // A disabled plugin must not leave its HUD painted over the game.
-    if (!enabled && m_overlay) {
-        m_overlay->set_visible(false);
+    refresh_overlay_suppression();
+}
+
+void LatencyPlugin::set_connected(bool connected) noexcept {
+    m_connected.store(connected);
+    refresh_overlay_suppression();
+}
+
+void LatencyPlugin::set_overlay(LatencyOverlay* overlay) noexcept {
+    m_overlay = overlay;
+    refresh_overlay_suppression();
+}
+
+void LatencyPlugin::refresh_overlay_suppression() noexcept {
+    // Suppressed rather than hidden: overlay_visible is the player's choice and
+    // the autosave would persist a hide.
+    if (m_overlay) {
+        m_overlay->set_suppressed(!m_plugin_enabled.load() || !m_connected.load());
     }
 }
 
@@ -163,11 +178,11 @@ void LatencyPlugin::deserialize_config(const config::JsonValue& in) {
 
     m_overlay_config = ui::deserialize_overlay(in, m_overlay_config);
 
+    // plugin_enabled may have just changed.
+    refresh_overlay_suppression();
+
     if (m_overlay) {
         m_overlay->apply_config(m_overlay_config);
-        // apply_config restores the persisted visibility, which a disabled plugin
-        // must not get back.
-        if (!m_plugin_enabled.load()) m_overlay->set_visible(false);
         if (in.contains("overlay_mode")) {
             m_overlay->set_display_mode(static_cast<OverlayDisplayMode>(in["overlay_mode"].as_int(static_cast<int>(m_overlay->display_mode()))));
         }
@@ -204,8 +219,12 @@ void LatencyPlugin::on_use_action_location(
 
     // Second caster-tax guard, independent of the is_cast flag on the request. The
     // cast in progress may have started before this press, so track what is left.
+    // A send with no cast in progress ends any tracked one: a cancelled cast sends
+    // no effect, and would otherwise hold off mitigation until its time ran out.
     if (is_casting) {
         m_mitigator.record_cast_begin(action_id, state.cast_time - state.elapsed_cast_time, now);
+    } else {
+        m_mitigator.record_cast_interrupt(now);
     }
 
     m_mitigator.record_action_request(

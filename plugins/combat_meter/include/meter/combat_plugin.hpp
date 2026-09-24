@@ -99,7 +99,7 @@ public:
     void set_hp_resolver(HpResolver resolver) { m_hp_resolver = std::move(resolver); }
 
     /// Non-owning pointer to the in-game overlay this plugin drives via config load/commands.
-    void set_overlay(CombatOverlay* overlay) noexcept { m_overlay = overlay; }
+    void set_overlay(CombatOverlay* overlay) noexcept;
 
     /// The meter derives combat from packets, which survives a signature break
     /// after a game patch, so it feeds that bit back for every overlay to use.

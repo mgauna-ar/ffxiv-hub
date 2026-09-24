@@ -40,8 +40,16 @@ public:
     void set_display_mode(OverlayDisplayMode mode) noexcept { m_display_mode.store(mode); }
     [[nodiscard]] OverlayDisplayMode display_mode() const noexcept { return m_display_mode.load(); }
 
+    /// What the tooltip reports mitigation as doing.
+    void set_mitigation_mode(bool enabled, bool dry_run) noexcept {
+        m_mitigation_enabled.store(enabled);
+        m_dry_run.store(dry_run);
+    }
+
 private:
     std::atomic<OverlayDisplayMode> m_display_mode{OverlayDisplayMode::CompactInline};
+    std::atomic<bool> m_mitigation_enabled{true};
+    std::atomic<bool> m_dry_run{false};
 
     std::atomic<double> m_smoothed_rtt_ms{0.0};
     std::atomic<double> m_network_ping_ms{-1.0};

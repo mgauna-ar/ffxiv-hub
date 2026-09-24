@@ -48,11 +48,14 @@ you experience then approximates what a player sitting next to the datacenter wo
 
 **Smoothing and spike filtering.**
 
-- The round trip feeding that subtraction is smoothed with an exponential moving average
-  (EMA), so a single slow packet does not swing the adjustment.
-- Once five samples are in, a spike filter keeps a sample out of the EMA when it lands
-  above `median + max(50 ms, 0.5 × median, spike_multiplier × jitter)`. The median is
-  taken over the sample window.
+- Each action is trimmed by its own measured round trip, so a lock is never cut by more
+  than that action actually waited.
+- Once five samples are in, a spike filter rejects a sample that lands above
+  `median + max(50 ms, 0.5 × median, spike_multiplier × jitter)`. The median is taken
+  over the sample window. That action is trimmed by the median instead, so one slow packet
+  does not swing the adjustment.
+- The rejected sample is also kept out of the exponential moving average (EMA). The EMA is
+  the smoothed RTT that the HUD and the graph show.
 - The rejected sample still enters the window itself. So one spike never moves the
   median, but a real, sustained rise in latency is picked up within about half a window
   instead of being rejected forever.
@@ -79,7 +82,9 @@ waiting time and is measured like any other.
   hold it:
   - the cast flag recorded with the action
   - a cast timer, started from the cast's remaining time whenever an action goes out
-    mid-cast
+    mid-cast, and stopped when an action goes out with no cast in progress. A cancelled
+    cast sends nothing back, so without that it would hold mitigation off for the rest of
+    its cast time.
 - **The floor.** Adjusted lock never drops below 25 ms, whatever the measured latency. A
   lock that already sits at or under the floor is left as it is.
 - **Very long locks.** Locks above 2500 ms pass through untouched. They are either
@@ -130,7 +135,7 @@ two never disagree:
 
 - network ping
 - action RTT
-- whether it is mitigating or just filtered a spike
+- what mitigation is doing: mitigating, dry-run, switched off, or just filtered a spike
 - whether click-through is on
 
 A click-through badge takes no mouse input, so it shows no tooltip.
@@ -158,8 +163,8 @@ Below it are two tabs.
   | Smoothed RTT | The latest smoothed round trip, with the raw sample below it |
   | Network ping | The ICMP ping to the game server |
   | Jitter | The round-trip variance |
-  | Latency saved | Total lock removed, with the count of actions mitigated |
-  | Spikes filtered | Samples the filter rejected, with the count of floor clamps |
+  | Latency saved | Total lock removed, with the count of actions mitigated. Dry-run and switched-off actions add nothing. |
+  | Spikes filtered | Samples the filter rejected, with the count of mitigated locks clamped to the floor |
 
   The round-trip tiles use the same colour bands as the HUD.
 - **Round-trip time history.** A graph of the smoothed curve over the measured samples,
@@ -174,7 +179,7 @@ Below it are two tabs.
   |---|---|
   | Mitigated | The lock was shortened. |
   | Clamped to floor | The lock was shortened, but stopped at the floor. |
-  | Spike filtered | This action's RTT sample was a spike, so the EMA used the median in its place. |
+  | Spike filtered | This action's RTT sample was a spike, so the median took its place, both in this action's trim and in the EMA. |
   | Cold start guard | There are fewer than five samples so far, so the sample was capped. |
   | Cast - skipped | A cast lock, left alone to protect slide-casting. |
   | Dry-run (not applied) | Calculated, but not written. |

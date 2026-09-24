@@ -59,12 +59,12 @@ public:
     void set_ring_buffer(ipc::PacketRingBuffer* ring_buffer) noexcept { m_ring_buffer = ring_buffer; }
 
     /// Non-owning pointer to the in-game HUD this plugin drives via config load/commands.
-    void set_overlay(LatencyOverlay* overlay) noexcept { m_overlay = overlay; }
+    void set_overlay(LatencyOverlay* overlay) noexcept;
     [[nodiscard]] LatencyOverlay* overlay() const noexcept { return m_overlay; }
 
-    /// Gates mitigation write-back/telemetry while the desktop app is disconnected,
-    /// without touching the user's configured dry_run preference.
-    void set_connected(bool connected) noexcept { m_connected.store(connected); }
+    /// Gates mitigation write-back/telemetry and the HUD while the desktop app is
+    /// disconnected, without touching the user's dry_run or visibility preference.
+    void set_connected(bool connected) noexcept;
 
     /// Master switch for the whole plugin. Off means no hook dispatch, no
     /// telemetry and no HUD, distinct from the mitigation switch on the
@@ -73,6 +73,9 @@ public:
     [[nodiscard]] bool is_plugin_enabled() const noexcept { return m_plugin_enabled.load(); }
 
 private:
+    /// The HUD shows only while the plugin is on and the app is listening.
+    void refresh_overlay_suppression() noexcept;
+
     AnimationLockMitigator m_mitigator;
     bool m_initialized{false};
     ipc::PacketRingBuffer* m_ring_buffer{nullptr};

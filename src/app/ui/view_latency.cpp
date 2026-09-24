@@ -34,7 +34,7 @@ uint32_t ping_grade_color(double ping_ms) {
 }
 
 void render_rtt_graph(const std::vector<ipc::MitigatorTelemetryPayload>& samples,
-                      float target_ping, float height) {
+                      float target_ping, float floor_ms, float height) {
     const ImVec2 canvas_size(ImGui::GetContentRegionAvail().x, height);
     const ImVec2 p_min = ImGui::GetCursorScreenPos();
     const ImVec2 p_max(p_min.x + canvas_size.x, p_min.y + canvas_size.y);
@@ -135,7 +135,7 @@ void render_rtt_graph(const std::vector<ipc::MitigatorTelemetryPayload>& samples
             text_colored_u32(colors::TextMuted, "Jitter: +/- %.1f ms", s.jitter_ms);
             text_colored_u32(colors::SuccessLight, "Delay reduced: %.1f ms", s.delay_reduced_ms);
             if (s.spike_filtered) text_colored_u32(colors::Warning, ICON_WARNING "  Spike filtered");
-            if (s.clamped_floor)  text_colored_u32(colors::Danger, ICON_SHIELD "  Floor clamped (25 ms)");
+            if (s.clamped_floor)  text_colored_u32(colors::Danger, ICON_SHIELD "  Floor clamped (%.0f ms)", floor_ms);
             ImGui::EndTooltip();
         }
     }
@@ -179,9 +179,10 @@ void render_metric_tiles(AppState& app_state, const AppState::MitigatorMetrics& 
 
     char spikes[32];
     std::snprintf(spikes, sizeof(spikes), "%llu", static_cast<unsigned long long>(metrics.spike_filtered_count));
-    char floors[40];
-    std::snprintf(floors, sizeof(floors), "%llu floor clamps (25 ms)",
-                  static_cast<unsigned long long>(metrics.floor_clamp_count));
+    char floors[48];
+    std::snprintf(floors, sizeof(floors), "%llu floor clamps (%.0f ms)",
+                  static_cast<unsigned long long>(metrics.floor_clamp_count),
+                  cfg_float(MITI, "min_animation_lock_ms", 25.0f));
 
     const StatTileSpec tiles[] = {
         { "##PingCard", ICON_ACTIVITY, "SMOOTHED RTT", smoothed,
@@ -313,7 +314,13 @@ void render_live_tab(AppState& app_state, const AppState::MitigatorMetrics& metr
     legend_entry("target", colors::with_alpha(colors::Success, 0.65f));
     end_section_header();
 
-    render_rtt_graph(telemetry, cfg_float(MITI, "target_ping_ms", 15.0f), fill_h(0.0f));
+    // Casts and unmatched responses carry no round trip, so they would read as 0 ms.
+    std::vector<ipc::MitigatorTelemetryPayload> measured;
+    measured.reserve(telemetry.size());
+    std::copy_if(telemetry.begin(), telemetry.end(), std::back_inserter(measured),
+                 [](const ipc::MitigatorTelemetryPayload& s) { return s.measured_rtt_ms > 0.0f; });
+    render_rtt_graph(measured, cfg_float(MITI, "target_ping_ms", 15.0f),
+                     cfg_float(MITI, "min_animation_lock_ms", 25.0f), fill_h(0.0f));
     end_card();
 
     ImGui::Dummy(ImVec2(0.0f, m(2.0f)));
@@ -422,6 +429,7 @@ void render_maintenance_section(AppState& app_state) {
     ImGui::Dummy(ImVec2(0.0f, m(6.0f)));
     if (button(ICON_RESET "  Reset statistics", ButtonKind::Danger, ButtonSize::Large)) {
         app_state.send_mitigator_reset_stats();
+        app_state.clear_mitigator_stats();
     }
 
     end_settings_card();

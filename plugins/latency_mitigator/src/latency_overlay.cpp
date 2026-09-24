@@ -193,7 +193,18 @@ void LatencyOverlay::render() {
             ImGui::TextColored(text_col, "%s", buf);
         }
 
-        if (ImGui::IsItemHovered()) {
+        // The whole badge, not just the last text item: in the two-row layout
+        // that would leave the ping row without a tooltip.
+        if (ImGui::IsWindowHovered()) {
+            const char* status = "Mitigating";
+            if (is_spike) {
+                status = "Action RTT Spike Filtered (!)";
+            } else if (m_dry_run.load()) {
+                status = "Dry-run - measuring only";
+            } else if (!m_mitigation_enabled.load()) {
+                status = "Mitigation off";
+            }
+
             ImGui::BeginTooltip();
             ImGui::Text("FFXIV Latency Mitigator");
             ImGui::Separator();
@@ -207,7 +218,7 @@ void LatencyOverlay::render() {
             } else {
                 ImGui::Text("Action RTT (Combat): Idle (-- ms)");
             }
-            ImGui::Text("Status: %s", is_spike ? "Action RTT Spike Filtered (!)" : "Mitigating");
+            ImGui::Text("Status: %s", status);
             ImGui::Text("Click-through: %s", m_click_through.load() ? "Enabled" : "Disabled");
             ImGui::EndTooltip();
         }

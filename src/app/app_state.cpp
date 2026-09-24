@@ -216,16 +216,23 @@ void AppState::register_ipc_callbacks() {
             m_telemetry_history.pop_front();
         }
 
-        m_mitigator_metrics.latest_measured_rtt_ms = telem.measured_rtt_ms;
+        // Casts and unmatched responses carry no round trip.
+        if (telem.measured_rtt_ms > 0.0f) {
+            m_mitigator_metrics.latest_measured_rtt_ms = telem.measured_rtt_ms;
+        }
         m_mitigator_metrics.latest_smoothed_rtt_ms = telem.smoothed_rtt_ms;
         m_mitigator_metrics.latest_jitter_ms = telem.jitter_ms;
-        m_mitigator_metrics.total_delay_reduced_ms += telem.delay_reduced_ms;
-        m_mitigator_metrics.total_actions_mitigated += 1;
+        // Only locks actually written count as saved: dry-run and switched-off
+        // rows still report what they would have trimmed.
+        if (telem.applied) {
+            m_mitigator_metrics.total_delay_reduced_ms += telem.delay_reduced_ms;
+            m_mitigator_metrics.total_actions_mitigated += 1;
+            if (telem.clamped_floor) {
+                m_mitigator_metrics.floor_clamp_count += 1;
+            }
+        }
         if (telem.spike_filtered) {
             m_mitigator_metrics.spike_filtered_count += 1;
-        }
-        if (telem.clamped_floor) {
-            m_mitigator_metrics.floor_clamp_count += 1;
         }
     });
 }
@@ -269,11 +276,17 @@ void AppState::update() {
     }
 
     // Forward newly-measured network ping to the in-game HUD, throttled to once/sec.
+    // A payload that connects has none of what was sent before, and ICMP reports
+    // whole milliseconds, so an unchanged ping would otherwise never reach it.
+    if (!is_connected()) {
+        m_last_sent_ping_ms.reset();
+    }
     const auto now = std::chrono::steady_clock::now();
     if (std::chrono::duration_cast<std::chrono::milliseconds>(now - m_last_ping_check).count() >= 1000) {
         m_last_ping_check = now;
         const double ping = m_network_monitor.get_current_ping_ms();
-        if (is_connected() && std::abs(ping - m_last_sent_ping_ms) > 0.5) {
+        if (is_connected() &&
+            (!m_last_sent_ping_ms || std::abs(ping - *m_last_sent_ping_ms) > 0.5)) {
             m_last_sent_ping_ms = ping;
             send_network_ping(static_cast<float>(ping));
         }
@@ -526,6 +539,12 @@ void AppState::send_mitigator_enabled(bool enabled) {
 
 void AppState::send_mitigator_reset_stats() {
     m_pipe_server.send_command(PluginId::LatencyMitigator, CommandId::ResetStats, 0);
+}
+
+void AppState::clear_mitigator_stats() {
+    std::lock_guard<std::mutex> lock(m_telemetry_mutex);
+    m_telemetry_history.clear();
+    m_mitigator_metrics = MitigatorMetrics{};
 }
 
 void AppState::send_mitigator_reset_overlay_geometry() {

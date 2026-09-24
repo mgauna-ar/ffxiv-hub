@@ -17,6 +17,11 @@ public:
     bool is_visible() const noexcept override { return m_visible.load(); }
     void set_visible(bool visible) noexcept override { m_visible.store(visible); }
 
+    /// Hides the overlay without touching the player's visibility choice, which
+    /// is what gets persisted. For transient reasons: plugin off, app disconnected.
+    void set_suppressed(bool suppressed) noexcept { m_suppressed.store(suppressed); }
+    [[nodiscard]] bool is_suppressed() const noexcept { return m_suppressed.load(); }
+
     Rect get_geometry() const noexcept override {
         return Rect{m_pos_x, m_pos_y, m_width, m_height};
     }
@@ -95,7 +100,7 @@ public:
     /// Hide conditions are suspended while the overlay is unlocked, so an
     /// overlay hidden by a condition can always be unlocked and dragged back.
     [[nodiscard]] bool should_render() const noexcept override {
-        if (!m_visible.load()) return false;
+        if (m_suppressed.load() || !m_visible.load()) return false;
         if (!m_locked.load()) return true;
         const uint32_t bits = m_hide_conditions.load();
         if (bits == 0 || m_game_state == nullptr) return true;
@@ -104,6 +109,7 @@ public:
 
 protected:
     std::atomic<bool> m_visible{true};
+    std::atomic<bool> m_suppressed{false};
     std::atomic<bool> m_locked{false};
     std::atomic<bool> m_click_through{false};
     std::atomic<float> m_opacity{0.85f};
