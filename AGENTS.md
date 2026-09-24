@@ -198,6 +198,7 @@ These two live here rather than in the meter's own file because the payload and 
 - **Plugin-Agnostic System Tray**: The System Tray manager (`TrayManager`) must remain **100% decoupled and agnostic of specific plugins**. It must never contain plugin-specific actions, toggles, or metrics. Its responsibilities are strictly confined to the Hub application lifecycle: Show/Hide Main Window, Run at Startup, Open Logs/Config, and Exit.
 - **Every Plugin Is Switchable**: Each plugin carries a master switch persisted as `plugin_enabled` in its own config section and delivered to the payload as `CommandId::SetPluginEnabled`. Off means the plugin consumes no hook dispatch, streams no telemetry, draws no overlay, and leaves nothing set for the others - the combat meter clears its packet-combat bit, which otherwise held every overlay's combat hide condition at "in combat" - not merely that the desktop view is hidden. It is deliberately coarser than a plugin's own feature switches (the Latency Mitigator's `enabled` key still only stops the animation-lock write-back), and toggling it must never rewrite those. The combat meter's original `enabled` key is still read so an existing config keeps its meaning.
 - **Hide With `set_suppressed`, Never `set_visible(false)`**: `overlay_visible` is the player's choice, and the payload autosave persists whatever `OverlayBase::is_visible()` says. An overlay hidden for any other reason, such as a plugin switched off or the app disconnected, goes through `set_suppressed`. Hiding it with `set_visible(false)` saved it as switched off, so it never came back on its own.
+- **Nothing Draws In The Lobby**: `OverlayBase::should_render()` returns false while `GameStateFlag::InLobby` is set, locked or not. It is not a hide condition and has no setting. `ObjectReader::in_lobby()` sets it only when the local player id reads exactly `NO_ENTITY_ID` (see [How the client marks the lobby](#how-the-client-marks-the-lobby)), so an unresolved signature, a faulting read or any other value leaves the overlays up. The payload reads it once before installing the DX11 hook, so an injection at the title screen draws no frame.
 
 - **One Settings Layout For Every Plugin**: A plugin view is built from `src/app/ui/plugin_page.hpp`, never hand-rolled. Its settings tab is named `Settings`, is the last tab, and lists exactly four sections in this order: **Plugin** (master switch plus that plugin's own behaviour), **In-game overlay** (always `render_overlay_settings()`), **Display**, **Maintenance** (destructive actions last). A new plugin that needs a different order needs a change to the scaffold, not a private layout.
 
@@ -226,6 +227,29 @@ Do not restate these values here or in the READMEs - reference the header.
 The `static_assert(offsetof(...))` layout checks are the only automated verification the
 offsets have; no tool validates them against the executable. Repairing them after a patch
 is the `after-game-patch` skill.
+
+### How the client marks the lobby
+
+Read from `ffxiv_dx11.exe` on 2026-09-24 with `tools/inspect_exe.py`. Addresses are for
+that build only; re-check after a patch.
+
+- **The local player id is a field of `Control`.** The global the
+  `LOCAL_PLAYER_ENTITY_ID_*` signatures resolve (`0x142aa0408`) is `Control + 0x7698`,
+  with `Control` at `0x142a98d70`. The local player's `Character*` follows at `+0x76A0`.
+- **It holds `0xE0000000` until a zone loads.** The `Control` constructor (`0x14062c8b0`,
+  inlined into the static initializer at `0x14004c870`) and the `Control` reset
+  (`0x14062c560`) store `0xE0000000`; the reset also nulls the pointer. The only other
+  store is the zone-init setter (`0x14062c680`), reached only from the InitZone handler
+  (`0x140862a90`). It writes the real id, and falls back to `0xE0000000` only when the
+  object it reads the id from is missing. Nothing on the title screen, data center or
+  character select writes it.
+- **The world teardown writes it back.** The `Control` reset is called only from
+  `GameMain`'s reset (`0x1406027c0`). That runs at startup, and in one state of the state
+  machine that references the `Lobby` and `World` strings (`0x1404cdd5b`), right after
+  `GameMain` is torn down. Which states the logout button walks through was not traced;
+  logging out to the title and watching the overlays go is the live check.
+- **A zone change keeps the real id.** InitZone sets it again, so a loading screen is
+  not the lobby.
 
 ---
 

@@ -52,6 +52,7 @@ enum class CombatVisibility : int {
         if (!out.empty()) out += ", ";
         out += label;
     };
+    add(hub::GameStateFlag::InLobby, "not logged in");
     add(hub::GameStateFlag::InCombat, "in combat");
     add(hub::GameStateFlag::InDuty, "in duty");
     add(hub::GameStateFlag::InCutscene, "cutscene");

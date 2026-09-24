@@ -242,10 +242,12 @@ in this game session. Restart the game.
 
 Check these in order:
 
-1. The plugin's master switch is on (its dashboard card or its page header).
-2. The overlay itself is on in that plugin's **Settings → In-game overlay** (*Show in-game
+1. You are logged in to a character. The overlays stay hidden on the title screen and
+   character select.
+2. The plugin's master switch is on (its dashboard card or its page header).
+3. The overlay itself is on in that plugin's **Settings → In-game overlay** (*Show in-game
    meter* or *Show micro ping HUD*).
-3. The overlay's hide conditions. A locked overlay can be set to show only in combat,
+4. The overlay's hide conditions. A locked overlay can be set to show only in combat,
    only in duties, or to hide in cutscenes, on loading screens and in menus.
 
 </details>

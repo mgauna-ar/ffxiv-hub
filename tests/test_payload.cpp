@@ -703,6 +703,29 @@ TEST_CASE(Payload, OverlayHostForwardsGameStateOnRegistration) {
     host.set_game_state(nullptr);
 }
 
+TEST_CASE(Payload, OverlaysStayHiddenInTheLobby) {
+    // Title screen and character select have nothing to show, so the lobby hides
+    // every overlay, even an unlocked one that ignores its hide conditions. The
+    // player's visibility choice, which the autosave persists, is untouched.
+    meter::CombatOverlay combat_overlay;
+    mitigator::LatencyOverlay latency_overlay;
+    GameStateProvider game_state;
+    for (ui::OverlayBase* overlay : {static_cast<ui::OverlayBase*>(&combat_overlay),
+                                     static_cast<ui::OverlayBase*>(&latency_overlay)}) {
+        overlay->set_game_state(&game_state);
+        game_state.set_in_lobby(true);
+        TEST_ASSERT_FALSE(overlay->should_render());
+        TEST_ASSERT(overlay->is_visible());
+        overlay->set_locked(true);
+        TEST_ASSERT_FALSE(overlay->should_render());
+
+        game_state.set_in_lobby(false);
+        TEST_ASSERT(overlay->should_render());
+        overlay->set_locked(false);
+        TEST_ASSERT(overlay->should_render());
+    }
+}
+
 TEST_CASE(Payload, DispatchesPluginMasterSwitch) {
     // The per-plugin kill switch has to reach both plugins, and is distinct from
     // the mitigation switch, which only stops the memory write-back.

@@ -66,6 +66,10 @@ bool extract_status_list(const game::StatusManagerObject* manager, const void* e
     return true;
 }
 
+bool reads_as_lobby(const uint32_t* local_player_id) noexcept {
+    return local_player_id != nullptr && *local_player_id == hub::game::NO_ENTITY_ID;
+}
+
 } // namespace detail
 
 void ObjectReader::note_status_layout(bool ok) {
@@ -286,6 +290,15 @@ static uint32_t SafeReadLocalPlayerId(uintptr_t addr) {
     }
 }
 
+static bool SafeReadInLobby(uintptr_t addr) {
+    __try {
+        return detail::reads_as_lobby(reinterpret_cast<const uint32_t*>(addr));
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 /// One party slot for the vitals pass.
 struct PartyVitalsSlot {
     uint32_t entity_id{0};
@@ -501,6 +514,10 @@ bool ObjectReader::read_character(uint32_t entity_id, ipc::ActorInfoPacket& out_
     return SafeReadCharacter(m_fp_get_object_by_id, m_game_object_mgr_addr, entity_id, out_packet);
 }
 
+bool ObjectReader::in_lobby() const {
+    return SafeReadInLobby(m_local_player_id_addr);
+}
+
 void ObjectReader::inspect_and_sync_actor(uint32_t entity_id, meter::CombatantRegistry* registry) {
     if (entity_id == 0 || entity_id == 0xE0000000) {
         return;
@@ -684,6 +701,10 @@ bool ObjectReader::initialize() {
 }
 
 bool ObjectReader::read_character(uint32_t, ipc::ActorInfoPacket&) {
+    return false;
+}
+
+bool ObjectReader::in_lobby() const {
     return false;
 }
 

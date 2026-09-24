@@ -26,6 +26,10 @@ namespace detail {
 bool extract_status_list(const game::StatusManagerObject* manager, const void* expected_owner,
                          bool with_detail, meter::ActorVitals& out) noexcept;
 
+/// True when the local player id holds NO_ENTITY_ID, the client's value while no
+/// character is in the world. Any other value, or no address, is not evidence.
+[[nodiscard]] bool reads_as_lobby(const uint32_t* local_player_id) noexcept;
+
 } // namespace detail
 
 /**
@@ -57,6 +61,10 @@ public:
     /// False once status reads were switched off because the StatusManager layout
     /// check never passed: the offsets need re-verifying after a patch.
     [[nodiscard]] bool status_reads_enabled() const noexcept { return !m_status_reads_disabled; }
+
+    /// True while no character is in the world: title screen, data center or
+    /// character select. False when unsure, so a missed signature shows overlays.
+    [[nodiscard]] bool in_lobby() const;
 
     /// Drops every cached actor, party and territory value so the next read
     /// republishes them. The caches exist to keep the same packet off the wire

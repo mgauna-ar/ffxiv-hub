@@ -1,7 +1,9 @@
 #include "test_framework.hpp"
+#include "hub/game/entity.hpp"
 #include "hub/game_definitions.hpp"
 #include "hub/game_state.hpp"
 #include "payload/game_state_reader.hpp"
+#include "payload/object_reader.hpp"
 #include <array>
 
 using namespace hub;
@@ -106,4 +108,40 @@ TEST_CASE(GameState, ReaderIsInertWithoutAGame) {
 
     // An unresolved reader publishes "unknown" so conditions fail open.
     TEST_ASSERT_FALSE(provider.has(GameStateFlag::Valid));
+}
+
+TEST_CASE(GameState, LobbyNeedsTheExactPlaceholder) {
+    using payload::detail::reads_as_lobby;
+
+    uint32_t id = game::NO_ENTITY_ID;
+    TEST_ASSERT_TRUE(reads_as_lobby(&id));
+
+    // A logged-in player, and values the client never writes there, are not the
+    // lobby. A misread global must leave the overlays up.
+    id = 0x10001234;
+    TEST_ASSERT_FALSE(reads_as_lobby(&id));
+    id = 0;
+    TEST_ASSERT_FALSE(reads_as_lobby(&id));
+    TEST_ASSERT_FALSE(reads_as_lobby(nullptr));
+}
+
+TEST_CASE(GameState, ObjectReaderIsNeverInTheLobbyWithoutAGame) {
+    payload::ObjectReader reader;
+    TEST_ASSERT_FALSE(reader.in_lobby());
+    reader.initialize();
+    TEST_ASSERT_FALSE(reader.in_lobby());
+}
+
+TEST_CASE(GameState, ProviderKeepsTheLobbyInItsOwnWord) {
+    GameStateProvider provider;
+    provider.publish(to_bits(GameStateFlag::Valid) | to_bits(GameStateFlag::Loading));
+    provider.set_in_lobby(true);
+    TEST_ASSERT_TRUE(provider.has(GameStateFlag::InLobby));
+    TEST_ASSERT_TRUE(provider.has(GameStateFlag::Loading));
+
+    // A Conditions poll does not clear it, and clearing it leaves the poll alone.
+    provider.publish(to_bits(GameStateFlag::Valid));
+    TEST_ASSERT_TRUE(provider.has(GameStateFlag::InLobby));
+    provider.set_in_lobby(false);
+    TEST_ASSERT_EQ(provider.flags(), to_bits(GameStateFlag::Valid));
 }

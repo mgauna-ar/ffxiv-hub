@@ -18,6 +18,10 @@ enum class GameStateFlag : uint32_t {
     Occupied   = 1u << 4, ///< Event, dialog, trade or summoning bell is up
     Loading    = 1u << 5, ///< Zoning, logging out, character creation
     InPvP      = 1u << 6,
+    /// No character in the world: title screen, data center or character select.
+    /// Read from the local player id, not the Conditions array, so Valid says
+    /// nothing about it.
+    InLobby    = 1u << 7,
 };
 
 [[nodiscard]] constexpr uint32_t to_bits(GameStateFlag f) noexcept {
@@ -33,7 +37,8 @@ enum class GameStateFlag : uint32_t {
 /// Combat is tracked separately because it has two independent sources: the
 /// Conditions array, and the combat meter's packet flag, which keeps working
 /// when a signature breaks after a patch. Keeping them in their own words means
-/// neither writer can clobber the other regardless of tick ordering.
+/// neither writer can clobber the other regardless of tick ordering. The lobby
+/// has a word of its own for the same reason.
 class GameStateProvider {
 public:
     /// Called by GameStateReader with the flags it composed from the client.
@@ -46,11 +51,20 @@ public:
         m_packet_combat.store(in_combat, std::memory_order_relaxed);
     }
 
+    /// Called by the payload with ObjectReader::in_lobby().
+    void set_in_lobby(bool in_lobby) noexcept {
+        m_in_lobby.store(in_lobby, std::memory_order_relaxed);
+    }
+
     [[nodiscard]] uint32_t flags() const noexcept {
-        const uint32_t bits = m_flags.load(std::memory_order_relaxed);
-        return m_packet_combat.load(std::memory_order_relaxed)
-                   ? (bits | to_bits(GameStateFlag::InCombat))
-                   : bits;
+        uint32_t bits = m_flags.load(std::memory_order_relaxed);
+        if (m_packet_combat.load(std::memory_order_relaxed)) {
+            bits |= to_bits(GameStateFlag::InCombat);
+        }
+        if (m_in_lobby.load(std::memory_order_relaxed)) {
+            bits |= to_bits(GameStateFlag::InLobby);
+        }
+        return bits;
     }
 
     [[nodiscard]] bool has(GameStateFlag f) const noexcept {
@@ -60,6 +74,7 @@ public:
 private:
     std::atomic<uint32_t> m_flags{0};
     std::atomic<bool> m_packet_combat{false};
+    std::atomic<bool> m_in_lobby{false};
 };
 
 } // namespace hub

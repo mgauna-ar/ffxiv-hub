@@ -197,6 +197,24 @@ A patch can renumber it without breaking the signature. Disassemble the function
 
 If either moved, update the constants and that section together.
 
+## 4d. Re-check the lobby marker
+
+Every overlay stays hidden while the local player id global reads `0xE0000000`, as
+recorded in [How the client marks the lobby](../../../AGENTS.md#how-the-client-marks-the-lobby).
+A patch can change when the client writes that value without breaking the signature. Its
+stores show up in two places: `xrefs <id global> --span 4` for the static initializer,
+and `field <offset in Control> --writes` (`0x7698` in 7.x) for the constructor, the
+reset and the zone-init setter. Confirm:
+
+- `0xE0000000` is still stored only by the constructor, its inlined copy in the static
+  initializer, the `Control` reset, and the zone-init setter's fallback for a missing
+  source object. The reset is still reached only from `GameMain`'s reset.
+- The zone-init setter is still the only store of a real id, and is still reached only
+  from the InitZone handler.
+
+If the client now writes `0xE0000000` while a character is in the world, the overlays
+vanish there. Fix `ObjectReader::in_lobby()` and that section before shipping the patch.
+
 ## 5. Verify
 
 ```bash

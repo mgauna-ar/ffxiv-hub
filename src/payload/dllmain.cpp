@@ -181,7 +181,10 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
         std::string("ActionManager instance -> ") + (hook_mgr.action_manager() ? "resolved" : "NOT FOUND (mitigation waits for first action)")
     );
 
-    // 7. Install DirectX 11 Hook (Present & ResizeBuffers)
+    // 7. Install DirectX 11 Hook (Present & ResizeBuffers). The game state is read
+    //    first, so an injection at the title screen draws no overlay frame.
+    game_state_reader.poll(game_state);
+    game_state.set_in_lobby(object_reader->in_lobby());
     const bool dx11_ok = hub::payload::Dx11Hook::instance().install();
     hub::os::Logger::info(std::string("Dx11Hook::install() -> ") + (dx11_ok ? "ok" : "FAILED"));
     hub::os::Logger::info("Payload initialization complete, entering orchestration loop.");
@@ -274,6 +277,8 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
 
         // One 112-byte read; 50 ms of lag on a cutscene transition is invisible.
         game_state_reader.poll(game_state);
+        // Every overlay stays hidden until a character is in the world.
+        game_state.set_in_lobby(object_reader->in_lobby());
 
         // Update plugin logic
         combat_plugin->update(0.05);

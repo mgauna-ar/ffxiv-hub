@@ -99,8 +99,10 @@ public:
 
     /// Hide conditions are suspended while the overlay is unlocked, so an
     /// overlay hidden by a condition can always be unlocked and dragged back.
+    /// The lobby hides it either way: there is nothing to show before login.
     [[nodiscard]] bool should_render() const noexcept override {
         if (m_suppressed.load() || !m_visible.load()) return false;
+        if (m_game_state != nullptr && m_game_state->has(GameStateFlag::InLobby)) return false;
         if (!m_locked.load()) return true;
         const uint32_t bits = m_hide_conditions.load();
         if (bits == 0 || m_game_state == nullptr) return true;
