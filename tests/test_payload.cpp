@@ -81,9 +81,9 @@ TEST_CASE(Payload, CombatOverlayInterface) {
     overlay.set_show_progress_bars(false);
     TEST_ASSERT(!overlay.show_progress_bars());
 
-    TEST_ASSERT(overlay.party_only());
-    overlay.set_party_only(false);
     TEST_ASSERT(!overlay.party_only());
+    overlay.set_party_only(true);
+    TEST_ASSERT(overlay.party_only());
 
     // Hide conditions only bite while locked, so the overlay can always be
     // unlocked and dragged back.
@@ -142,22 +142,6 @@ TEST_CASE(Payload, OverlayHostRegistrationAndManagement) {
     TEST_ASSERT(host.find_overlay("##LatencyHUDOverlay") == hud);
     TEST_ASSERT(host.find_overlay("##CombatMeterOverlay") == meter_overlay);
     TEST_ASSERT(host.find_overlay("##NonExistent") == nullptr);
-
-    host.set_all_overlays_visible(false);
-    TEST_ASSERT(!hud->is_visible());
-    TEST_ASSERT(!meter_overlay->is_visible());
-
-    host.set_all_overlays_visible(true);
-    TEST_ASSERT(hud->is_visible());
-    TEST_ASSERT(meter_overlay->is_visible());
-
-    host.toggle_all_overlays_visible();
-    TEST_ASSERT(!hud->is_visible());
-    TEST_ASSERT(!meter_overlay->is_visible());
-
-    host.toggle_all_overlays_visible();
-    TEST_ASSERT(hud->is_visible());
-    TEST_ASSERT(meter_overlay->is_visible());
 
     host.unregister_overlay("##LatencyHUDOverlay");
     TEST_ASSERT(host.find_overlay("##LatencyHUDOverlay") == nullptr);
@@ -319,19 +303,16 @@ TEST_CASE(Payload, HookManagerConsumerRegistrationRules) {
     TEST_ASSERT(first.use_action_calls == 0);
 }
 
-TEST_CASE(Payload, WndProcHookClickThroughAndState) {
+TEST_CASE(Payload, WndProcHookInstallState) {
     auto& wndproc = payload::WndProcHook::instance();
-    TEST_ASSERT(!wndproc.click_through());
+    static int fake_window = 0;
 
-    wndproc.set_click_through(true);
-    TEST_ASSERT(wndproc.click_through());
+    TEST_ASSERT(wndproc.install(&fake_window));
+    TEST_ASSERT(wndproc.is_installed());
+    TEST_ASSERT(wndproc.game_hwnd() == &fake_window);
 
-    wndproc.toggle_click_through();
-    TEST_ASSERT(!wndproc.click_through());
-
-    wndproc.toggle_click_through();
-    TEST_ASSERT(wndproc.click_through());
-    wndproc.set_click_through(false);
+    wndproc.uninstall();
+    TEST_ASSERT(!wndproc.is_installed());
 }
 
 TEST_CASE(Payload, Dx11HookStateAndShutdown) {

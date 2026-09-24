@@ -383,7 +383,7 @@ struct EncounterSummary {
 struct CombatConfig {
     bool   enabled{true};
     double inactivity_timeout_seconds{constants::DEFAULT_INACTIVITY_TIMEOUT_SECONDS};
-    bool   party_only{true};
+    bool   party_only{false};
     bool   show_bars{true};
     bool   hide_inactive{false};
     uint32_t refresh_interval_ms{500};

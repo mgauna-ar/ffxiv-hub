@@ -43,7 +43,7 @@ namespace constants {
     constexpr size_t MIN_SAMPLES_FOR_MEDIAN_FILTER = 5;
     constexpr size_t MAX_RTT_SAMPLE_WINDOW = 64;
     constexpr double MIN_OUTLIER_TOLERANCE_MS = 50.0;
-    constexpr double JITTER_SPIKE_MULTIPLIER = 3.0;
+    constexpr double JITTER_SPIKE_MULTIPLIER = 2.5;
 
     /// Default HUD placement and appearance. Also the target of a geometry reset.
     constexpr float DEFAULT_OVERLAY_X = 20.0f;

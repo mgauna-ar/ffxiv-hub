@@ -40,13 +40,7 @@ LRESULT CALLBACK hooked_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
         return DefWindowProcW(hwnd, msg, wparam, lparam);
     }
 
-    // Global hotkey Ctrl+\ toggles click-through mode across all overlays
-    if (msg == WM_KEYDOWN && wparam == VK_OEM_5 && (GetKeyState(VK_CONTROL) & 0x8000)) {
-        WndProcHook::instance().toggle_click_through();
-        return 0;
-    }
-
-    if (!WndProcHook::instance().click_through() && ImGui::GetCurrentContext() != nullptr) {
+    if (ImGui::GetCurrentContext() != nullptr) {
         // Forward message to ImGui Win32 backend
         ImGui_ImplWin32_WndProcHandler(hwnd, msg, wparam, lparam);
 

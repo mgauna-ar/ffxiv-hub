@@ -421,7 +421,7 @@ void render_healing_table(const meter::EncounterSummary& summary, float height) 
 void render_plugin_section(AppState& app_state) {
     begin_settings_card("##MeterPluginCard", ICON_SLIDERS, "METER BEHAVIOUR", colors::Accent);
 
-    bool party_only = cfg_bool(METER, "party_only", true);
+    bool party_only = cfg_bool(METER, "party_only", false);
     if (setting_toggle("Party members only", "Exclude everyone outside your party.", &party_only)) {
         cfg_store(METER, "party_only", party_only);
         app_state.send_combat_overlay_party_only(party_only);

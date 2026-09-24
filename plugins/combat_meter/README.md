@@ -8,6 +8,23 @@ and the damage every player took, by ability.
 Part of [FFXIV Hub](../../README.md). Enable or disable it from its page in the desktop
 app, or from its card on the dashboard.
 
+<!-- ![The in-game combat meter during a pull](../../docs/images/combat-overlay.png) -->
+
+## At a glance
+
+- **Honest numbers.** A pull's clock starts on the first hit that lands and stops at the
+  last action, not at the timeout. HPS counts effective healing only.
+- **One row per player.** Pets are merged into their owners, and the Limit Break gets its
+  own row that is never counted toward anyone's DPS.
+- **Why a pull went wrong.** Every death, with its killing blow, a recap of the seconds
+  before it, the statuses held at the time, and how long the raise took. Damage taken is
+  broken down by ability.
+- **Uptime you can trust.** Buffs, debuffs and DoTs are tracked per target and per source.
+  A status that expires between reads is closed at its own timer, so uptime isn't rounded
+  to the polling interval.
+- **Every pull kept.** Pulls split on their own after inactivity, on a wipe, or on a zone
+  change, and are listed by duty with a clear or wipe badge.
+
 ---
 
 ## How encounters are tracked
@@ -145,10 +162,15 @@ and source: hits, total, average, largest hit, and deaths caused.
 
 ## Views
 
-**In-game overlay.** A draggable table showing the current encounter. It displays one
-metric at a time — damage or healing — selected by `overlay_metric`. Rows carry the
-combatant's job colour, taken from the hub's shared job style table so the overlay and the
-desktop always agree.
+**In-game overlay.** A draggable, resizable table showing the current encounter.
+
+- It shows one metric at a time, damage or healing, chosen by `overlay_metric`.
+- Rows carry the combatant's job colour. The colour comes from the hub's shared job style
+  table, so the overlay and the desktop always agree.
+- The Job column shows a three-letter abbreviation. Hover it for the full job name, or
+  *Limit Break* on the LB row.
+
+<!-- ![The Combat Meter's Damage tab with the pull list rail](../../docs/images/combat-damage-tab.png) -->
 
 **Desktop view.** Six tabs: **Damage**, **Healing**, **Damage Taken**, **Deaths**,
 **Buffs & Debuffs**, and **Settings**. Every tab but Settings shows a pull list rail on
@@ -167,7 +189,16 @@ is chosen, and it narrows to pull numbers on a small window. Beside it:
   enemies. Each status has its applications, time and uptime, and expands into each
   player or source.
 
-The in-game overlay stays a damage or healing table; the new views are desktop only.
+The in-game overlay stays a damage or healing table; the other views are desktop only.
+
+**Settings**
+
+| Section | Controls |
+|---|---|
+| Meter behaviour | *Party members only*, *Track deaths, buffs and debuffs*, *Hide idle combatants*, *Overlay refresh*, *End encounter after idle* |
+| In-game overlay | The shared overlay controls: visibility, lock, click-through, opacity, scale and hide conditions |
+| Meter display | *Meter metric*, *Job-coloured row bars*, and a toggle for each of the share, crit, direct hit and crit-direct-hit columns |
+| Maintenance | *Reset overlay position*, *End encounter*, *Reset all statistics* |
 
 Job colours are per-job, not per-role, and live in `src/common/ui/job_style.cpp` as the
 single source of truth.
@@ -184,7 +215,7 @@ not the intended interface.
 |---|---|---|---|
 | `plugin_enabled` | bool | `true` | Master switch. Off means no hook dispatch, no telemetry, no overlay. |
 | `inactivity_timeout_seconds` | float | `7.0` | Gap that splits one encounter from the next. |
-| `party_only` | bool | `true` | In-game overlay only: restrict rows to the synced party and the Limit Break row. Solo there is no party list, so it keeps every friendly row. |
+| `party_only` | bool | `false` | In-game overlay only: restrict rows to the synced party and the Limit Break row. Solo there is no party list, so it keeps every friendly row. |
 | `show_bars` | bool | `true` | Job-coloured progress bars behind rows. |
 | `hide_inactive` | bool | `false` | Hide combatants with no activity. |
 | `refresh_interval_ms` | int | `500` | How often the displayed snapshot refreshes. |
@@ -205,6 +236,71 @@ not the intended interface.
 
 An older `enabled` key is still read, so a configuration written before the master switch
 existed keeps its meaning.
+
+---
+
+## FAQ
+
+<details>
+<summary><b>Where is my pet's row?</b></summary>
+
+<br>
+
+It's inside yours. Pet damage is merged into its owner's total and DPS, and pet skills
+appear in the owner's per-action breakdown. See [Pet attribution](#pet-attribution).
+
+</details>
+
+<details>
+<summary><b>Why is my HPS lower than my total healing suggests?</b></summary>
+
+<br>
+
+HPS counts effective healing only. Overheal is shown next to it but never counted. See
+[Healing and overheal](#healing-and-overheal).
+
+</details>
+
+<details>
+<summary><b>Why doesn't the Limit Break count toward the player who pressed it?</b></summary>
+
+<br>
+
+It is the raid's damage, not one player's, so it gets its own row. It counts toward raid
+DPS only. See [Limit Break](#limit-break).
+
+</details>
+
+<details>
+<summary><b>A pull ended on its own, or split in two</b></summary>
+
+<br>
+
+Seven seconds without combat ends a pull, and so do a wipe and a zone change. For fights
+with long downtime, raise *End encounter after idle* in Settings. See
+[Starting and ending a pull](#starting-and-ending-a-pull).
+
+</details>
+
+<details>
+<summary><b>The in-game meter shows people outside my party</b></summary>
+
+<br>
+
+Turn on *Party members only* in Settings. When you are solo it keeps every friendly row,
+since there is no party list to filter by.
+
+</details>
+
+<details>
+<summary><b>The Deaths and Buffs & Debuffs tabs are empty</b></summary>
+
+<br>
+
+Check that *Track deaths, buffs and debuffs* is on. With it off, the meter doesn't read HP
+or status lists at all. See [Deaths, buffs and debuffs](#deaths-buffs-and-debuffs).
+
+</details>
 
 ---
 

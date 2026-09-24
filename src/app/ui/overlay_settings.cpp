@@ -83,7 +83,7 @@ void render_overlay_settings(AppState& app_state, const OverlaySettingsOptions& 
     }
 
     bool click_through = cfg_bool(section, "overlay_click_through", defaults.click_through);
-    if (setting_toggle("Click-through mode", "Mouse input passes to the game (Ctrl+\\).", &click_through)) {
+    if (setting_toggle("Click-through mode", "Mouse input passes to the game.",&click_through)) {
         cfg_store(section, "overlay_click_through", click_through);
         app_state.send_overlay_command(plugin, CommandId::SetClickThrough, click_through ? 1 : 0);
     }

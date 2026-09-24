@@ -196,10 +196,10 @@ TEST_CASE(Mitigator, LatencyPluginConfigSerialization) {
     TEST_ASSERT_NEAR(plugin.mitigator().get_config().min_animation_lock_ms, 30.0, 0.01);
 
     // spike_multiplier round-trips too (added alongside the desktop UI's live slider)
-    TEST_ASSERT_NEAR(plugin.mitigator().get_config().spike_multiplier, 3.0, 0.01);
-    doc["spike_multiplier"] = hub::config::JsonValue(2.5);
-    plugin.deserialize_config(doc);
     TEST_ASSERT_NEAR(plugin.mitigator().get_config().spike_multiplier, 2.5, 0.01);
+    doc["spike_multiplier"] = hub::config::JsonValue(3.0);
+    plugin.deserialize_config(doc);
+    TEST_ASSERT_NEAR(plugin.mitigator().get_config().spike_multiplier, 3.0, 0.01);
 }
 
 TEST_CASE(Mitigator, SpikeMultiplierAffectsOutlierThreshold) {

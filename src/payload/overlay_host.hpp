@@ -73,10 +73,6 @@ public:
         return ScaledFont{font, desired / size};
     }
 
-    // Hotkey & global overlay toggling
-    void set_all_overlays_visible(bool visible);
-    void toggle_all_overlays_visible();
-
 private:
     OverlayHost() = default;
     ~OverlayHost() { if (!hub::os::is_process_exiting()) { shutdown(); } }

@@ -80,7 +80,7 @@ private:
     EncounterEngine* m_engine{nullptr};
 
     std::atomic<bool> m_show_progress_bars{true};
-    std::atomic<bool> m_party_only{true};
+    std::atomic<bool> m_party_only{false};
     std::atomic<bool> m_hide_inactive{false};
     std::atomic<bool> m_show_col_share{true};
     std::atomic<bool> m_show_col_crit{true};

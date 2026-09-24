@@ -55,27 +55,6 @@ void OverlayHost::set_game_state(const GameStateProvider* provider) noexcept {
     }
 }
 
-void OverlayHost::set_all_overlays_visible(bool visible) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    for (auto& o : m_overlays) {
-        if (o) o->set_visible(visible);
-    }
-}
-
-void OverlayHost::toggle_all_overlays_visible() {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    bool any_visible = false;
-    for (const auto& o : m_overlays) {
-        if (o && o->is_visible()) {
-            any_visible = true;
-            break;
-        }
-    }
-    for (auto& o : m_overlays) {
-        if (o) o->set_visible(!any_visible);
-    }
-}
-
 } // namespace hub::payload
 
 #ifdef _WIN32

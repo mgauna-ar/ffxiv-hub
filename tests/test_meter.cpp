@@ -735,17 +735,17 @@ TEST_CASE(MeterPlugin, PluginLifecycleAndConfig) {
     plugin.serialize_config(json);
     TEST_ASSERT_TRUE(json["plugin_enabled"].as_bool(false));
     TEST_ASSERT_NEAR(json["inactivity_timeout_seconds"].as_double(0.0), 7.0, 0.01);
-    TEST_ASSERT_TRUE(json["party_only"].as_bool(false));
+    TEST_ASSERT_FALSE(json["party_only"].as_bool(true));
 
     // Modify and deserialize back
     json["inactivity_timeout_seconds"] = hub::config::JsonValue(10.0);
-    json["party_only"] = hub::config::JsonValue(false);
+    json["party_only"] = hub::config::JsonValue(true);
     json["overlay_width"] = hub::config::JsonValue(950);
     plugin.deserialize_config(json);
 
     TEST_ASSERT_NEAR(plugin.config().inactivity_timeout_seconds, 10.0, 0.01);
     TEST_ASSERT_NEAR(plugin.engine().inactivity_timeout(), 10.0, 0.01);
-    TEST_ASSERT_FALSE(plugin.config().party_only);
+    TEST_ASSERT_TRUE(plugin.config().party_only);
     TEST_ASSERT_NEAR(plugin.config().overlay.width, 950.0f, 0.01f);
 
     // The master switch round-trips under the shared key, and the legacy
