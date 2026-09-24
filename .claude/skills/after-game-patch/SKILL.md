@@ -64,7 +64,9 @@ Litany (786, a buff) and Vulnerability Up (638, a debuff); check both in the dif
 
 The generator reads the archives through `tools/xivdata/sqpack.py` (SqPack `.index`
 lookup and `datN` extraction) and `tools/xivdata/excel.py` (`.exh` header and `.exd` row
-pages). Both were verified against patch 7.56.
+pages). Both were verified against patch 7.56. String cells are SeStrings: inline macros
+are stripped except Hyphen (`0x1F`), which the sheet uses mid-name ("Tam-Tara") and is
+decoded to `-`.
 
 ## 3. Check the signatures
 

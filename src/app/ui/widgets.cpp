@@ -426,6 +426,8 @@ void job_badge(game::Job job, bool is_limit_break) {
     const ImVec2 p = ImGui::GetCursorScreenPos();
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
+    // Opaque base first: the tint alone sinks into a row bar of the same colour.
+    dl->AddRectFilled(p, ImVec2(p.x + width, p.y + height), colors::SurfaceLow, m(4.0f));
     dl->AddRectFilled(p, ImVec2(p.x + width, p.y + height), colors::with_alpha(color, 0.16f), m(4.0f));
     dl->AddRect(p, ImVec2(p.x + width, p.y + height), colors::with_alpha(color, 0.35f), m(4.0f));
     dl->AddText(ImVec2(p.x + (width - size.x) * 0.5f, p.y + m(1.0f)), color, text);
@@ -478,11 +480,13 @@ bool toggle(const char* id, bool* value) {
 
 bool button(const char* label, ButtonKind kind, ButtonSize size) {
     float width = 0.0f;
+    float height = m(metrics::ButtonH);
     switch (size) {
         case ButtonSize::Small:  width = m(metrics::ButtonSm); break;
         case ButtonSize::Medium: width = m(metrics::ButtonMd); break;
         case ButtonSize::Large:  width = m(metrics::ButtonLg); break;
         case ButtonSize::Fit:    width = 0.0f; break;
+        case ButtonSize::Icon:   width = height = ImGui::GetFrameHeight(); break;
     }
 
     switch (kind) {
@@ -509,7 +513,12 @@ bool button(const char* label, ButtonKind kind, ButtonSize size) {
             break;
     }
 
-    const bool pressed = ImGui::Button(label, ImVec2(width, m(metrics::ButtonH)));
+    // The frame padding is wider than an icon square, which would push the glyph
+    // off-centre and clip it.
+    const bool icon = size == ButtonSize::Icon;
+    if (icon) ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 0.0f));
+    const bool pressed = ImGui::Button(label, ImVec2(width, height));
+    if (icon) ImGui::PopStyleVar();
     ImGui::PopStyleColor(5);
     return pressed;
 }

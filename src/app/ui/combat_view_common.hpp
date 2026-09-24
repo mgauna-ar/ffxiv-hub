@@ -11,8 +11,11 @@ namespace hub::app::ui {
 
 /// Base flags every Combat table shares; table_sizing() picks the sizing policy per
 /// table, which is what lets a narrow window scroll instead of crushing the columns.
+/// PadOuterX because without outer borders ImGui drops the edge padding and the
+/// first and last columns touch the table's sides.
 constexpr ImGuiTableFlags kCombatTableFlags = ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY |
-                                              ImGuiTableFlags_BordersInnerV;
+                                              ImGuiTableFlags_BordersInnerV |
+                                              ImGuiTableFlags_PadOuterX;
 
 /// Header row in the dim header colour every Combat table uses.
 void combat_table_headers_row();

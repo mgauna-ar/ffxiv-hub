@@ -31,7 +31,7 @@ _INT_FORMATS = {
 
 
 def decode_sestring(raw: bytes) -> str:
-    """Game strings carry inline macro payloads; keep only the literal text."""
+    """Game strings carry inline macro payloads; keep only the literal text (and hyphens)."""
     out = bytearray()
     i = 0
     while i < len(raw):
@@ -40,6 +40,9 @@ def decode_sestring(raw: bytes) -> str:
             end = raw.find(b"\x03", i)
             if end == -1:
                 break
+            # Hyphen is text, not formatting: "Tam-Tara" is stored as Tam<0x1F>Tara.
+            if i + 1 < end and raw[i + 1] == 0x1F:
+                out += b"-"
             i = end + 1
             continue
         out.append(byte)

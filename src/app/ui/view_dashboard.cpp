@@ -47,7 +47,7 @@ struct AttachStatus {
 AttachStatus attach_status(AppState& app_state) {
     if (app_state.game_pid() == 0) {
         return { "Waiting for game", colors::TextMuted,
-                 "Start Final Fantasy XIV (Dawntrail) and the hub attaches by itself.",
+                 "Start Final Fantasy XIV and the hub attaches by itself.",
                  colors::TextDim };
     }
     if (app_state.is_access_denied()) {

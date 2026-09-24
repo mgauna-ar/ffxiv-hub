@@ -67,47 +67,156 @@ std::string format_clock_time(uint64_t unix_seconds) {
     return buf;
 }
 
+/// A status word and the colour it is drawn in.
+struct Badge {
+    const char* label;
+    uint32_t color;
+};
+
 /// Encounter state as a badge, so the live/wipe/clear distinction is visible at a
 /// glance instead of being one more grey word in a row of separators.
-void encounter_state_pill(meter::EncounterState state) {
+Badge encounter_state_badge(meter::EncounterState state) {
     switch (state) {
-        case meter::EncounterState::InCombat: pill("In combat", colors::SuccessLight); return;
-        case meter::EncounterState::Wipe:     pill("Wipe", colors::Danger); return;
-        case meter::EncounterState::Complete: pill("Clear", colors::WarningLight); return;
-        default: break;
-    }
-    pill("Idle", colors::TextDim);
-}
-
-/// Outcome badge for an archived pull.
-const char* pull_outcome_label(meter::EncounterState state) {
-    switch (state) {
-        case meter::EncounterState::Wipe:     return "Wipe";
-        case meter::EncounterState::Complete: return "Clear";
-        default:                              return "Timeout";
+        case meter::EncounterState::InCombat: return {"In combat", colors::SuccessLight};
+        case meter::EncounterState::Wipe:     return {"Wipe", colors::Danger};
+        case meter::EncounterState::Complete: return {"Clear", colors::WarningLight};
+        default:                              return {"Idle", colors::TextDim};
     }
 }
 
-uint32_t pull_outcome_color(meter::EncounterState state) {
+/// How an archived pull ended. Anything but a wipe or a clear timed out.
+Badge pull_outcome_badge(meter::EncounterState state) {
     switch (state) {
-        case meter::EncounterState::Wipe:     return colors::Danger;
-        case meter::EncounterState::Complete: return colors::WarningLight;
-        default:                              return colors::TextDim;
+        case meter::EncounterState::Wipe:     return {"Wipe", colors::Danger};
+        case meter::EncounterState::Complete: return {"Clear", colors::WarningLight};
+        default:                              return {"Timeout", colors::TextDim};
     }
+}
+
+float rail_row_height() {
+    return ImGui::GetTextLineHeight() + m(6.0f);
 }
 
 /// One selectable rail row with a badge flush right. The badge is drawn over the
 /// selectable, so the whole row stays clickable.
-bool rail_row(const char* label, bool selected, const char* badge, uint32_t badge_color) {
-    const float row_h = ImGui::GetTextLineHeight() + m(6.0f);
+bool rail_row(const char* label, bool selected, Badge badge) {
     ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign, ImVec2(0.0f, 0.5f));
     const bool clicked = ImGui::Selectable(label, selected, ImGuiSelectableFlags_AllowOverlap,
-                                           ImVec2(0.0f, row_h));
+                                           ImVec2(0.0f, rail_row_height()));
     ImGui::PopStyleVar();
     ImGui::SameLine();
-    right_align(pill_width(badge));
-    pill(badge, badge_color);
+    right_align(pill_width(badge.label));
+    pill(badge.label, badge.color);
     return clicked;
+}
+
+/// One archived pull: outcome dot, number and duration, then deaths and end time
+/// only while they fit, so a narrow rail drops detail instead of clipping it. The
+/// tooltip always carries all of it.
+bool pull_row(const meter::PullHistoryEntry& pull, bool selected, float number_w) {
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const float right = pos.x + ImGui::GetContentRegionAvail().x;
+    const float row_h = rail_row_height();
+    const std::string id = "##Pull" + std::to_string(pull.encounter_id);
+    const bool clicked = ImGui::Selectable(id.c_str(), selected, ImGuiSelectableFlags_None,
+                                           ImVec2(0.0f, row_h));
+
+    const Badge outcome = pull_outcome_badge(pull.state);
+    const std::string number = "#" + std::to_string(pull.encounter_id);
+    const std::string duration = format_duration(static_cast<uint64_t>(pull.duration_seconds));
+    const bool has_clock = pull.ended_at_unix_s != 0;
+    const std::string clock = format_clock_time(pull.ended_at_unix_s);
+
+    if (ImGui::IsItemHovered()) {
+        const char* plural = pull.death_count == 1 ? "" : "s";
+        if (has_clock) {
+            ImGui::SetTooltip("Pull %s - %s\nEnded %s - %s - %zu death%s", number.c_str(),
+                              outcome.label, clock.c_str(), duration.c_str(), pull.death_count, plural);
+        } else {
+            ImGui::SetTooltip("Pull %s - %s\n%s - %zu death%s", number.c_str(), outcome.label,
+                              duration.c_str(), pull.death_count, plural);
+        }
+    }
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float line_h = ImGui::GetTextLineHeight();
+    const float text_y = pos.y + (row_h - line_h) * 0.5f;
+    const float gap = m(8.0f);
+    const float dot_r = m(3.0f);
+
+    float x = pos.x;
+    dl->AddCircleFilled(ImVec2(x + dot_r, text_y + line_h * 0.5f), dot_r, outcome.color);
+    x += dot_r * 2.0f + m(6.0f);
+    dl->AddText(ImVec2(x, text_y), selected ? colors::TextPrimary : colors::TextMuted, number.c_str());
+    x += number_w + gap;
+
+    const float duration_w = ImGui::CalcTextSize(duration.c_str()).x;
+    if (x + duration_w > right) return clicked;
+    dl->AddText(ImVec2(x, text_y), selected ? colors::TextPrimary : colors::TextBody, duration.c_str());
+    x += duration_w + gap;
+
+    // Deaths outrank the end time, so the time only gets what the deaths leave.
+    float room = right - x;
+    if (pull.death_count > 0) {
+        const std::string deaths = ICON_SKULL " " + std::to_string(pull.death_count);
+        const float deaths_w = ImGui::CalcTextSize(deaths.c_str()).x;
+        if (deaths_w > room) return clicked;
+        dl->AddText(ImVec2(x, text_y), colors::DangerLight, deaths.c_str());
+        room -= deaths_w + gap;
+    }
+    const float clock_w = ImGui::CalcTextSize(clock.c_str()).x;
+    if (has_clock && clock_w <= room) {
+        dl->AddText(ImVec2(right - clock_w, text_y), colors::TextDim, clock.c_str());
+    }
+    return clicked;
+}
+
+/// Clearing drops every archived pull, so it asks first.
+void render_clear_history_popup(AppState& app_state, size_t pull_count) {
+    if (!ImGui::BeginPopupModal("##ConfirmClearPulls", nullptr,
+                                ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
+        return;
+    }
+    icon_chip(ICON_WARNING, colors::Danger, metrics::ChipSizeLg);
+    ImGui::SameLine(0.0f, m(10.0f));
+    ImGui::BeginGroup();
+    const std::string title = pull_count == 1
+        ? std::string("Clear the archived pull?")
+        : "Clear all " + std::to_string(pull_count) + " archived pulls?";
+    ImGui::PushFont(bold_font());
+    text_colored_u32(colors::TextPrimary, "%s", title.c_str());
+    ImGui::PopFont();
+    text_colored_u32(colors::TextDim, "%s", "The live encounter is kept.");
+    ImGui::EndGroup();
+    ImGui::Dummy(ImVec2(0.0f, m(8.0f)));
+
+    if (button(ICON_TRASH "  Clear history", ButtonKind::Danger, ButtonSize::Medium)) {
+        app_state.clear_pull_history();
+        s_selected_pull_id = 0;
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine(0.0f, m(8.0f));
+    if (button("Cancel", ButtonKind::Secondary, ButtonSize::Small)) {
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
+/// Label over the archive, with the action that clears it on the same line.
+void render_history_header(bool has_pulls) {
+    const float icon_w = ImGui::GetFrameHeight();
+    const float start_y = ImGui::GetCursorPosY();
+    ImGui::SetCursorPosY(start_y + (icon_w - ImGui::GetTextLineHeight()) * 0.5f);
+    text_colored_u32(colors::TextDim, "%s", "PULL HISTORY");
+    ImGui::SameLine();
+    right_align(icon_w);
+    ImGui::SetCursorPosY(start_y);
+    ImGui::BeginDisabled(!has_pulls);
+    if (button(ICON_TRASH "##ClearPulls", ButtonKind::Danger, ButtonSize::Icon)) {
+        ImGui::OpenPopup("##ConfirmClearPulls");
+    }
+    ImGui::EndDisabled();
+    if (has_pulls && ImGui::IsItemHovered()) ImGui::SetTooltip("Clear pull history");
 }
 
 /// The one place a pull is chosen: live at the top, then the archive grouped by
@@ -116,76 +225,61 @@ void render_pull_rail(AppState& app_state, const std::vector<meter::PullHistoryE
                       bool is_live, float width) {
     CardOptions opts{};
     begin_card("##PullRail", ImVec2(width, fill_h(0.0f)), opts);
-    const bool compact = width < m(180.0f);
 
-    const auto live_state = s_live_summary.state;
-    const char* live_badge = live_state == meter::EncounterState::InCombat ? "Active" : "Idle";
-    if (rail_row("Live##LivePull", is_live, live_badge,
-                 live_state == meter::EncounterState::InCombat ? colors::SuccessLight
-                                                               : colors::TextDim)) {
+    const bool live_active = s_live_summary.state == meter::EncounterState::InCombat;
+    const Badge live_badge = live_active ? Badge{"Active", colors::SuccessLight}
+                                         : Badge{"Idle", colors::TextDim};
+    if (rail_row("Live##LivePull", is_live, live_badge)) {
         s_selected_pull_id = 0;
     }
-    ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
+    ImGui::Dummy(ImVec2(0.0f, m(6.0f)));
+    render_history_header(!pull_history.empty());
+    ImGui::Dummy(ImVec2(0.0f, m(2.0f)));
 
     if (pull_history.empty()) {
         ImGui::PushTextWrapPos(0.0f);
         text_colored_u32(colors::TextFaint, "%s", "Finished pulls appear here.");
         ImGui::PopTextWrapPos();
-        end_card();
-        return;
-    }
+    } else {
+        ImGui::BeginChild("##PullList", ImVec2(0.0f, fill_h(0.0f)), ImGuiChildFlags_None);
 
-    // The list scrolls on its own so the clear button stays pinned underneath.
-    const float footer_h = ImGui::GetFrameHeight() + m(8.0f);
-    ImGui::BeginChild("##PullList", ImVec2(0.0f, fill_h(0.0f) - footer_h), ImGuiChildFlags_None);
+        // Sized to the widest number so every row's duration starts in one column.
+        uint64_t max_id = 0;
+        for (const auto& pull : pull_history) max_id = std::max(max_id, pull.encounter_id);
+        const float number_w = ImGui::CalcTextSize(("#" + std::to_string(max_id)).c_str()).x;
 
-    const auto selected_idx = find_pull_index(pull_history, s_selected_pull_id);
-    const auto groups = meter::group_pulls_by_zone(pull_history);
-    for (size_t g = 0; g < groups.size(); ++g) {
-        const auto& group = groups[g];
-        const bool holds_selection =
-            selected_idx && std::find(group.pulls.begin(), group.pulls.end(), *selected_idx)
-                                != group.pulls.end();
+        const auto selected_idx = find_pull_index(pull_history, s_selected_pull_id);
+        const auto groups = meter::group_pulls_by_zone(pull_history);
+        for (size_t g = 0; g < groups.size(); ++g) {
+            const auto& group = groups[g];
+            const bool holds_selection =
+                selected_idx && std::find(group.pulls.begin(), group.pulls.end(), *selected_idx)
+                                    != group.pulls.end();
 
-        // Opened once so the newest duty (and whichever holds the current
-        // selection) starts expanded; after that the user's own toggling wins.
-        ImGui::PushID(static_cast<int>(group.zone_id));
-        ImGui::SetNextItemOpen(g == 0 || holds_selection, ImGuiCond_Once);
-        const std::string header = group.label + "  (" + std::to_string(group.pulls.size()) + ")";
-        ImGui::PushStyleColor(ImGuiCol_Text, v4(colors::TextMuted));
-        const bool open = ImGui::TreeNodeEx(header.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth);
-        ImGui::PopStyleColor();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", group.label.c_str());
-        if (open) {
-            for (size_t idx : group.pulls) {
-                const auto& pull = pull_history[idx];
-                std::string label = "#" + std::to_string(pull.encounter_id);
-                if (!compact) {
-                    label += "  " + format_clock_time(pull.ended_at_unix_s) + "  " +
-                             format_duration(static_cast<uint64_t>(pull.duration_seconds));
-                    if (pull.death_count > 0) {
-                        label += "  " ICON_SKULL " " + std::to_string(pull.death_count);
+            // Opened once so the newest duty (and whichever holds the current
+            // selection) starts expanded; after that the user's own toggling wins.
+            ImGui::PushID(static_cast<int>(group.zone_id));
+            ImGui::SetNextItemOpen(g == 0 || holds_selection, ImGuiCond_Once);
+            const std::string header = group.label + "  (" + std::to_string(group.pulls.size()) + ")";
+            ImGui::PushStyleColor(ImGuiCol_Text, v4(colors::TextMuted));
+            const bool open = ImGui::TreeNodeEx(header.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth);
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", group.label.c_str());
+            if (open) {
+                for (size_t idx : group.pulls) {
+                    const auto& pull = pull_history[idx];
+                    if (pull_row(pull, s_selected_pull_id == pull.encounter_id, number_w)) {
+                        s_selected_pull_id = pull.encounter_id;
                     }
                 }
-                label += "##Pull" + std::to_string(pull.encounter_id);
-                if (rail_row(label.c_str(), s_selected_pull_id == pull.encounter_id,
-                             pull_outcome_label(pull.state), pull_outcome_color(pull.state))) {
-                    s_selected_pull_id = pull.encounter_id;
-                }
+                ImGui::TreePop();
             }
-            ImGui::TreePop();
+            ImGui::PopID();
         }
-        ImGui::PopID();
+        ImGui::EndChild();
     }
-    ImGui::EndChild();
 
-    ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
-    if (button(ICON_TRASH "  Clear##ClearPulls", ButtonKind::Danger, ButtonSize::Small)) {
-        app_state.clear_pull_history();
-        s_selected_pull_id = 0;
-    }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear pull history");
-
+    render_clear_history_popup(app_state, pull_history.size());
     end_card();
 }
 
@@ -240,12 +334,13 @@ void render_top_bar(AppState& app_state, const meter::EncounterSummary& summary,
     stat("DEATHS", std::to_string(summary.deaths.size()),
          summary.deaths.empty() ? colors::TextPrimary : colors::DangerLight);
 
-    const float actions_w = m(metrics::ButtonMd) + m(130.0f);
+    const Badge state = encounter_state_badge(summary.state);
+    const float actions_w = pill_width(state.label) + m(10.0f) + m(metrics::ButtonMd);
     if (same_line_if_room(actions_w, metrics::Gutter)) {
         right_align(actions_w);
         ImGui::SetCursorPosY(line_top + m(3.0f));
     }
-    encounter_state_pill(summary.state);
+    pill(state.label, state.color);
     ImGui::SameLine(0.0f, m(10.0f));
     if (button(ICON_RESET "  Reset encounter", ButtonKind::Danger, ButtonSize::Medium)) {
         app_state.reset_encounter();
@@ -313,7 +408,7 @@ void render_damage_table(const meter::EncounterSummary& summary, float height) {
         row_progress_bar(static_cast<float>(c.dps / top_dps), get_job_color_u32(c.job));
 
         ImGui::TableSetColumnIndex(0);
-        text_colored_u32(colors::TextDim, "%d", rank++);
+        text_colored_u32(colors::TextMuted, "%d", rank++);
 
         ImGui::TableSetColumnIndex(1);
         combatant_job_cell(c);
@@ -386,7 +481,7 @@ void render_healing_table(const meter::EncounterSummary& summary, float height) 
         row_progress_bar(static_cast<float>(c.hps / top_hps), colors::Success);
 
         ImGui::TableSetColumnIndex(0);
-        text_colored_u32(colors::TextDim, "%d", rank++);
+        text_colored_u32(colors::TextMuted, "%d", rank++);
 
         ImGui::TableSetColumnIndex(1);
         combatant_job_cell(c);
@@ -655,14 +750,16 @@ float ranking_table_height() {
 }
 
 /// Rail on the left, the selected pull's top bar and a tab's body on the right. The
-/// rail narrows to pull numbers and badges on a small window. Only the ranking tabs
-/// have the ability drilldown under their table.
+/// rail narrows on a small window and its rows drop detail to fit. Only the ranking
+/// tabs have the ability drilldown under their table.
 template <typename TableFn>
 void render_pull_view(AppState& app_state, const meter::EncounterSummary& summary,
                       const std::vector<meter::PullHistoryEntry>& pull_history,
                       std::optional<size_t> selected_index, const char* id, TableFn&& table,
                       bool drilldown = true) {
-    const float rail_w = ImGui::GetContentRegionAvail().x < m(760.0f) ? m(130.0f) : m(210.0f);
+    const float avail = ImGui::GetContentRegionAvail().x;
+    const float rail_w = avail < m(760.0f) ? m(150.0f)
+                                           : std::clamp(avail * 0.15f, m(220.0f), m(260.0f));
     render_pull_rail(app_state, pull_history, !selected_index.has_value(), rail_w);
     ImGui::SameLine(0.0f, m(metrics::Gutter));
 

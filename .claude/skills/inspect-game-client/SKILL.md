@@ -21,7 +21,7 @@ combat meter treating party slot 0 as the local player. The install is at `~/ffx
 | Who calls this? | `python3 tools/inspect_exe.py xrefs 0x140b259b0` |
 | Who reads/writes this global or struct? | `python3 tools/inspect_exe.py xrefs 0x142aa0400 --span 0x20` |
 | Who writes this struct offset? | `python3 tools/inspect_exe.py field 0x7fdc --writes` (drop `--writes` for reads) |
-| Game sheet data | `tools/xivdata`: `Sheet(SqPack(game_dir + "/sqpack/ffxiv"), "TerritoryType").rows()` |
+| Game sheet data | `tools/xivdata`: `Sheet(SqPack(game_dir + "/sqpack/ffxiv"), "TerritoryType").rows()`. String cells come back with SeString macros stripped, except Hyphen (`0x1F`) as `-` |
 
 `inspect_exe.py` wraps `tools/xivbin/pe.py`, which is importable for anything the CLI does
 not cover (`Image.find_pattern`, `rip_target`, `func_containing`, `xrefs`,

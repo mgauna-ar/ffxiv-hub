@@ -153,7 +153,8 @@ void empty_state(const char* icon, const char* title, const char* hint);
 bool toggle(const char* id, bool* value);
 
 enum class ButtonKind { Primary, Secondary, Danger };
-enum class ButtonSize { Small, Medium, Large, Fit };
+/// Icon is a frame-height square for a lone glyph; give it a tooltip.
+enum class ButtonSize { Small, Medium, Large, Fit, Icon };
 
 /// The app's only button. Retires the nine ad-hoc ImVec2 sizes.
 bool button(const char* label, ButtonKind kind = ButtonKind::Secondary,

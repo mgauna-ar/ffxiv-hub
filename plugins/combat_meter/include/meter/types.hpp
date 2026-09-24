@@ -146,13 +146,22 @@ enum class EncounterEndReason : uint8_t {
 
 /// Label for an encounter's territory: an explicitly supplied name, else the duty
 /// name for that territory id, else the raw id, and empty when the zone was never
-/// observed (solo play, where the party list the id comes from is empty).
+/// observed (solo play, where the party list the id comes from is empty). The sheet
+/// writes duties mid-sentence ("the Aurum Vale"), so the first letter is raised
+/// for use as a title.
 [[nodiscard]] inline std::string zone_label(uint32_t zone_id, std::string_view zone_name) {
-    if (!zone_name.empty()) return std::string(zone_name);
-    if (const std::string_view duty = hub::game::territory_name(zone_id); !duty.empty()) {
-        return std::string(duty);
+    std::string label;
+    if (!zone_name.empty()) {
+        label = zone_name;
+    } else if (const std::string_view duty = hub::game::territory_name(zone_id); !duty.empty()) {
+        label = duty;
+    } else if (zone_id != 0) {
+        label = "Zone #" + std::to_string(zone_id);
     }
-    return zone_id != 0 ? "Zone #" + std::to_string(zone_id) : std::string();
+    if (!label.empty() && label[0] >= 'a' && label[0] <= 'z') {
+        label[0] = static_cast<char>(label[0] - 'a' + 'A');
+    }
+    return label;
 }
 
 [[nodiscard]] constexpr HitSeverity hit_flags_to_severity(uint16_t flags) noexcept {

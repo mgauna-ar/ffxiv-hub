@@ -686,6 +686,10 @@ TEST_CASE(MeterEngine, ZoneLabelPrefersNameThenTableThenId) {
     // Then the raw id, for a territory the sheet carries no duty for.
     TEST_ASSERT(zone_label(999999, "") == "Zone #999999");
     TEST_ASSERT(zone_label(0, "").empty());
+    // Duties are written mid-sentence in the sheet; a label is a title.
+    TEST_ASSERT(zone_label(0, "the Aurum Vale") == "The Aurum Vale");
+    // The hyphen is a macro in the sheet, not a literal character.
+    TEST_ASSERT(zone_label(1037, "") == "The Tam-Tara Deepcroft");
 }
 
 TEST_CASE(MeterEngine, TerritoryTableIsSortedAndResolves) {

@@ -141,7 +141,7 @@ void render_sidebar(AppState& app_state) {
     ImGui::PushFont(bold_font());
     text_colored_u32(colors::TextPrimary, "FFXIV HUB");
     ImGui::PopFont();
-    text_colored_u32(colors::TextDim, "Dawntrail 7.x - v1.0.0");
+    text_colored_u32(colors::TextDim, "v1.0.0");
     ImGui::EndGroup();
     ImGui::Unindent(m(6.0f));
     ImGui::Dummy(ImVec2(0.0f, m(6.0f)));

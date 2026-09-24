@@ -174,9 +174,11 @@ and source: hits, total, average, largest hit, and deaths caused.
 
 **Desktop view.** Six tabs: **Damage**, **Healing**, **Damage Taken**, **Deaths**,
 **Buffs & Debuffs**, and **Settings**. Every tab but Settings shows a pull list rail on
-the left. The live fight is at the top, then archived pulls grouped by duty with their
-end time, duration, death count and a clear/wipe badge. The rail is the only place a pull
-is chosen, and it narrows to pull numbers on a small window. Beside it:
+the left. The live fight is at the top, then the pull history grouped by duty: each pull
+has an outcome dot (gold clear, red wipe, grey timeout), its number and duration, then
+its death count and end time while the rail has room for them. Hovering a pull shows all
+of it. The trash button in the history header clears the archive after asking. The rail
+is the only place a pull is chosen, and it narrows on a small window. Beside it:
 
 - **Damage** and **Healing**: the selected pull's rankings, with share, crit, direct hit
   and crit-direct-hit rates, job-coloured bars and a Deaths column. A per-action

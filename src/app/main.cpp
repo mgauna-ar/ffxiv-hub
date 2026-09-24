@@ -262,7 +262,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     HWND hwnd = CreateWindowExW(
         WS_EX_APPWINDOW,
         L"FFXIVHubDesktopWindow",
-        L"FFXIV Hub - Dawntrail 7.x",
+        L"FFXIV Hub",
         WS_OVERLAPPEDWINDOW,
         100, 100, 1020, 680,
         nullptr, nullptr, hInstance, nullptr
