@@ -182,6 +182,21 @@ Re-verify both against the new executable with `tools/inspect_exe.py`, following
 Update the offsets and the `StatusManagerObject` padding together; its `static_assert`s
 pin the slots and the count.
 
+## 4c. Re-check the tick kinds
+
+The meter tells a DoT tick from a HoT tick by `ProcessHotDot`'s fourth argument, the
+effect kind, as recorded in
+[How the client reports DoT and HoT ticks](../../../plugins/combat_meter/AGENTS.md#how-the-client-reports-dot-and-hot-ticks).
+A patch can renumber it without breaking the signature. Disassemble the function
+`PROCESS_HOT_DOT_PRIMARY` resolves to and confirm:
+
+- It still branches on the fourth argument, with 3 taking the damage path and 4 the
+  healing one (`HOT_DOT_KIND_DAMAGE`, `HOT_DOT_KIND_HEAL`).
+- Its callers in the ActorControl handler (`xrefs <function>`) still pass the amount
+  fifth and the source sixth.
+
+If either moved, update the constants and that section together.
+
 ## 5. Verify
 
 ```bash

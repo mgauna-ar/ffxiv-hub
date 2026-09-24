@@ -5,9 +5,14 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace hub::payload {
+
+/// Whether a ProcessHotDot call is a heal (true) or damage (false) tick, from its
+/// effect kind. Empty for the kinds that move no HP, which are not ticks at all.
+[[nodiscard]] std::optional<bool> hot_dot_is_heal(uint32_t kind) noexcept;
 
 /**
  * @brief Centralized MinHook lifecycle for game memory detours.

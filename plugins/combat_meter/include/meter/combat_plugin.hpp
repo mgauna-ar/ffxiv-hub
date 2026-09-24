@@ -56,7 +56,12 @@ public:
     /// Master switch for the whole plugin. Off means no hook dispatch, no
     /// packets to the desktop app, and no overlay.
     void set_enabled(bool enabled) noexcept;
-    [[nodiscard]] bool is_enabled() const noexcept { return m_config.enabled; }
+    [[nodiscard]] bool is_enabled() const noexcept { return m_enabled.load(std::memory_order_relaxed); }
+
+    /// Stops streaming while the desktop app is disconnected: a backlog queued for
+    /// nobody would reach the next app at once and be booked as a pull milliseconds
+    /// long. The in-game engine and overlay keep running.
+    void set_connected(bool connected) noexcept { m_connected.store(connected, std::memory_order_relaxed); }
 
     /// One vitals pass, from the payload's orchestration thread: each actor's death
     /// or raise first, then its status list if it changed, both applied locally and
@@ -107,9 +112,17 @@ public:
     [[nodiscard]] CombatOverlay* overlay() const noexcept { return m_overlay; }
 
 private:
+    [[nodiscard]] bool streaming() const noexcept {
+        return m_ring_buffer != nullptr && m_connected.load(std::memory_order_relaxed);
+    }
+
     EncounterEngine m_engine;
     CombatConfig m_config;
     bool m_initialized{false};
+    /// m_config.enabled as the other threads read it; set from the pipe reader thread.
+    std::atomic<bool> m_enabled{true};
+    /// True until the payload says otherwise, so a plugin with a sink streams to it.
+    std::atomic<bool> m_connected{true};
     ipc::PacketRingBuffer* m_ring_buffer{nullptr};
     std::function<void(uint32_t)> m_actor_resolver;
     std::function<void(const void*)> m_actor_object_resolver;

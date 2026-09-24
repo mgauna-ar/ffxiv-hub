@@ -60,6 +60,11 @@ namespace definitions {
     /// StatusManager slots. The client uses 30 until SetStatus grows it to 60.
     constexpr size_t MAX_STATUS_SLOTS = 60;
     constexpr uint8_t DEFAULT_STATUS_SLOTS = 30;
+
+    /// ProcessHotDot's effect kind, in the game's ActionEffect numbering. Only these
+    /// two move HP; MP (11) and job gauge (14) gains reach the same function.
+    constexpr uint32_t HOT_DOT_KIND_DAMAGE = 3;
+    constexpr uint32_t HOT_DOT_KIND_HEAL = 4;
 } // namespace definitions
 
 /// Byte indices into the game's Conditions flag array. Each entry is a bool.

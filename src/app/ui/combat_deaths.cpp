@@ -160,7 +160,7 @@ void render_recap(const meter::DeathRecord& death, const SummaryNames& names, fl
         text_colored_u32(heal ? colors::SuccessLight : colors::DangerLight, "%s", recap_kind_label(event.kind));
         ImGui::TableSetColumnIndex(2);
         if (killing_blow) ImGui::PushFont(bold_font());
-        text_colored_u32(colors::TextBody, "%s", ability_label(event.action_key).c_str());
+        text_colored_u32(colors::TextBody, "%s", ability_label(event.action_key, heal).c_str());
         if (killing_blow) ImGui::PopFont();
         ImGui::TableSetColumnIndex(3);
         text_colored_u32(colors::TextMuted, "%s", names.name(event.source).c_str());

@@ -205,6 +205,7 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
     size_t last_combatant_count = 0;
     bool prev_connected = pipe_client->is_connected();
     latency_plugin->set_connected(prev_connected);
+    combat_plugin->set_connected(prev_connected);
 
     while (!g_shutdown_requested.load() && !hub::payload::Dx11Hook::is_shutting_down()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -218,6 +219,8 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
         if (connected != prev_connected) {
             hub::os::Logger::info(std::string("Pipe connection state changed -> ") + (connected ? "connected" : "disconnected"));
             latency_plugin->set_connected(connected);
+            // The meter keeps counting in-game but queues nothing for nobody.
+            combat_plugin->set_connected(connected);
             if (connected) {
                 // Whoever just connected has none of the names, party, zone or
                 // status lists this session already published. The caches

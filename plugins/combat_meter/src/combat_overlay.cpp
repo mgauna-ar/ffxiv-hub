@@ -397,7 +397,8 @@ void CombatOverlay::render_healing_table(const EncounterSummary& summary) {
             if (col_crit) {
                 ImGui::TableSetColumnIndex(col++);
                 center_in_row(row_h);
-                ImGui::Text("%.1f%%", player->hits.crit_rate());
+                // Heals are counted apart from damage hits.
+                ImGui::Text("%.1f%%", player->heal_hit_counts.crit_rate());
             }
 
             render_row_progress_bar(

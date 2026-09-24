@@ -49,7 +49,8 @@ It ends in one of four ways:
 2. **Wipe** — every synced party member confirmed dead. One survivor, or a raise, cancels it.
    Party HP is read from the party list on each sync (every 1.5 s); a death or a raise is
    republished to the desktop app so both sides see the wipe. A member whose HP has never
-   been read is not counted as dead.
+   been read is not counted as dead. Solo, the party is you alone: your own HP is read on
+   the same schedule, and nobody else you have come across counts.
 3. **Zone change** — any in-progress pull is finalised and archived. The zone is read from
    the party list, so solo play has no zone and pulls are filed under *Unknown zone*.
    Going solo mid-pull (the party disbanding) is not a zone change: the pull carries on
@@ -109,6 +110,9 @@ never toward any individual's damage, DPS or share.
 - **Ticks have no severity.** DoT and HoT ticks carry no crit flag from the game, so they
   are counted separately and kept out of the denominator for crit, DH and CDH rates.
   Including them would dilute every rate toward zero.
+- **Only damage and heal ticks count.** The game's tick handler also delivers MP and
+  job-gauge gains, such as Dancer's Esprit. They are neither damage nor healing and are
+  ignored.
 - **Enemy damage to players** is tracked as damage taken on the target, and never added to
   raid DPS. Each hit of an AoE is booked on the target it actually hit, so a self-centred
   AoE never lands on its caster and a raidwide never lands on the boss.
@@ -180,9 +184,10 @@ its death count and end time while the rail has room for them. Hovering a pull s
 of it. The trash button in the history header clears the archive after asking. The rail
 is the only place a pull is chosen, and it narrows on a small window. Beside it:
 
-- **Damage** and **Healing**: the selected pull's rankings, with share, crit, direct hit
-  and crit-direct-hit rates, job-coloured bars and a Deaths column. A per-action
-  drilldown shows min/avg/max hits and swing counts.
+- **Damage** and **Healing**: the selected pull's rankings. Damage has share, crit, direct
+  hit and crit-direct-hit rates, job-coloured bars and a Deaths column; Healing has total,
+  effective and overheal. Selecting a row opens a per-ability breakdown in the tab's own
+  metric, damage or effective healing: hits, total, min/avg/max and crit rate.
 - **Damage Taken**: each player's damage taken, hits and deaths. Below it, the abilities
   that hit the selected player, or everyone.
 - **Deaths**: every death with its time, killing blow, source, debuffs and time to raise.

@@ -113,7 +113,8 @@ public:
     /// Updates HP status and alive state.
     void update_hp(EntityId entity_id, uint32_t current_hp, uint32_t max_hp = 0);
 
-    /// Checks if all known party members are dead (current_hp == 0).
+    /// Checks if all known party members are dead (current_hp == 0). Solo, the
+    /// party is the local player alone.
     [[nodiscard]] bool is_party_wiped() const;
 
     /// Replaces an actor's status list and appends what started or stopped to

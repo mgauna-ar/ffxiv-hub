@@ -38,8 +38,9 @@ private:
     std::unordered_map<meter::EntityId, Entry> m_entries;
 };
 
-/// Ability name for a detail row's key; a status tick reads "Dia (DoT)".
-[[nodiscard]] std::string ability_label(meter::ActionId action_key);
+/// Ability name for a detail row's key; a status tick reads "Dia (DoT)", or
+/// "Regen (HoT)" when it is a heal.
+[[nodiscard]] std::string ability_label(meter::ActionId action_key, bool heal = false);
 
 /// Seconds as "12.3 s".
 [[nodiscard]] std::string format_seconds(double seconds);

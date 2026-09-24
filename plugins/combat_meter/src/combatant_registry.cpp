@@ -356,11 +356,19 @@ bool CombatantRegistry::is_party_wiped() const {
         return party_dead == m_party_members.size();
     }
 
+    // Solo the party is the local player alone. Former party members, strangers
+    // and pets are never read again, and one left alive blocked every solo wipe.
+    if (m_local_player_id != 0) {
+        const auto it = m_actors.find(m_local_player_id);
+        return it != m_actors.end() && confirmed_dead(it->second);
+    }
+
     // Fallback: check all players if no party was explicitly synced
     size_t players_known = 0;
     size_t players_dead = 0;
 
     for (const auto& [id, actor] : m_actors) {
+        if (is_pet(id)) continue;
         if (actor.actor_type == ActorType::Player || actor.role != Role::None) {
             players_known++;
             if (confirmed_dead(actor)) {

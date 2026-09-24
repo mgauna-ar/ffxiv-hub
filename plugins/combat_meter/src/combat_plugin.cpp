@@ -109,7 +109,12 @@ bool CombatPlugin::initialize() {
 }
 
 void CombatPlugin::update(double /*delta_seconds*/) {
-    if (!m_initialized || !m_config.enabled) {
+    if (!m_initialized || !is_enabled()) {
+        // Switched off mid-pull, the last "in combat" would otherwise stay set for
+        // every overlay's hide conditions.
+        if (m_game_state) {
+            m_game_state->set_packet_combat(false);
+        }
         return;
     }
     m_engine.update(std::chrono::steady_clock::now());
@@ -120,6 +125,7 @@ void CombatPlugin::update(double /*delta_seconds*/) {
 
 void CombatPlugin::set_enabled(bool enabled) noexcept {
     m_config.enabled = enabled;
+    m_enabled.store(enabled, std::memory_order_relaxed);
     // A disabled plugin must not leave its overlay painted over the game.
     // Suppressed rather than hidden: overlay_visible is the player's choice and
     // the autosave would persist a hide.
@@ -131,12 +137,12 @@ void CombatPlugin::set_enabled(bool enabled) noexcept {
 void CombatPlugin::set_overlay(CombatOverlay* overlay) noexcept {
     m_overlay = overlay;
     if (m_overlay) {
-        m_overlay->set_suppressed(!m_config.enabled);
+        m_overlay->set_suppressed(!is_enabled());
     }
 }
 
 bool CombatPlugin::vitals_enabled() const noexcept {
-    return m_initialized && m_config.enabled && m_track_vitals.load(std::memory_order_relaxed);
+    return m_initialized && is_enabled() && m_track_vitals.load(std::memory_order_relaxed);
 }
 
 void CombatPlugin::set_vitals_tracking(bool enabled) noexcept {
@@ -149,13 +155,13 @@ void CombatPlugin::invalidate_published_vitals() {
 }
 
 void CombatPlugin::on_vitals(std::span<const ActorVitals> actors, uint64_t now_us) {
-    if (!m_initialized || !m_config.enabled) {
+    if (!m_initialized || !is_enabled()) {
         return;
     }
     const bool tracking = m_track_vitals.load(std::memory_order_relaxed);
 
     const auto publish = [this](MessageType type, const auto& packet) {
-        if (m_ring_buffer) {
+        if (streaming()) {
             m_ring_buffer->push(ipc::serialize_typed_packet(PluginId::CombatMeter, type, ++m_vitals_sequence, packet));
         }
     };
@@ -207,7 +213,7 @@ void CombatPlugin::shutdown() {
 }
 
 void CombatPlugin::serialize_config(config::JsonValue& out) const {
-    out["plugin_enabled"] = config::JsonValue(m_config.enabled);
+    out["plugin_enabled"] = config::JsonValue(is_enabled());
     out["inactivity_timeout_seconds"] = config::JsonValue(m_config.inactivity_timeout_seconds);
     out["party_only"] = config::JsonValue(m_config.party_only);
     out["show_bars"] = config::JsonValue(m_config.show_bars);
@@ -237,6 +243,7 @@ void CombatPlugin::deserialize_config(const config::JsonValue& in) {
     // the shared "plugin_enabled" name.
     if (in.contains("enabled")) m_config.enabled = in["enabled"].as_bool(m_config.enabled);
     if (in.contains("plugin_enabled")) m_config.enabled = in["plugin_enabled"].as_bool(m_config.enabled);
+    m_enabled.store(m_config.enabled, std::memory_order_relaxed);
     if (in.contains("inactivity_timeout_seconds")) {
         m_config.inactivity_timeout_seconds = in["inactivity_timeout_seconds"].as_double(m_config.inactivity_timeout_seconds);
         m_engine.set_inactivity_timeout(m_config.inactivity_timeout_seconds);
@@ -280,7 +287,7 @@ void CombatPlugin::on_receive_action_effect(
     const void* effect_data,
     const uint64_t* targets
 ) {
-    if (!m_initialized || !m_config.enabled || !effect_header || !effect_data) {
+    if (!m_initialized || !is_enabled() || !effect_header || !effect_data) {
         return;
     }
 
@@ -335,7 +342,7 @@ void CombatPlugin::on_receive_action_effect(
             }
             m_engine.process_action(packet);
 
-            if (m_ring_buffer) {
+            if (streaming()) {
                 auto bytes = ipc::serialize_typed_packet(
                     PluginId::CombatMeter, MessageType::CombatAction, ++m_sequence, packet
                 );
@@ -352,7 +359,7 @@ void CombatPlugin::on_status_tick(
     uint32_t damage_or_heal,
     bool is_heal
 ) {
-    if (!m_initialized || !m_config.enabled || target_entity_id == 0) {
+    if (!m_initialized || !is_enabled() || target_entity_id == 0) {
         return;
     }
 
@@ -371,7 +378,7 @@ void CombatPlugin::on_status_tick(
 
     m_engine.process_status_tick(tick);
 
-    if (m_ring_buffer) {
+    if (streaming()) {
         auto bytes = ipc::serialize_typed_packet(
             PluginId::CombatMeter, MessageType::CombatStatusTick, ++m_sequence, tick
         );

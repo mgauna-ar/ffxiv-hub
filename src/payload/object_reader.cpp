@@ -587,6 +587,22 @@ void ObjectReader::sync_party(meter::CombatantRegistry* registry) {
         }
     }
 
+    // Solo the list is empty, and the local player's own object is the only HP the
+    // wipe check can read. Published like a member, so a death or raise reaches the app.
+    if (extracted.count == 0) {
+        uint32_t self_id = 0;
+        uint32_t self_hp = 0;
+        uint32_t self_max_hp = 0;
+        const auto* self = SafeReadLocalPlayerObject(m_local_player_id_addr, self_id, self_hp, self_max_hp);
+        ipc::ActorInfoPacket actor{};
+        if (self != nullptr && SafeReadCharacterFromObject(self, actor)) {
+            publish_actor(actor, registry);
+            if (registry) {
+                registry->update_hp(actor.entity_id, actor.current_hp, actor.max_hp);
+            }
+        }
+    }
+
     bool party_changed = false;
     {
         std::lock_guard<std::mutex> lock(m_cache_mutex);

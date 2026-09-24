@@ -848,7 +848,7 @@ TEST_CASE(MeterPlugin, CountsDamageOverTimeTicks) {
 
     const uint64_t damage_before = plugin.engine().accumulator().total_damage();
 
-    // damage_type != 0 and tick_mode != 4 => damage-over-time
+    // What the hook sends for effect kind 3, a damage-over-time tick.
     plugin.on_status_tick(0x40000123, 777, 1871, 4500, /*is_heal=*/false);
 
     TEST_ASSERT_EQ(plugin.engine().accumulator().total_damage(), damage_before + 4500u);
@@ -863,12 +863,12 @@ TEST_CASE(MeterPlugin, CountsDamageOverTimeTicks) {
 TEST_CASE(MeterPlugin, StatusTickIgnoredWhenDisabledOrTargetless) {
     CombatPlugin plugin;
     plugin.initialize();
-    plugin.config().enabled = false;
+    plugin.set_enabled(false);
 
     plugin.on_status_tick(0x40000123, 777, 1871, 4500, false);
     TEST_ASSERT_FALSE(plugin.engine().in_combat());
 
-    plugin.config().enabled = true;
+    plugin.set_enabled(true);
     plugin.on_status_tick(0, 777, 1871, 4500, false);
     TEST_ASSERT_FALSE(plugin.engine().in_combat());
 
@@ -952,6 +952,68 @@ TEST_CASE(MeterPlugin, EmitsCombatActionOverIpc) {
     std::memcpy(&payload, item.data() + sizeof(hub::ipc::PacketHeader), sizeof(payload));
     TEST_ASSERT_EQ(payload.action_id, 31u);
     TEST_ASSERT_EQ(payload.damage, 25000u);
+}
+
+TEST_CASE(MeterPlugin, StreamsNothingWhileDisconnected) {
+    // Packets queued with no app listening reached the next app all at once, and
+    // its engine booked the old fight as a pull a few milliseconds long.
+    CombatPlugin plugin;
+    plugin.initialize();
+    hub::ipc::PacketRingBuffer ring;
+    plugin.set_ring_buffer(&ring);
+    plugin.set_connected(false);
+
+    hub::game::ActionEffectHeader header{};
+    header.animation_target_id = 0x40001;
+    header.action_id = 31;
+    header.num_targets = 1;
+    std::array<hub::game::ActionEffectEntry, 8> entries{};
+    entries[0].effect_type = 0x03; // Damage
+    entries[0].value = 25000;
+
+    plugin.on_receive_action_effect(777, nullptr, &header, entries.data(), nullptr);
+    plugin.on_status_tick(0x40001, 777, 1871, 4500, /*is_heal=*/false);
+    ActorVitals vitals{};
+    vitals.entity = 777;
+    vitals.hp = 100;
+    vitals.max_hp = 100;
+    vitals.track_life = true;
+    vitals.statuses_read = true;
+    plugin.on_vitals(std::span<const ActorVitals>(&vitals, 1), 1'000'000);
+
+    std::vector<uint8_t> item;
+    TEST_ASSERT_FALSE(ring.pop(item));
+    // The in-game meter keeps counting.
+    TEST_ASSERT_EQ(plugin.engine().accumulator().total_damage(), 29500u);
+
+    plugin.set_connected(true);
+    plugin.on_receive_action_effect(777, nullptr, &header, entries.data(), nullptr);
+    TEST_ASSERT_TRUE(ring.pop(item));
+}
+
+TEST_CASE(MeterPlugin, DisablingMidPullClearsPacketCombat) {
+    // update() returned before publishing the combat bit once switched off, so a
+    // pull in progress left "in combat" set for every overlay.
+    CombatPlugin plugin;
+    plugin.initialize();
+    hub::GameStateProvider game_state;
+    plugin.set_game_state(&game_state);
+
+    hub::game::ActionEffectHeader header{};
+    header.animation_target_id = 0x40001;
+    header.action_id = 31;
+    header.num_targets = 1;
+    std::array<hub::game::ActionEffectEntry, 8> entries{};
+    entries[0].effect_type = 0x03; // Damage
+    entries[0].value = 25000;
+
+    plugin.on_receive_action_effect(777, nullptr, &header, entries.data(), nullptr);
+    plugin.update(0.05);
+    TEST_ASSERT_TRUE(game_state.has(hub::GameStateFlag::InCombat));
+
+    plugin.set_enabled(false);
+    plugin.update(0.05);
+    TEST_ASSERT_FALSE(game_state.has(hub::GameStateFlag::InCombat));
 }
 
 TEST_CASE(MeterEngine, ConcurrentProducersAndReaders) {
@@ -2130,6 +2192,50 @@ TEST_CASE(MeterRegistry, UnreadHpIsNotDeath) {
     reg.register_actor(1001, "War", Job::WAR, 0, ActorType::Player, 80000, 0);
     reg.register_actor(1002, "Whm", Job::WHM, 0, ActorType::Player, 60000, 0);
     TEST_ASSERT_TRUE(reg.is_party_wiped());
+}
+
+TEST_CASE(MeterRegistry, SoloWipeIsTheLocalPlayerAlone) {
+    // With no party list the fallback counted every player and pet ever seen, and
+    // one of them last read alive kept a solo death from ever being a wipe.
+    CombatantRegistry reg;
+    hub::ipc::PartySyncPacket solo{};
+    solo.local_player_id = 1001;
+    reg.sync_party(solo);
+    reg.register_actor(1001, "Me", Job::WAR, 0, ActorType::Player, 80000, 80000);
+    reg.register_actor(1002, "Former Member", Job::WHM, 0, ActorType::Player, 60000, 60000);
+    reg.register_actor(1003, "Eos", Job::None, 0, ActorType::Pet, 5000, 5000);
+    TEST_ASSERT_FALSE(reg.is_party_wiped());
+
+    reg.update_hp(1001, 0);
+    TEST_ASSERT_TRUE(reg.is_party_wiped());
+
+    // Without a local player id the old count stands, but a pet is never a player.
+    CombatantRegistry unknown;
+    unknown.register_actor(2001, "Eos", Job::None, 0, ActorType::Pet, 5000, 0);
+    TEST_ASSERT_FALSE(unknown.is_party_wiped());
+}
+
+TEST_CASE(MeterEngine, SoloDeathEndsThePullAsAWipe) {
+    // The app's engine learns the local player from the party sync and its death
+    // from actor info, the same as a party member's.
+    EncounterEngine engine;
+    hub::ipc::PartySyncPacket solo{};
+    solo.local_player_id = 1001;
+    engine.process_party_sync(solo);
+    engine.process_actor_info(party_actor(1001, Job::WAR, 80000, 80000));
+    engine.process_actor_info(party_actor(1002, Job::WHM, 60000, 60000));
+
+    auto hit = effect_packet(EffectType::Damage, 25000, 0);
+    hit.source_id = 1001;
+    hit.target_id = 0x40000001;
+    engine.process_action(hit);
+    TEST_ASSERT_TRUE(engine.in_combat());
+
+    engine.process_actor_info(party_actor(1001, Job::WAR, 0, 80000));
+    TEST_ASSERT_FALSE(engine.in_combat());
+    const auto pull = engine.latest_pull();
+    TEST_ASSERT_TRUE(pull.has_value());
+    TEST_ASSERT(pull->end_reason == EncounterEndReason::Wipe);
 }
 
 TEST_CASE(MeterPlugin, DeathAndRaiseAreRepublished) {

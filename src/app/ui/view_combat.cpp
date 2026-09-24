@@ -5,6 +5,7 @@
 #include "app/ui/combat_view_common.hpp"
 #include "app/ui/config_binding.hpp"
 #include "common/ui/icons.hpp"
+#include "common/ui/job_style.hpp"
 #include "app/ui/overlay_settings.hpp"
 #include "app/ui/plugin_page.hpp"
 #include "app/ui/theme.hpp"
@@ -356,6 +357,12 @@ void combatant_job_cell(const meter::CombatantStats& c) {
     job_badge(c.job, c.actor_type == meter::ActorType::LimitBreak);
 }
 
+/// A row's colour, from the same table as its Job badge, Limit Break included.
+uint32_t combatant_color(const meter::CombatantStats& c) {
+    const auto style = common::ui::combatant_style(c.job, c.actor_type == meter::ActorType::LimitBreak);
+    return colors::with_alpha(style.rgb, 1.0f);
+}
+
 /// Name cell shared by the damage and healing tables: a row-spanning selectable
 /// that drives the drilldown panel.
 void combatant_name_cell(const meter::CombatantStats& c, const char* id_prefix) {
@@ -405,7 +412,7 @@ void render_damage_table(const meter::EncounterSummary& summary, float height) {
         if (!c.is_friendly() && c.dps == 0.0) continue;
 
         ImGui::TableNextRow();
-        row_progress_bar(static_cast<float>(c.dps / top_dps), get_job_color_u32(c.job));
+        row_progress_bar(static_cast<float>(c.dps / top_dps), combatant_color(c));
 
         ImGui::TableSetColumnIndex(0);
         text_colored_u32(colors::TextMuted, "%d", rank++);
@@ -418,7 +425,7 @@ void render_damage_table(const meter::EncounterSummary& summary, float height) {
 
         ImGui::TableSetColumnIndex(3);
         ImGui::PushFont(bold_font());
-        text_colored_u32(get_job_color_u32(c.job), "%s", format_dps(c.dps).c_str());
+        text_colored_u32(combatant_color(c), "%s", format_dps(c.dps).c_str());
         ImGui::PopFont();
 
         ImGui::TableSetColumnIndex(4);
@@ -652,7 +659,20 @@ void render_settings_tab(AppState& app_state) {
     render_settings_grid(sections, std::size(sections));
 }
 
-void render_drilldown(const meter::EncounterSummary& summary) {
+/// Which breakdown a ranking tab opens under its table.
+enum class Drilldown { None, Damage, Healing };
+
+/// One ability in the breakdown, measured in the tab's own metric.
+struct AbilityRow {
+    const meter::ActionSummary* act{nullptr};
+    uint64_t total{0};
+    uint64_t min{0};
+    double avg{0.0};
+    uint64_t max{0};
+    const meter::HitCounts* hits{nullptr};
+};
+
+void render_drilldown(const meter::EncounterSummary& summary, Drilldown kind) {
     const meter::CombatantStats* selected = nullptr;
     for (const auto& c : summary.combatants) {
         if (c.entity_id == s_selected_drilldown_entity) {
@@ -662,30 +682,39 @@ void render_drilldown(const meter::EncounterSummary& summary) {
     }
     if (selected == nullptr) return;
 
+    const bool healing = kind == Drilldown::Healing;
     begin_card("##DrilldownCard", ImVec2(0.0f, fill_h(0.0f)));
 
     char header[128];
-    std::snprintf(header, sizeof(header), "ABILITY BREAKDOWN - %s", selected->name.c_str());
-    begin_section_header(ICON_CROSSHAIR, header, m(metrics::ButtonSm),
-                         get_job_color_u32(selected->job));
+    std::snprintf(header, sizeof(header), "%s BREAKDOWN - %s", healing ? "HEALING" : "ABILITY",
+                  selected->name.c_str());
+    begin_section_header(ICON_CROSSHAIR, header, m(metrics::ButtonSm), combatant_color(*selected));
     if (button(ICON_CIRCLE_X "  Close", ButtonKind::Secondary, ButtonSize::Small)) {
         s_selected_drilldown_entity = 0;
     }
     end_section_header();
 
-    std::vector<meter::ActionSummary> actions;
-    actions.reserve(selected->actions.size());
+    // Heals are kept apart from damage, so each tab only lists what it ranks.
+    std::vector<AbilityRow> rows;
+    rows.reserve(selected->actions.size());
     for (const auto& [_, act] : selected->actions) {
-        actions.push_back(act);
+        if (healing) {
+            if (act.heal_hits == 0) continue;
+            rows.push_back({&act, act.effective_healing, act.min_heal, act.average_healing(), act.max_heal,
+                            &act.heal_hit_counts});
+        } else {
+            if (act.damage_hits == 0 && act.hits.miss_hits == 0) continue;
+            rows.push_back({&act, act.total_damage, act.min_damage, act.average_damage(), act.max_damage,
+                            &act.hits});
+        }
     }
-    std::sort(actions.begin(), actions.end(),
-              [](const meter::ActionSummary& a, const meter::ActionSummary& b) {
-                  return a.total_damage > b.total_damage;
-              });
+    std::sort(rows.begin(), rows.end(),
+              [](const AbilityRow& a, const AbilityRow& b) { return a.total > b.total; });
 
-    if (actions.empty()) {
-        empty_state(ICON_CROSSHAIR, "No abilities recorded",
-                    "This combatant has not landed anything yet.");
+    if (rows.empty()) {
+        empty_state(ICON_CROSSHAIR, healing ? "No healing recorded" : "No abilities recorded",
+                    healing ? "This combatant has not healed anyone yet."
+                            : "This combatant has not landed anything yet.");
         end_card();
         return;
     }
@@ -693,7 +722,8 @@ void render_drilldown(const meter::EncounterSummary& summary) {
     const auto sizing = table_sizing(620.0f, kCombatTableFlags);
     if (ImGui::BeginTable("##DrilldownTable", 7, sizing.flags, ImVec2(0.0f, fill_h(0.0f)))) {
         ImGui::TableSetupColumn("Action", sizing.flex_flags(), sizing.flex_width(160.0f, 1.0f));
-        ImGui::TableSetupColumn("Casts", ImGuiTableColumnFlags_WidthFixed, m(60.0f));
+        // Every target of an AoE and every tick counts, so these are hits, not casts.
+        ImGui::TableSetupColumn("Hits", ImGuiTableColumnFlags_WidthFixed, m(60.0f));
         ImGui::TableSetupColumn("Total", ImGuiTableColumnFlags_WidthFixed, m(90.0f));
         ImGui::TableSetupColumn("Min", ImGuiTableColumnFlags_WidthFixed, m(75.0f));
         ImGui::TableSetupColumn("Avg", ImGuiTableColumnFlags_WidthFixed, m(75.0f));
@@ -702,38 +732,37 @@ void render_drilldown(const meter::EncounterSummary& summary) {
         ImGui::TableSetupScrollFreeze(0, 1);
         combat_table_headers_row();
 
-        const uint64_t top_damage = std::max<uint64_t>(actions.front().total_damage, 1);
-        for (const auto& act : actions) {
+        const uint64_t top = std::max<uint64_t>(rows.front().total, 1);
+        const uint32_t bar_color = healing ? colors::Success : combatant_color(*selected);
+        for (const AbilityRow& row : rows) {
             ImGui::TableNextRow();
-            row_progress_bar(static_cast<float>(static_cast<double>(act.total_damage) /
-                                                static_cast<double>(top_damage)),
-                             get_job_color_u32(selected->job));
+            row_progress_bar(static_cast<float>(static_cast<double>(row.total) / static_cast<double>(top)),
+                             bar_color);
 
             ImGui::TableSetColumnIndex(0);
-            text_colored_u32(colors::TextBody, "%s", act.name.c_str());
+            text_colored_u32(colors::TextBody, "%s", row.act->name.c_str());
 
             ImGui::TableSetColumnIndex(1);
-            text_colored_u32(colors::TextMuted, "%llu", static_cast<unsigned long long>(act.hit_count));
+            text_colored_u32(colors::TextMuted, "%llu", static_cast<unsigned long long>(row.act->hit_count));
 
             ImGui::TableSetColumnIndex(2);
-            text_colored_u32(colors::TextPrimary, "%s", format_damage(act.total_damage).c_str());
+            text_colored_u32(colors::TextPrimary, "%s", format_damage(row.total).c_str());
 
             ImGui::TableSetColumnIndex(3);
-            text_colored_u32(colors::TextMuted, "%s", format_damage(act.min_damage).c_str());
+            text_colored_u32(colors::TextMuted, "%s", format_damage(row.min).c_str());
 
             ImGui::TableSetColumnIndex(4);
-            text_colored_u32(colors::TextBody, "%s",
-                             format_damage(static_cast<uint64_t>(act.average_damage())).c_str());
+            text_colored_u32(colors::TextBody, "%s", format_damage(static_cast<uint64_t>(row.avg)).c_str());
 
             ImGui::TableSetColumnIndex(5);
-            text_colored_u32(colors::TextMuted, "%s", format_damage(act.max_damage).c_str());
+            text_colored_u32(colors::TextMuted, "%s", format_damage(row.max).c_str());
 
             ImGui::TableSetColumnIndex(6);
-            // DoT ticks carry no severity, so a status row has no crit rate to show.
-            if (act.hits.rated_hits() == 0) {
+            // Ticks carry no severity, so a status row has no crit rate to show.
+            if (row.hits->rated_hits() == 0) {
                 text_colored_u32(colors::TextMuted, "%s", "-");
             } else {
-                text_colored_u32(colors::TextMuted, "%s", format_percentage(act.hits.crit_rate()).c_str());
+                text_colored_u32(colors::TextMuted, "%s", format_percentage(row.hits->crit_rate()).c_str());
             }
         }
 
@@ -756,7 +785,7 @@ template <typename TableFn>
 void render_pull_view(AppState& app_state, const meter::EncounterSummary& summary,
                       const std::vector<meter::PullHistoryEntry>& pull_history,
                       std::optional<size_t> selected_index, const char* id, TableFn&& table,
-                      bool drilldown = true) {
+                      Drilldown drilldown) {
     const float avail = ImGui::GetContentRegionAvail().x;
     const float rail_w = avail < m(760.0f) ? m(150.0f)
                                            : std::clamp(avail * 0.15f, m(220.0f), m(260.0f));
@@ -767,9 +796,9 @@ void render_pull_view(AppState& app_state, const meter::EncounterSummary& summar
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
     render_top_bar(app_state, summary, selected_index ? &pull_history[*selected_index] : nullptr);
     ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
-    if (drilldown) {
+    if (drilldown != Drilldown::None) {
         table(summary, ranking_table_height());
-        render_drilldown(summary);
+        render_drilldown(summary, drilldown);
     } else {
         table(summary, fill_h(0.0f));
     }
@@ -819,20 +848,20 @@ void render_view_combat(AppState& app_state) {
         if (ImGui::BeginTabItem(ICON_SWORDS "  Damage")) {
             ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
             render_pull_view(app_state, current_summary, pull_history, selected_index,
-                             "##DamagePane", render_damage_table);
+                             "##DamagePane", render_damage_table, Drilldown::Damage);
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem(ICON_HEART "  Healing")) {
             ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
             render_pull_view(app_state, current_summary, pull_history, selected_index,
-                             "##HealingPane", render_healing_table);
+                             "##HealingPane", render_healing_table, Drilldown::Healing);
             ImGui::EndTabItem();
         }
         const bool tracking_on = cfg_bool(METER, "track_vitals", true);
         if (ImGui::BeginTabItem(ICON_SHIELD "  Damage Taken")) {
             ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
             render_pull_view(app_state, current_summary, pull_history, selected_index,
-                             "##TakenPane", render_damage_taken, false);
+                             "##TakenPane", render_damage_taken, Drilldown::None);
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem(ICON_SKULL "  Deaths")) {
@@ -840,7 +869,7 @@ void render_view_combat(AppState& app_state) {
             render_pull_view(app_state, current_summary, pull_history, selected_index, "##DeathsPane",
                              [tracking_on](const meter::EncounterSummary& summary, float height) {
                                  render_deaths(summary, height, tracking_on);
-                             }, false);
+                             }, Drilldown::None);
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem(ICON_SPARKLE "  Buffs & Debuffs")) {
@@ -848,7 +877,7 @@ void render_view_combat(AppState& app_state) {
             render_pull_view(app_state, current_summary, pull_history, selected_index, "##StatusPane",
                              [tracking_on](const meter::EncounterSummary& summary, float height) {
                                  render_statuses(summary, height, tracking_on);
-                             }, false);
+                             }, Drilldown::None);
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem(ICON_SLIDERS "  Settings")) {

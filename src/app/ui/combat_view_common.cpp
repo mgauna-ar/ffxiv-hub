@@ -37,9 +37,9 @@ game::Job SummaryNames::job(meter::EntityId id) const {
     return it != m_entries.end() ? it->second.job : game::Job::None;
 }
 
-std::string ability_label(meter::ActionId action_key) {
+std::string ability_label(meter::ActionId action_key, bool heal) {
     if ((action_key & meter::STATUS_ACTION_KEY_OFFSET) != 0) {
-        return meter::status_id_to_name(action_key & ~meter::STATUS_ACTION_KEY_OFFSET) + " (DoT)";
+        return meter::status_id_to_name(action_key & ~meter::STATUS_ACTION_KEY_OFFSET) + (heal ? " (HoT)" : " (DoT)");
     }
     return meter::action_id_to_name(action_key);
 }

@@ -11,6 +11,7 @@
 #include "common/config/json.hpp"
 #include <array>
 #include <atomic>
+#include <optional>
 #include "hub/game_definitions.hpp"
 
 using namespace hub;
@@ -813,4 +814,15 @@ TEST_CASE(Payload, DisabledPluginsIgnoreHookDispatch) {
     combat.set_enabled(true);
     combat.on_receive_action_effect(777, &chr, &header, entries.data(), nullptr);
     TEST_ASSERT_EQ(combat.engine().accumulator().total_damage(), 25000u);
+}
+
+TEST_CASE(Payload, HotDotKindDecidesDamageOrHeal) {
+    // The kind is the game's own effect numbering. The tick handler also carries MP
+    // (11) and job gauge (14) gains, which are not hits, and its classic category
+    // passes 0 as the last argument for every kind, DoTs included.
+    TEST_ASSERT(payload::hot_dot_is_heal(game::definitions::HOT_DOT_KIND_DAMAGE) == std::optional<bool>(false));
+    TEST_ASSERT(payload::hot_dot_is_heal(game::definitions::HOT_DOT_KIND_HEAL) == std::optional<bool>(true));
+    for (const uint32_t kind : {0u, 11u, 14u, 30u}) {
+        TEST_ASSERT_FALSE(payload::hot_dot_is_heal(kind).has_value());
+    }
 }

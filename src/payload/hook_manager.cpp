@@ -244,14 +244,20 @@ static void FFXIV_FASTCALL hooked_process_hot_dot(
         return;
     }
 
+    // The kind alone says damage or heal. damage_type is an attack type or a flag,
+    // and the classic tick category always passes 0 for it.
+    const std::optional<bool> is_heal = hot_dot_is_heal(tick_mode);
+    if (!is_heal) {
+        return;
+    }
+
     const uint32_t target_id = SafeReadEntityId(target);
     if (target_id == 0) {
         return;
     }
 
-    const bool is_heal = (tick_mode == 4 || damage_type == 0);
     for_each_consumer([&](IHookConsumer* c) {
-        c->on_status_tick(target_id, source_entity_id, static_cast<uint16_t>(status_id), value, is_heal);
+        c->on_status_tick(target_id, source_entity_id, static_cast<uint16_t>(status_id), value, *is_heal);
     });
 }
 
@@ -480,9 +486,16 @@ void HookManager::dispatch_receive_action_effect_test(
 
 #endif
 
-// Consumer registry. Platform independent, so it lives outside the branch above
-// rather than being duplicated into the Win32 and mock implementations.
+// The tick kind check and the consumer registry. Platform independent, so they live
+// outside the branch above rather than being duplicated into the Win32 and mock
+// implementations.
 namespace hub::payload {
+
+std::optional<bool> hot_dot_is_heal(uint32_t kind) noexcept {
+    if (kind == game::definitions::HOT_DOT_KIND_HEAL) return true;
+    if (kind == game::definitions::HOT_DOT_KIND_DAMAGE) return false;
+    return std::nullopt;
+}
 
 bool HookManager::register_consumer(IHookConsumer* consumer) noexcept {
     if (consumer == nullptr) return false;
