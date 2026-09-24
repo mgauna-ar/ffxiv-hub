@@ -32,10 +32,15 @@ ffxiv-hub/
 └── hub_payload.dll    # In-game hooks, overlays and telemetry
 ```
 
-### 2. Run it
+### 2. Run it as Administrator
 
-Double-click `ffxiv-hub.exe`. It opens the desktop manager and places an icon in the
-notification area. There is no console window and nothing is installed.
+Right-click `ffxiv-hub.exe` → **Run as administrator**. This is required: loading the
+payload into the game means writing into another process's memory and starting a thread
+there, and Windows does not permit that unelevated. Without it the Hub starts normally but
+never attaches, and the dashboard shows *"Injection was refused."*
+
+It opens the desktop manager and places an icon in the notification area. There is no
+console window and nothing is installed.
 
 > **Windows may warn you the first time.** The binaries are not code-signed. See
 > [Troubleshooting](#-troubleshooting) below — this is expected, and the fix is two clicks.
@@ -95,6 +100,16 @@ dollars a year and is not something an open-source hobby project buys. Click
 **More info → Run anyway**, or add an exclusion. The entire source is in this repository
 and you can build it yourself.
 
+**It never attaches to the game.**
+
+The most common cause is not running it as administrator — see step 2 above. The Hub will
+tell you when this is the problem: the dashboard reads *"Injection was refused. Run FFXIV
+Hub as administrator."* and `%APPDATA%/ffxiv-hub/hub.log` records the access-denied error
+with the game's PID.
+
+Note that elevating the Hub is required even when you did not start the game or its
+launcher as administrator yourself.
+
 **The overlays are not showing up.**
 
 Check that the plugin's master switch is on (dashboard card or its page header), then that
@@ -125,9 +140,6 @@ It is client-side only. It does not modify network packets, alter global cooldow
 automate anything — it adjusts a local timer after the server has already confirmed an
 action, and enforces a floor so that timer never goes below what a player on a fast
 connection would naturally have. The Combat Meter only reads.
-
----
-
 
 ---
 
