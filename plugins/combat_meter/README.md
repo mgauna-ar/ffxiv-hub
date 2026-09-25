@@ -9,7 +9,7 @@ the party's damage, healing and damage taken second by second.
 Part of [FFXIV Hub](../../README.md). Enable or disable it from its page in the desktop
 app, or from its card on the dashboard.
 
-<!-- ![The in-game combat meter during a pull](../../docs/images/combat-overlay.png) -->
+![The in-game combat meter during a pull](../../docs/images/combat-overlay.png)
 
 ## At a glance
 
@@ -341,7 +341,7 @@ chart has no buff bands and no deaths.
   combat ends, so the result can be read.
 - It is hidden while the Hub is closed. The meter keeps counting in the background.
 
-<!-- ![The Combat Meter's Damage tab with the pull list rail](../../docs/images/combat-damage-tab.png) -->
+![The Combat Meter's Damage tab with the pull list rail](../../docs/images/combat-damage-tab.png)
 
 **Desktop view.** Eight tabs: **Damage**, **Healing**, **Damage Taken**, **Deaths**,
 **Buffs & Debuffs**, **Casts**, **Timeline**, and **Settings**. Every tab but Settings
