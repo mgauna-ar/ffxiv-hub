@@ -1,11 +1,6 @@
 #include "app/app_state.hpp"
+#include "app/ui/app_frame.hpp"
 #include "app/ui/theme.hpp"
-#include "app/ui/sidebar.hpp"
-#include "app/ui/view_dashboard.hpp"
-#include "app/ui/view_combat.hpp"
-#include "app/ui/view_latency.hpp"
-#include "app/ui/view_settings.hpp"
-#include "common/ui/icon_font.hpp"
 #include "common/os/logger.hpp"
 #include "common/os/auto_start.hpp"
 #include "common/os/process_finder.hpp"
@@ -360,31 +355,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.IniFilename = nullptr; // Window layout managed independently via JSON config (ConfigManager), not imgui.ini
 
-    // Load the system's Segoe UI font at a real, DPI-scaled pixel size in place of ImGui's
-    // built-in bitmap font (which renders at a fixed, tiny size regardless of display scale).
     char windows_dir[MAX_PATH]{};
     GetWindowsDirectoryA(windows_dir, MAX_PATH);
-    const std::string regular_font_path = std::string(windows_dir) + "\\Fonts\\segoeui.ttf";
-    const std::string bold_font_path = std::string(windows_dir) + "\\Fonts\\segoeuib.ttf";
-    const float base_font_size = 16.0f * dpi_scale;
-
-    if (!io.Fonts->AddFontFromFileTTF(regular_font_path.c_str(), base_font_size)) {
-        hub::os::Logger::warn("Segoe UI not found; falling back to ImGui's built-in font.");
-        io.Fonts->AddFontDefault();
-    }
-    // Icons merge into whichever font was added last, so each font that renders them
-    // needs its own merge pass.
-    hub::common::ui::load_icon_font(base_font_size);
-
-    ImFont* bold = io.Fonts->AddFontFromFileTTF(bold_font_path.c_str(), base_font_size);
-    if (bold != nullptr) {
-        hub::common::ui::load_icon_font(base_font_size);
-    }
-    hub::app::ui::set_bold_font(bold);
-
-    hub::app::ui::set_ui_scale(dpi_scale);
-    hub::app::ui::apply_slate_theme();
-    ImGui::GetStyle().ScaleAllSizes(dpi_scale);
+    hub::app::ui::setup_fonts_and_theme(windows_dir, dpi_scale);
 
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
@@ -446,54 +419,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
 
-        // Fill entire window client area
-        ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
-        ImGui::SetNextWindowSize(io.DisplaySize);
-        ImGuiWindowFlags root_flags = ImGuiWindowFlags_NoTitleBar |
-                                      ImGuiWindowFlags_NoResize |
-                                      ImGuiWindowFlags_NoMove |
-                                      ImGuiWindowFlags_NoCollapse |
-                                      ImGuiWindowFlags_NoBringToFrontOnFocus;
-
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-
-        ImGui::Begin("##RootWindow", nullptr, root_flags);
-
-        // 1. Sidebar Navigation
-        hub::app::ui::render_sidebar(app_state);
-
-        ImGui::SameLine();
-
-        // 2. Main Content View Area
-        // Equal padding on all four edges, and a scrollbar so a page that outgrows
-        // the window is reachable instead of clipped at the bottom.
-        const float page_pad = hub::app::ui::m(hub::app::ui::metrics::PagePad);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(page_pad, page_pad));
-        ImGui::BeginChild("##MainContentViewArea", ImVec2(0.0f, 0.0f),
-                          ImGuiChildFlags_AlwaysUseWindowPadding);
-
-        switch (app_state.current_view()) {
-            case hub::app::DesktopView::Dashboard:
-                hub::app::ui::render_view_dashboard(app_state);
-                break;
-            case hub::app::DesktopView::CombatMeter:
-                hub::app::ui::render_view_combat(app_state);
-                break;
-            case hub::app::DesktopView::LatencyMitigator:
-                hub::app::ui::render_view_latency(app_state);
-                break;
-            case hub::app::DesktopView::Settings:
-                hub::app::ui::render_view_settings(app_state);
-                break;
-        }
-
-        ImGui::EndChild();
-        ImGui::PopStyleVar(); // WindowPadding
-
-        ImGui::End();
-        ImGui::PopStyleVar(3);
+        hub::app::ui::render_app_frame(app_state);
 
         ImGui::Render();
         const float clear_color[4] = { 0.043f, 0.055f, 0.078f, 1.0f };

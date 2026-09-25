@@ -13,10 +13,7 @@ See the DPS, healing, deaths and buff uptime of every pull. Weave oGCDs on a 200
 connection the way you would sitting next to the datacenter. It comes as two files with
 no installer.
 
-<!-- Screenshots live in docs/images/. Uncomment each tag once its file exists:
-     hero.png (desktop app beside both overlays), combat-overlay.png, combat-damage-tab.png,
-     latency-hud.png, latency-view.png. -->
-<!-- ![The FFXIV Hub desktop app beside the in-game combat meter and ping HUD](docs/images/hero.png) -->
+![The FFXIV Hub desktop app beside the in-game combat meter and ping HUD](docs/images/hero.png)
 
 [Highlights](#-highlights) · [Quick start](#-quick-start) · [Controls](#-controls) ·
 [Safety](#-safety-and-fair-play) · [FAQ](#-troubleshooting-and-faq) ·
@@ -417,7 +414,8 @@ ffxiv-hub/
 ├── plugins/combat_meter/        Combat Meter: analytics core, in-game table, plugin glue
 ├── plugins/latency_mitigator/   Latency Mitigator: RTT tracking, lock math, ping HUD
 ├── tests/                       Unit tests, runnable on Windows, macOS and Linux
-└── tools/, scripts/             Table generators, signature checks, game-client inspection
+└── tools/, scripts/             Table generators, signature checks, game-client inspection,
+                                 README screenshots
 ```
 
 ---
@@ -436,6 +434,21 @@ make
 
 This builds and runs the unit test suite, then syntax-checks the desktop UI code with
 Dear ImGui enabled.
+
+### README screenshots (macOS or Linux)
+
+The pictures in `docs/images/` are drawn by the desktop app's and the overlays' own code
+into a software rasterizer, over a made-up raid night, so they can be redrawn without
+Windows or the game. You need zlib, `curl` and `shasum` as well:
+
+```bash
+make screenshots
+```
+
+The first run downloads Selawik, Microsoft's openly licensed (OFL) stand-in for Segoe UI,
+and checks its SHA-256. To draw with other fonts, set `SHOTS_WINDOWS_DIR` to a folder
+whose `Fonts` subfolder holds `segoeui.ttf`, `segoeuib.ttf` and `seguisb.ttf`. The party,
+its numbers and the boss HP are invented; the source is in `tools/screenshots/`.
 
 ### Windows binaries
 

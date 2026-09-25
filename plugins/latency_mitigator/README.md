@@ -7,7 +7,7 @@ zero, and never allows action rates the server would reject.
 Part of [FFXIV Hub](../../README.md). Enable or disable it from its page in the desktop
 app, or from its card on the dashboard.
 
-<!-- ![The in-game ping HUD in its compact layout](../../docs/images/latency-hud.png) -->
+![The in-game ping HUD in its compact layout](../../docs/images/latency-hud.png)
 
 ## At a glance
 
@@ -144,7 +144,7 @@ A click-through badge takes no mouse input, so it shows no tooltip.
 
 ## Desktop view
 
-<!-- ![The Latency Mitigator's live telemetry tab](../../docs/images/latency-view.png) -->
+![The Latency Mitigator's live telemetry tab](../../docs/images/latency-view.png)
 
 The page header shows what the plugin is doing right now:
 
