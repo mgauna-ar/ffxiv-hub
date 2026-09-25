@@ -573,7 +573,7 @@ TEST_CASE(MeterDecoder, StatusApplicationsLandOnTargetOrCaster) {
 
 TEST_CASE(MeterGameData, RaidBuffTableMatchesTheStatusSheet) {
     // Ids drift between patches; the names pin each one to what the table means.
-    const std::unordered_map<uint16_t, std::string_view> expected{
+    const std::unordered_map<uint32_t, std::string_view> expected{
         {141, "Battle Voice"}, {786, "Battle Litany"}, {1185, "Brotherhood"}, {1221, "Chain Stratagem"},
         {1297, "Embolden"}, {1821, "Standard Finish"}, {1822, "Technical Finish"}, {1825, "Devilment"},
         {1878, "Divination"}, {2105, "Standard Finish"}, {2216, "The Wanderer's Minuet"},

@@ -41,7 +41,10 @@ std::vector<float> smoothed_series(const std::vector<TimelineBin>& bins, size_t 
     const size_t window = std::max<size_t>(window_s, 1);
     const size_t first = (window + 1) / 2;
     const std::vector<double> smoothed = box_average(box_average(values, first), window + 1 - first);
-    return std::vector<float>(smoothed.begin(), smoothed.end());
+    std::vector<float> series(smoothed.size());
+    std::transform(smoothed.begin(), smoothed.end(), series.begin(),
+                   [](double v) { return static_cast<float>(v); });
+    return series;
 }
 
 std::vector<float> downsample(const std::vector<float>& values, size_t points) {

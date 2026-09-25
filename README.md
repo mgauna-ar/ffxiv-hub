@@ -436,7 +436,7 @@ Dear ImGui enabled.
 You need Visual Studio 2022 with *Desktop development with C++*, and CMake 3.20+:
 
 ```cmd
-cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -A x64
+cmake -B build -S . -A x64
 cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```

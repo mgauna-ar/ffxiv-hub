@@ -10,7 +10,7 @@ description: Build, package and release the Windows binaries. Use when cutting a
 Requires Visual Studio 2022 (MSVC C++20) and CMake 3.20+.
 
 ```cmd
-cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -A x64
+cmake -B build -S . -A x64
 cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
