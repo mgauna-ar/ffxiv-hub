@@ -5,6 +5,7 @@
 #include "common/os/logger.hpp"
 #include "common/os/auto_start.hpp"
 #include <algorithm>
+#include <cstring>
 #include <filesystem>
 
 #ifdef _WIN32

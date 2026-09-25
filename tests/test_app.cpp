@@ -7,6 +7,7 @@
 #include "common/os/tray_manager.hpp"
 #include "meter/pull_grouping.hpp"
 #include <chrono>
+#include <cstring>
 #include <filesystem>
 
 using namespace hub;
