@@ -80,6 +80,7 @@ void MetricsAccumulator::record_damage_hit(
     }
     if (source_friendly) {
         m_total_damage += packet.damage;
+        record_credits(stats, packet.damage, packet.credits, registry);
     }
 
     stats.hits.total_hits++;
@@ -272,6 +273,7 @@ void MetricsAccumulator::record_status_tick(const ipc::StatusTickPacket& packet,
         }
         if (source_friendly) {
             m_total_damage += packet.damage_or_heal;
+            record_credits(stats, packet.damage_or_heal, packet.credits, registry);
         }
 
         stats.hits.tick_hits++;
@@ -343,6 +345,70 @@ void MetricsAccumulator::record_status_tick(const ipc::StatusTickPacket& packet,
                 eff_heal, RecapKind::HotTick, 0}, false);
         }
     }
+}
+
+void MetricsAccumulator::record_credits(
+    CombatantStats& receiver, uint32_t hit_damage, const ipc::CombatBuffCredits& credits,
+    const CombatantRegistry& registry
+) {
+    // The Limit Break is nobody's damage, so no buff made any of it.
+    if (receiver.entity_id == hub::game::LIMIT_BREAK_COMBATANT_ID) {
+        return;
+    }
+    uint32_t left = hit_damage;
+    const size_t count = std::min<size_t>(credits.count, ipc::MAX_BUFF_CREDITS);
+    for (size_t i = 0; i < count && left > 0; ++i) {
+        const ipc::CombatBuffCredit& credit = credits.entries[i];
+        if (credit.amount == 0 || !hub::game::is_real_entity_id(credit.giver_id)) continue;
+        const EntityId giver_id = registry.resolve_owner(credit.giver_id);
+        if (giver_id == receiver.entity_id || giver_id == hub::game::LIMIT_BREAK_COMBATANT_ID) continue;
+        const uint32_t amount = std::min(credit.amount, left);
+        left -= amount;
+        const bool single = credit.single_target != 0;
+        receiver.buff_received += amount;
+        if (single) receiver.buff_received_single += amount;
+        get_or_create_stats(giver_id, registry).buff_given += amount;
+        m_buff_credits[BuffCreditKey{receiver.entity_id, giver_id, single}] += amount;
+    }
+}
+
+void MetricsAccumulator::rekey_credits(EntityId from_id, CombatantStats& to) {
+    std::vector<std::pair<BuffCreditKey, uint64_t>> moved;
+    for (auto it = m_buff_credits.begin(); it != m_buff_credits.end();) {
+        if (it->first.receiver == from_id || it->first.giver == from_id) {
+            moved.emplace_back(it->first, it->second);
+            it = m_buff_credits.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (auto [key, amount] : moved) {
+        if (key.receiver == from_id) key.receiver = to.entity_id;
+        if (key.giver == from_id) key.giver = to.entity_id;
+        if (key.receiver == key.giver) {
+            // An owner's buff on its own pet is its own damage after all.
+            to.buff_received -= std::min(to.buff_received, amount);
+            if (key.single_target) to.buff_received_single -= std::min(to.buff_received_single, amount);
+            to.buff_given -= std::min(to.buff_given, amount);
+            continue;
+        }
+        m_buff_credits[key] += amount;
+    }
+}
+
+std::vector<BuffCreditRow> MetricsAccumulator::buff_credit_rows() const {
+    std::vector<BuffCreditRow> rows;
+    rows.reserve(m_buff_credits.size());
+    for (const auto& [key, amount] : m_buff_credits) {
+        rows.push_back(BuffCreditRow{key.receiver, key.giver, amount, key.single_target});
+    }
+    std::sort(rows.begin(), rows.end(), [](const BuffCreditRow& a, const BuffCreditRow& b) {
+        if (a.amount != b.amount) return a.amount > b.amount;
+        if (a.receiver != b.receiver) return a.receiver < b.receiver;
+        if (a.giver != b.giver) return a.giver < b.giver;
+        return a.single_target < b.single_target;
+    });
+    return rows;
 }
 
 bool MetricsAccumulator::is_friendly_target(EntityId target_id, const CombatantRegistry& registry) {
@@ -436,6 +502,10 @@ void MetricsAccumulator::merge_combatants(EntityId from_id, EntityId to_id, cons
     to.overhealing += from_stats.overhealing;
     to.deaths += from_stats.deaths;
     to.raises += from_stats.raises;
+    to.buff_received += from_stats.buff_received;
+    to.buff_received_single += from_stats.buff_received_single;
+    to.buff_given += from_stats.buff_given;
+    rekey_credits(from_id, to);
 
     add_hit_counts(to.hits, from_stats.hits);
     add_hit_counts(to.heal_hit_counts, from_stats.heal_hit_counts);
@@ -514,7 +584,15 @@ void MetricsAccumulator::recalculate(double duration_seconds, const CombatantReg
     m_total_hps = static_cast<double>(m_total_effective_healing) / safe_duration;
 
     for (auto& [id, stats] : m_combatants) {
-        stats.dps = static_cast<double>(stats.total_damage) / safe_duration;
+        const double damage = static_cast<double>(stats.total_damage);
+        const double received = static_cast<double>(stats.buff_received);
+        const double received_single = static_cast<double>(stats.buff_received_single);
+        const double given = static_cast<double>(stats.buff_given);
+        stats.dps = damage / safe_duration;
+        stats.rdps = (damage - received + given) / safe_duration;
+        stats.adps = (damage - received_single) / safe_duration;
+        stats.ndps = (damage - received) / safe_duration;
+        stats.cdps = (damage - received_single + given) / safe_duration;
         stats.hps = static_cast<double>(stats.effective_healing) / safe_duration;
         // m_total_damage counts friendly sources only, so an enemy row measured against
         // it would report a share of a total it never contributed to.
@@ -543,7 +621,8 @@ std::vector<CombatantStats> MetricsAccumulator::sorted_by_dps(bool friendly_only
             if (stats.actor_type == ActorType::Monster) {
                 continue;
             }
-            if (stats.total_damage == 0 && !stats.is_party_member && !stats.is_local_player) {
+            // A player whose only damage is what its buffs added still ranks by rDPS.
+            if (stats.total_damage == 0 && stats.buff_given == 0 && !stats.is_party_member && !stats.is_local_player) {
                 continue;
             }
         }
@@ -604,6 +683,7 @@ double MetricsAccumulator::overheal_pct() const noexcept {
 void MetricsAccumulator::clear() {
     m_combatants.clear();
     m_damage_taken.clear();
+    m_buff_credits.clear();
     m_recaps.clear();
     m_total_damage = 0;
     m_total_healing = 0;

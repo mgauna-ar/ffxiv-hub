@@ -120,6 +120,10 @@ void dispatch_combat_meter(const CommandDispatchTargets& t, const ipc::CommandPa
         case CommandId::SetVitalsTracking:
             if (t.combat_plugin) t.combat_plugin->set_vitals_tracking(cmd.param_uint != 0);
             break;
+        case CommandId::SetDpsMetric:
+            // Through the plugin, so the next autosave keeps it.
+            if (t.combat_plugin) t.combat_plugin->set_dps_metric(meter::dps_metric_from(cmd.param_uint));
+            break;
         case CommandId::ReloadConfig:
             if (t.combat_plugin) {
                 config::ConfigManager::instance().load();

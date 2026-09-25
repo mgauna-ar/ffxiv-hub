@@ -17,6 +17,7 @@ constexpr size_t MAX_ACTOR_NAME_LEN = 32;
 constexpr size_t MAX_PARTY_MEMBERS = 8;
 constexpr size_t MAX_STATUS_LIST_ENTRIES = 30;
 constexpr size_t MAX_LIFE_EVENT_RECAP = 10;
+constexpr size_t MAX_BUFF_CREDITS = 8;
 
 /// CombatStatusListPayload::flags bit: timers and sources are unknown (the party
 /// list's copy of the list, which the client fills with zeros for both).
@@ -124,6 +125,23 @@ struct MitigatorTelemetryPayload {
 };
 static_assert(sizeof(MitigatorTelemetryPayload) == 48, "MitigatorTelemetryPayload must be 48 bytes");
 
+/// Damage one player's buffs added to a hit, owed to that player.
+struct CombatBuffCredit {
+    uint32_t giver_id{0};
+    uint32_t amount{0};
+    uint8_t  single_target{0};   // A card or dance partner effect rather than a party buff
+    uint8_t  pad[3]{0};
+};
+static_assert(sizeof(CombatBuffCredit) == 12, "CombatBuffCredit must be 12 bytes");
+
+/// A hit's credits, at most one per giver and kind.
+struct CombatBuffCredits {
+    uint8_t  count{0};
+    uint8_t  pad[3]{0};
+    CombatBuffCredit entries[MAX_BUFF_CREDITS]{};
+};
+static_assert(sizeof(CombatBuffCredits) == 100, "CombatBuffCredits must be 100 bytes");
+
 /// 0x0201: Combat Meter Action Packet
 struct CombatActionPayload {
     uint64_t source_id{0};
@@ -137,8 +155,12 @@ struct CombatActionPayload {
     uint8_t  severity{0};
     uint8_t  pad[3]{0};
     uint64_t timestamp_us{0};
+    CombatBuffCredits credits{};  // Worked out in-game, with the attacker's buffs as they stood
 };
-static_assert(sizeof(CombatActionPayload) == 48, "CombatActionPayload must be 48 bytes");
+static_assert(sizeof(CombatActionPayload) == 148, "CombatActionPayload must be 148 bytes");
+/// What a payload from before `credits` sends. It can still be loaded in the game.
+constexpr size_t COMBAT_ACTION_V1_SIZE = 48;
+static_assert(offsetof(CombatActionPayload, credits) == COMBAT_ACTION_V1_SIZE, "credits must follow the old layout");
 
 /// 0x0202: Combat Meter Status Tick Packet
 struct CombatStatusTickPayload {
@@ -150,11 +172,15 @@ struct CombatStatusTickPayload {
     uint8_t  is_crit{0};
     uint64_t timestamp_us{0};
     uint32_t overheal{0};         // Part of damage_or_heal a HoT tick's target had no room for
+    CombatBuffCredits credits{};  // A DoT tick's, from the buffs it was applied under
 };
-static_assert(sizeof(CombatStatusTickPayload) == 28, "CombatStatusTickPayload must be 28 bytes");
+static_assert(sizeof(CombatStatusTickPayload) == 128, "CombatStatusTickPayload must be 128 bytes");
 /// What a payload from before `overheal` sends. It can still be loaded in the game.
 constexpr size_t COMBAT_STATUS_TICK_V1_SIZE = 24;
 static_assert(offsetof(CombatStatusTickPayload, overheal) == COMBAT_STATUS_TICK_V1_SIZE, "overheal must follow the old layout");
+/// What a payload from before `credits` sends.
+constexpr size_t COMBAT_STATUS_TICK_V2_SIZE = 28;
+static_assert(offsetof(CombatStatusTickPayload, credits) == COMBAT_STATUS_TICK_V2_SIZE, "credits must follow the old layout");
 
 /// 0x0204: Combat Meter Actor Info Packet
 struct CombatActorInfoPayload {

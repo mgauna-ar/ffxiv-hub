@@ -82,6 +82,8 @@ enum class CommandId : uint32_t {
     SetPluginEnabled    = 36,
     /// param_uint 0/1: the combat meter's death and status polling
     SetVitalsTracking   = 37,
+    /// param_uint is a hub::meter::DpsMetric
+    SetDpsMetric        = 38,
 };
 
 /// 2D Floating-point rectangle coordinates for overlay geometry

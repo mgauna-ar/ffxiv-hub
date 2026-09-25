@@ -157,6 +157,15 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
         }
     );
 
+    // Read on the detour thread, where the game writes statuses, so no engine lock:
+    // the reader touches nothing the orchestration thread owns.
+    combat_plugin->set_status_reader(
+        [reader = object_reader.get()](uint32_t entity_id, const void* character,
+                                       std::span<hub::ipc::CombatStatusEntry> out) {
+            return reader->read_attribution_statuses(entity_id, character, out);
+        }
+    );
+
     // 6. Initialize HookManager and attach consumers
     auto& hook_mgr = hub::payload::HookManager::instance();
     // Registration order is dispatch order. Mitigator before meter, per

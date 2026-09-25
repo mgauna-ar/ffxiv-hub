@@ -381,6 +381,36 @@ TEST_CASE(Payload, SortedCombatantsBreaksDpsTiesOnTotal) {
     TEST_ASSERT(healers[0]->name == "Low");
 }
 
+TEST_CASE(Payload, SortedCombatantsRankByTheDpsMetric) {
+    meter::EncounterSummary summary;
+
+    meter::CombatantStats dealer;
+    dealer.entity_id = 1;
+    dealer.name = "Dealer";
+    dealer.is_party_member = true;
+    dealer.dps = 300.0;
+    dealer.rdps = 200.0;
+    dealer.total_damage = 3000;
+    summary.combatants.push_back(dealer);
+
+    // Dealt nothing, but its buffs did: ranks only once buff damage is moved over.
+    meter::CombatantStats buffer;
+    buffer.entity_id = 2;
+    buffer.name = "Buffer";
+    buffer.is_party_member = true;
+    buffer.rdps = 250.0;
+    buffer.buff_given = 2500;
+    summary.combatants.push_back(buffer);
+
+    const auto by_dps = meter::CombatOverlay::sorted_combatants(summary, true, false, true);
+    TEST_ASSERT_EQ(by_dps.size(), 2u);
+    TEST_ASSERT(by_dps[0]->name == "Dealer");
+
+    const auto by_rdps = meter::CombatOverlay::sorted_combatants(summary, true, false, true, meter::DpsMetric::Rdps);
+    TEST_ASSERT_EQ(by_rdps.size(), 2u);
+    TEST_ASSERT(by_rdps[0]->name == "Buffer");
+}
+
 TEST_CASE(Payload, GeometryRestoreLatchArmsOnExternalSet) {
     // Config loads land after the first frame, which ImGuiCond_FirstUseEver drops.
     meter::CombatOverlay overlay;
@@ -840,6 +870,31 @@ TEST_CASE(Payload, DispatchesVitalsTracking) {
     cmd.param_uint = 1;
     payload::dispatch_command(targets, cmd);
     TEST_ASSERT(combat.vitals_enabled());
+}
+
+TEST_CASE(Payload, DispatchesDpsMetricToPluginAndOverlay) {
+    // Through the plugin, not just the overlay: the payload's autosave writes the
+    // plugin's value, so an overlay-only change would be saved back as the old one.
+    meter::CombatPlugin combat;
+    combat.initialize();
+    meter::CombatOverlay overlay(&combat.engine());
+    combat.set_overlay(&overlay);
+    payload::CommandDispatchTargets targets;
+    targets.combat_plugin = &combat;
+    targets.combat_overlay = &overlay;
+
+    ipc::CommandPayload cmd{};
+    cmd.command_id = static_cast<uint32_t>(CommandId::SetDpsMetric);
+    cmd.target_plugin_id = static_cast<uint32_t>(PluginId::CombatMeter);
+    cmd.param_uint = static_cast<uint32_t>(meter::DpsMetric::Rdps);
+    payload::dispatch_command(targets, cmd);
+    TEST_ASSERT_EQ(combat.dps_metric(), meter::DpsMetric::Rdps);
+    TEST_ASSERT_EQ(overlay.dps_metric(), meter::DpsMetric::Rdps);
+
+    config::JsonValue saved(config::JsonValue::ObjectType{});
+    combat.serialize_config(saved);
+    TEST_ASSERT_EQ(saved["dps_metric"].as_int(-1), 1);
+    combat.set_overlay(nullptr);
 }
 
 TEST_CASE(Payload, DisabledPluginsIgnoreHookDispatch) {

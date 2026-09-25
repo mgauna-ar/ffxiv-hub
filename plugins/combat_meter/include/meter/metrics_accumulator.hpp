@@ -92,6 +92,9 @@ public:
     /// Credits a death to the damage-taken row of the hit that caused it.
     void add_death_caused(EntityId target, ActionId action_key, EntityId source);
 
+    /// Damage each player's buffs added to each other player's hits, largest first.
+    [[nodiscard]] std::vector<BuffCreditRow> buff_credit_rows() const;
+
     /// What landed on a friendly target lately; null when nothing has.
     [[nodiscard]] const RecapRing* recap_for(EntityId target) const;
 
@@ -119,8 +122,28 @@ private:
             return std::hash<uint64_t>{}(ids ^ (static_cast<uint64_t>(key.action_key) * 0x9E3779B97F4A7C15ull));
         }
     };
+    struct BuffCreditKey {
+        EntityId receiver{0};
+        EntityId giver{0};
+        bool single_target{false};
+        bool operator==(const BuffCreditKey&) const = default;
+    };
+    struct BuffCreditKeyHash {
+        size_t operator()(const BuffCreditKey& key) const noexcept {
+            const uint64_t ids = (static_cast<uint64_t>(key.receiver) << 32) | key.giver;
+            return std::hash<uint64_t>{}(ids) ^ static_cast<size_t>(key.single_target);
+        }
+    };
 
     CombatantStats& get_or_create_stats(EntityId entity_id, const CombatantRegistry& registry);
+
+    /// Books what other players' buffs added to a hit of `hit_damage` that `receiver`
+    /// landed. The credits never add up to more than the hit.
+    void record_credits(CombatantStats& receiver, uint32_t hit_damage, const ipc::CombatBuffCredits& credits,
+                        const CombatantRegistry& registry);
+
+    /// Moves `from_id`'s credit rows, as receiver or giver, onto `to` after a merge.
+    void rekey_credits(EntityId from_id, CombatantStats& to);
 
     /// A player (or the local player) the recap and damage-taken rows follow.
     [[nodiscard]] static bool is_friendly_target(EntityId target_id, const CombatantRegistry& registry);
@@ -141,6 +164,7 @@ private:
 
     std::unordered_map<EntityId, CombatantStats> m_combatants;
     std::unordered_map<DamageTakenKey, DamageTakenRow, DamageTakenKeyHash> m_damage_taken;
+    std::unordered_map<BuffCreditKey, uint64_t, BuffCreditKeyHash> m_buff_credits;
     std::unordered_map<EntityId, RecapRing> m_recaps;
     uint64_t m_total_damage{0};
     uint64_t m_total_healing{0};

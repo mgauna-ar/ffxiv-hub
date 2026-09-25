@@ -5,7 +5,7 @@ description: Regenerate game data tables and repair AOB signatures after a Final
 
 # After a Game Patch
 
-Five headers are generated from the game's own Excel sheets, and the payload's signatures
+Six headers are generated from the game's own Excel sheets, and the payload's signatures
 are byte patterns in the game executable. Both can go stale on patch day.
 
 Everything here is offline - no XIVAPI, no third-party data - and needs only files copied
@@ -35,10 +35,21 @@ executable. A signature never depends on the `datN` files.
 python3 tools/gen_game_tables.py
 ```
 
-Writes `include/hub/game/{actions,status,territory,limit_break,job}.hpp` and
-`src/common/game_tables.cpp`. Review `git diff` on those: it shows exactly which actions,
-statuses, duties and jobs the patch added or renamed. Regeneration is deterministic - an
-unchanged install must produce byte-identical files.
+Writes `include/hub/game/{actions,status,territory,limit_break,job,guaranteed_hits}.hpp`
+and `src/common/game_tables.cpp`. Review `git diff` on those: it shows exactly which
+actions, statuses, duties and jobs the patch added or renamed. Regeneration is
+deterministic - an unchanged install must produce byte-identical files.
+
+`game_tables.cpp` also holds the player GCD set behind `is_gcd_action`: Action rows with a
+job level (column 12, 0 on NPC actions) in cooldown group 58 (column 41). Both columns are
+pinned against Heavy Swing (31: level 1, group 58), Fell Cleave (3549: level 54) and
+Berserk (38: group 11).
+
+`guaranteed_hits.hpp` comes from the sentence the game adds to every guaranteed crit or
+direct hit ("...increased when under an effect that raises critical hit rate [or direct
+hit rate]"): ActionTransient for attacks, filtered to those that deliver a hit, and the
+Status sheet for statuses such as Life Surge and Reassembled. Check the diff lists only
+attacks and the statuses that grant a guarantee; a rewording of that sentence empties it.
 
 `game_tables.cpp` also holds the debuff set behind `status_is_detrimental`: the Status
 sheet's category column, where 1 is a buff and 2 a debuff. It is pinned against Battle
@@ -232,6 +243,23 @@ first byte, and confirm:
 Read the row texts from the LogMessage sheet with `tools/xivdata`, since the same patch
 can renumber them. If a bit moved, update the decoder's constants, the `ActionEffectEntry`
 comments and that section together.
+
+## 4f. Re-check the raid buffs
+
+`include/hub/game/raid_buffs.hpp` is hand-maintained: the Status sheet names each raid buff
+but carries no percentage. After a patch:
+
+- `make` runs `MeterGameData.RaidBuffTableMatchesTheStatusSheet`, which fails when an id
+  no longer names the buff it is listed as.
+- Read each buff action's ActionTransient text with `tools/xivdata` and compare its
+  percentage with the table, including the dance finish strengths and Radiant Finale's
+  per-coda value. Job changes land here without breaking anything.
+- A new raid buff needs an entry, sorted by status id, and a line in that test.
+
+The meter also depends on effect kinds 14 and 15 being status applications, as recorded
+in [How the client applies statuses](../../../plugins/combat_meter/AGENTS.md#how-the-client-applies-statuses).
+Re-run `tools/inspect_exe.py jumptable` on the per-effect handler's switch (see 4e for how
+to find it) and confirm both still reach the handler that prints "gains the effect of".
 
 ## 5. Verify
 

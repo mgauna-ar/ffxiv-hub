@@ -44,6 +44,15 @@ captured log lines. Preserve them when modifying the registry, accumulator or en
 - **Enemy Statuses End With The Pull**: An enemy stops being tracked when its pull ends and its list is never read again, so `end_encounter` clears the status list of every actor that is not friendly. Otherwise the next pull's uptime opens with a stale DoT on a dead boss. The next pull can start on the same enemy before a vitals pass runs, so `on_vitals` resends every list whenever `pulls_started()` moves; without that, an unchanged list is never sent again and the new pull misses it.
 - **A Departed Actor Gets One Empty List**: `VitalsTracker::retain` sends a single empty status list for an actor that left the pass (it left the party, or an enemy dropped out of the top four), which closes its statuses on the other side. `invalidate()` resends every list when the app reconnects, for the same reason as `ObjectReader::invalidate_cache()`.
 
+## Raid Buff Credit Invariants
+
+- **Credits Are Built In-Game And Shipped**: `CombatPlugin` attributes every damage hit from a friendly source with `attribute_hit` before `process_action` and the ring-buffer push, the same place the overheal split happens, and ships the result in `CombatActionPayload::credits`. Both engines book exactly those credits and nothing downstream re-attributes. The statuses come from the `StatusReader` (`ObjectReader::read_attribution_statuses`) on the game's main thread at the hit; the app has no way to see them then, since status lists reach it at 4 Hz on another lane. See "How the client applies statuses".
+- **Credits Move Damage, They Never Make It**: A hit's credits never add up to more than the hit (`record_credits` clamps them), go only to another player, and are booked on both the receiver (`buff_received`) and the giver (`buff_given`). The party's rDPS therefore sums to its DPS; `MeterRdps.CreditsMoveDamageWithoutCreatingIt` holds that. A player whose buffs are their only damage still ranks: `sorted_by_dps` and `CombatOverlay::sorted_combatants` keep a row with `buff_given > 0`. Heals, the Limit Break and a player's own buffs earn nothing.
+- **A DoT Keeps The Buffs It Was Applied Under**: An effect entry of kind 14 on an enemy snapshots the attacker's statuses, keyed by target, status and source. `on_status_tick` credits a damage tick from that snapshot and the enemy's debuffs as they stand at the tick; a tick with no snapshot, or one older than `kDotSnapshotTtlUs`, earns nothing. Ticks carry no crit or direct hit, so rate buffs earn their expected value on them.
+- **Rates Come From Clean Hits Only**: `RateEstimator` learns a player's crit and direct hit rates only from hits with no rate status on either side, no guarantee, and both status lists read. It starts from `kPriorCrit`/`kPriorDirectHit` at weight `kPriorWeight` and is clamped to `[kMinRate, kMaxRate]`. The crit multiplier is the rate plus 1.35, because one stat term drives both. It lives in the payload for the whole game session, so an app restart does not reset it.
+- **Guaranteed Hits Turn Rates Into Damage**: A hit in `GUARANTEED_HIT_ACTIONS`, a GCD under a `GUARANTEED_HIT_STATUSES` status, or a form-bonus action under its form treats each rate buff as a damage multiplier of `1 + rate x bonus`. Both tables are generated from the sentence the game adds to such hits; do not hand-edit them.
+- **Raid Buff Values Are Hand-Maintained**: `include/hub/game/raid_buffs.hpp` holds the status ids and strengths. The Status sheet names the statuses but carries no percentages; each value comes from its action's ActionTransient text. `MeterGameData.RaidBuffTableMatchesTheStatusSheet` pins every id to its sheet name. Strengths the applying action decides, Technical and Standard Finish by the finish used and Radiant Finale by the songs sung since the last one, are tracked by `BuffStrengths` from every action a player uses.
+
 ## How the client keeps status lists
 
 Read from `ffxiv_dx11.exe` on 2026-09-23 with `tools/inspect_exe.py`. Addresses are for
@@ -161,3 +170,31 @@ that build only; re-check after a patch.
   split is exact. If it comes first, a tick landing while the target is missing less than
   two ticks' worth of HP books up to one tick of extra overheal. Counting every tick as
   fully effective was off by all of its overheal.
+
+## How the client applies statuses
+
+Read from `ffxiv_dx11.exe` on 2026-09-24 with `tools/inspect_exe.py`, and the LogMessage
+sheet with `tools/xivdata`. Addresses are for that build only; re-check after a patch.
+
+- **Effect kinds 14 and 15 apply a status.** The per-effect handler's jump table
+  (`inspect_exe.py jumptable 0x1409010a8 77 --index 0x140901134 --first 1`) sends both to
+  `0x1409004ce`. It looks the entry's `value` (+6) up as a Status row and prints LogMessage
+  526 or 527 ("gains/suffers the effect of"), picked by the row's debuff category. Kind 14
+  prints it for the target, 15 for the caster.
+- **Statuses change when their packet arrives, on the main thread.** The effect-result
+  handler (`0x140b38f59`) runs the queued record, writes HP, then calls `SetStatus`
+  (`0x1408a6fc0`) through the target's `GetStatusManager`. So when `ReceiveActionEffect`
+  fires, every status the server applied before that hit is already in the StatusManager.
+  The snapshot a hit is credited from is exact to packet order.
+- **Header byte `0x1F` is 1 for an Action row.** `ReceiveActionEffect` compares it with 1
+  (`0x140903601`) before treating the header's id as an action.
+
+What the client cannot say, and live play has to:
+
+- Whether Technical Finish, Standard Finish and Radiant Finale carry their strength in the
+  status `param`. The payload logs each new value it sees for them once.
+- Whether Life Surge and Reassembled are still on the attacker when its weaponskill's
+  effect arrives. If not, that hit is credited as a rolled crit.
+- That pets fight under their owner's buffs, that a DoT keeps the attacker's buffs from
+  its application, and that enemy debuffs apply to each tick as it lands. The meter is
+  built on all three.

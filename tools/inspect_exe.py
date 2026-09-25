@@ -7,6 +7,7 @@
     python3 tools/inspect_exe.py xrefs 0x140b259b0          # callers of a function
     python3 tools/inspect_exe.py xrefs 0x142aa0400 --span 0x20   # uses of a global
     python3 tools/inspect_exe.py field 0x7fdc --writes      # stores to a struct offset
+    python3 tools/inspect_exe.py jumptable 0x1409010a8 77 --index 0x140901134 --first 1
 
 `sig` takes a name from include/hub/game_definitions.hpp or a literal pattern.
 Addresses are VAs at the image base the exe declares (0x140000000).
@@ -72,6 +73,13 @@ def cmd_field(img, args):
         print(f"  in {label(img, func)}  {line}")
 
 
+def cmd_jumptable(img, args):
+    cases = img.jump_table(args.targets, args.count, args.index, args.first)
+    print(f"{args.count} case(s), {len(cases)} handler(s)")
+    for target, values in sorted(cases.items(), key=lambda kv: kv[1][0]):
+        print(f"  {target:#x}  {', '.join(str(v) for v in values)}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -102,6 +110,13 @@ def main():
     p.add_argument("va", type=num)
     p.add_argument("--span", type=num, default=1, help="bytes from va to include (a struct)")
     p.set_defaults(fn=cmd_xrefs)
+
+    p = sub.add_parser("jumptable", help="which case values of a switch reach which handler")
+    p.add_argument("targets", type=num, help="VA of the dword table of image-relative targets")
+    p.add_argument("count", type=num, help="number of cases: the compare bound plus one")
+    p.add_argument("--index", type=num, help="VA of the byte table folding cases, if the switch has one")
+    p.add_argument("--first", type=num, default=0, help="case value the switch subtracted before indexing")
+    p.set_defaults(fn=cmd_jumptable)
 
     p = sub.add_parser("field", help="instructions using a struct offset ([reg + off])")
     p.add_argument("offset", type=num)

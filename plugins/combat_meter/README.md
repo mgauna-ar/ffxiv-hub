@@ -16,6 +16,8 @@ app, or from its card on the dashboard.
   last action, not at the timeout. HPS counts effective healing only.
 - **One row per player.** Pets are merged into their owners, and the Limit Break gets its
   own row that is never counted toward anyone's DPS.
+- **Credit for buffs.** rDPS moves the damage a raid buff added to whoever gave it, so a
+  player who buffs the party ranks for what they bring.
 - **Why a pull went wrong.** Every death, with its killing blow, a recap of the seconds
   before it, the statuses held at the time, and how long the raise took. Damage taken is
   broken down by ability.
@@ -109,6 +111,52 @@ source would hand one player a large chunk of the raid's damage. It is identifie
 action id instead and routed to its own synthetic row. It counts toward raid DPS, and
 never toward any individual's damage, DPS or share.
 
+### Raid buffs: rDPS, aDPS, nDPS and cDPS
+
+Part of every buffed hit belongs to whoever gave the buff. The meter works out that part
+for each hit from the buffs in effect when it landed, and moves it to the player who
+applied them. That gives five damage rates:
+
+| Rate | What it counts |
+|---|---|
+| **DPS** | Damage dealt. |
+| **rDPS** | Damage dealt, less what other players' buffs added to it, plus what your buffs added to theirs. The party's rDPS adds up to its DPS. |
+| **aDPS** | Damage dealt, less what cards and dance partner effects added to it. |
+| **nDPS** | Damage dealt, less what every other player's buffs added to it. |
+| **cDPS** | aDPS, plus what your buffs added to other players' damage. |
+
+*DPS metric* in Settings picks the rate the meter shows and ranks by, in game and on the
+desktop.
+
+How each buff's part is measured:
+
+- A damage buff earns its percentage of the hit.
+- A critical hit or direct hit rate buff earns only when the hit crits or direct hits,
+  in proportion to its share of the chance. A 10% crit buff on a player who crits 22% of
+  the time on their own made about a third of their crits.
+- On a hit that always crits or direct hits, such as Midare Setsugekka, Inner Chaos or a
+  Reassembled weaponskill, the game turns rate buffs into extra damage instead, and the
+  buff earns that.
+- Several buffs on one hit share its extra damage in proportion to how much each raised it.
+- A damage-over-time effect keeps the buffs it was applied under. Its ticks show no crit,
+  so a rate buff earns what it adds on average.
+- Pets fight under their owner's buffs.
+- A player's own buffs stay part of their own damage, and the Limit Break is never
+  credited.
+
+A buff's strength comes from the game's own descriptions: Technical and Standard Finish
+by the steps danced, Radiant Finale by the codas sung, the Balance and the Spear by the
+receiving player's role.
+
+Crit and direct hit rates are estimated. The meter learns each player's own rates from
+the hits no rate buff touched, starting from a typical rate until it has seen enough of
+them. Credit for damage buffs is exact; credit for rate buffs is close.
+
+The buffs followed are Arcane Circle, Army's Paeon, Battle Litany, Battle Voice,
+Brotherhood, Chain Stratagem, Devilment, Divination, Dokumori, Embolden, Mage's Ballad,
+Radiant Finale, Searing Light, Standard Finish, Starry Muse, Technical Finish, the
+Balance, the Spear and the Wanderer's Minuet.
+
 ### Other behaviour worth knowing
 
 - **Blocked and parried hits are still damage.** They carry a damage value and are counted
@@ -193,9 +241,11 @@ of it. The trash button in the history header clears the archive after asking. T
 is the only place a pull is chosen, and it narrows on a small window. Beside it:
 
 - **Damage** and **Healing**: the selected pull's rankings. Damage has share, crit, direct
-  hit and crit-direct-hit rates, job-coloured bars and a Deaths column; Healing has total,
-  effective and overheal. Selecting a row opens a per-ability breakdown in the tab's own
-  metric, damage or effective healing: hits, total, min/avg/max and crit rate.
+  hit and crit-direct-hit rates, job-coloured bars and a Deaths column. Its rate column
+  shows the *DPS metric*; hover it for all five rates. Healing has total, effective and
+  overheal. Selecting a row opens a per-ability breakdown in the tab's own metric, damage
+  or effective healing: hits, total, min/avg/max and crit rate. A damage breakdown first
+  lists the buff damage the player received and gave, and from and to whom.
 - **Damage Taken**: each player's damage taken, hits and deaths. Below it, the abilities
   that hit the selected player, or everyone.
 - **Deaths**: every death with its time, killing blow, source, debuffs and time to raise.
@@ -212,7 +262,7 @@ The in-game overlay stays a damage or healing table; the other views are desktop
 |---|---|
 | Meter behaviour | *Party members only*, *Track deaths, buffs and debuffs*, *Hide idle combatants*, *Overlay refresh*, *End encounter after idle* |
 | In-game overlay | The shared overlay controls: visibility, lock, click-through, opacity, scale and hide conditions |
-| Meter display | *Meter metric*, *Job-coloured row bars*, and a toggle for each of the share, crit, direct hit and crit-direct-hit columns |
+| Meter display | *Meter metric*, *DPS metric*, *Job-coloured row bars*, and a toggle for each of the share, crit, direct hit and crit-direct-hit columns |
 | Maintenance | *Reset overlay position*, *End encounter*, *Reset all statistics* |
 
 Job colours are per-job, not per-role, and live in `src/common/ui/job_style.cpp` as the
@@ -239,6 +289,7 @@ not the intended interface.
 | `show_col_dh` | bool | `true` | Show the direct hit column. |
 | `show_col_cdh` | bool | `true` | Show the crit-direct-hit column. |
 | `overlay_metric` | int | `0` | In-game overlay metric: `0` damage, `1` healing. |
+| `dps_metric` | int | `0` | Damage rate both tables show and rank by: `0` DPS, `1` rDPS, `2` aDPS, `3` nDPS, `4` cDPS. |
 | `track_vitals` | bool | `true` | Read HP and status lists four times a second for deaths, buffs and debuffs. Off, nothing is read. |
 | `overlay_visible` | bool | `true` | Draw the in-game overlay. |
 | `overlay_x`, `overlay_y` | float | `-1.0` | Position. Negative means never placed — the overlay picks its own default. |
@@ -273,6 +324,17 @@ appear in the owner's per-action breakdown. See [Pet attribution](#pet-attributi
 
 HPS counts effective healing only. Overheal is shown next to it but never counted. See
 [Healing and overheal](#healing-and-overheal).
+
+</details>
+
+<details>
+<summary><b>Why is my rDPS different from my DPS?</b></summary>
+
+<br>
+
+Other players' buffs added part of your damage, and rDPS hands that part to them. It also
+gives you what your own buffs added to everyone else. See
+[Raid buffs](#raid-buffs-rdps-adps-ndps-and-cdps).
 
 </details>
 

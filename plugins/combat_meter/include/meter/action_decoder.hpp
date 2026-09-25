@@ -44,6 +44,26 @@ size_t decode_action_effects(
     uint64_t timestamp_us = 0
 );
 
+/// A status an action applied: effect kind 14 lands on the target, 15 on the caster.
+struct StatusApplication {
+    uint32_t receiver_id{0};
+    uint16_t status_id{0};
+};
+using StatusApplicationCallback = std::function<void(const StatusApplication&)>;
+
+/**
+ * @brief Walks the same effect blocks as decode_action_effects for the statuses the
+ * action applied, the entries the client prints as "gains the effect of".
+ * @return Number of applications dispatched.
+ */
+size_t decode_status_applications(
+    uint32_t source_id,
+    const game::ActionEffectHeader& header,
+    const void* effect_data,
+    const void* targets,
+    StatusApplicationCallback callback
+);
+
 /**
  * @brief Splits a decoded heal into what landed and what overhealed.
  *

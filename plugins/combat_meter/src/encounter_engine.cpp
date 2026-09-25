@@ -374,8 +374,13 @@ void EncounterEngine::add_detail_rows_locked(EncounterSummary& summary, uint64_t
     summary.deaths = m_death_log.deaths();
     summary.damage_taken = m_accumulator.damage_taken_rows();
     summary.statuses = m_uptime.rows(end_us, m_registry);
+    summary.buff_credits = m_accumulator.buff_credit_rows();
 
     std::unordered_set<EntityId> ids;
+    for (const BuffCreditRow& row : summary.buff_credits) {
+        ids.insert(row.receiver);
+        ids.insert(row.giver);
+    }
     for (const DeathRecord& death : summary.deaths) {
         ids.insert(death.entity);
         for (uint8_t i = 0; i < death.recap_count; ++i) ids.insert(death.recap[i].source);

@@ -43,6 +43,10 @@ public:
     void set_metric(MeterMetric metric) noexcept { m_metric.store(metric); }
     [[nodiscard]] MeterMetric metric() const noexcept { return m_metric.load(); }
 
+    // Which damage rate the damage table shows and ranks by.
+    void set_dps_metric(DpsMetric metric) noexcept { m_dps_metric.store(metric); }
+    [[nodiscard]] DpsMetric dps_metric() const noexcept { return m_dps_metric.load(); }
+
     // Overlay controls (visible/locked/click_through/opacity/scale/geometry/
     // hide conditions inherited from OverlayBase)
     void set_show_progress_bars(bool show) noexcept { m_show_progress_bars.store(show); }
@@ -72,9 +76,10 @@ public:
     /// entities dropped, ties broken on the underlying total. `party_only` keeps
     /// the synced party (plus Limit Break), or every friendly row when solo.
     /// `hide_inactive` additionally drops anyone contributing nothing to the ranked metric.
+    /// Damage ranks by `dps_metric`.
     [[nodiscard]] static std::vector<const CombatantStats*> sorted_combatants(
         const EncounterSummary& summary, bool party_only, bool by_healing,
-        bool hide_inactive = false);
+        bool hide_inactive = false, DpsMetric dps_metric = DpsMetric::Dps);
 
 private:
     EncounterEngine* m_engine{nullptr};
@@ -89,6 +94,7 @@ private:
     std::atomic<uint32_t> m_refresh_interval_ms{500};
 
     std::atomic<MeterMetric> m_metric{MeterMetric::Damage};
+    std::atomic<DpsMetric> m_dps_metric{DpsMetric::Dps};
 
     /// A rankings-only snapshot, refreshed on an interval: the game presents far
     /// faster than the numbers meaningfully change.

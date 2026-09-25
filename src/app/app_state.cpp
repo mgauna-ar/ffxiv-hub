@@ -612,6 +612,10 @@ void AppState::send_combat_overlay_metric(uint32_t metric) {
     m_pipe_server.send_command(PluginId::CombatMeter, CommandId::SetMeterMetric, metric);
 }
 
+void AppState::send_combat_dps_metric(uint32_t metric) {
+    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::SetDpsMetric, metric);
+}
+
 void AppState::send_combat_track_vitals(bool enabled) {
     m_pipe_server.send_command(PluginId::CombatMeter, CommandId::SetVitalsTracking, enabled ? 1 : 0);
 }

@@ -1,13 +1,17 @@
 #pragma once
 
 #include "hub/plugin_api.hpp"
+#include "meter/buff_attribution.hpp"
 #include "meter/encounter_engine.hpp"
 #include "meter/vitals.hpp"
 #include "common/ipc/ring_buffer.hpp"
+#include <array>
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <span>
+#include <unordered_map>
 #include <vector>
 
 namespace hub::meter {
@@ -73,6 +77,12 @@ public:
     [[nodiscard]] bool vitals_enabled() const noexcept;
     void set_vitals_tracking(bool enabled) noexcept;
 
+    /// Which damage rate the overlay shows and ranks by, kept for the next save too.
+    void set_dps_metric(DpsMetric metric) noexcept;
+    [[nodiscard]] DpsMetric dps_metric() const noexcept {
+        return dps_metric_from(m_dps_metric.load(std::memory_order_relaxed));
+    }
+
     /// A listener that just connected has none of the lists already published.
     void invalidate_published_vitals();
 
@@ -103,6 +113,15 @@ public:
     using HpResolver = std::function<bool(uint32_t entity_id, uint32_t& current_hp, uint32_t& max_hp)>;
     void set_hp_resolver(HpResolver resolver) { m_hp_resolver = std::move(resolver); }
 
+    /// Reads the raid buffs and hit guarantees an actor holds right now, from
+    /// `character` when the hook handed one over and from the object table otherwise.
+    /// Fills `out` from the front and returns how many, or nullopt when the actor
+    /// cannot be read. Called on the game's main thread, where statuses change, so the
+    /// list is exactly what the server had applied before the hit being attributed.
+    using StatusReader = std::function<std::optional<size_t>(
+        uint32_t entity_id, const void* character, std::span<ipc::CombatStatusEntry> out)>;
+    void set_status_reader(StatusReader reader) { m_status_reader = std::move(reader); }
+
     /// Non-owning pointer to the in-game overlay this plugin drives via config load/commands.
     void set_overlay(CombatOverlay* overlay) noexcept;
 
@@ -119,6 +138,47 @@ private:
     /// The overlay shows only while the plugin is on and the app is listening.
     void refresh_overlay_suppression() noexcept;
 
+    /// Attribution statuses read for one actor.
+    struct StatusSnapshot {
+        static constexpr size_t kCapacity = 32;
+        std::array<ipc::CombatStatusEntry, kCapacity> entries{};
+        size_t count{0};
+        bool read{false};
+
+        [[nodiscard]] std::span<const ipc::CombatStatusEntry> view() const noexcept {
+            return {entries.data(), count};
+        }
+    };
+    [[nodiscard]] StatusSnapshot read_statuses(uint32_t entity_id, const void* character) const;
+
+    /// Credits for one damage hit from `owner`; empty when it earns none. A clean hit
+    /// also feeds the owner's rate estimate.
+    [[nodiscard]] ipc::CombatBuffCredits attribute(
+        const CombatantRegistry& registry, EntityId owner, ActionId action_id, uint32_t damage,
+        uint16_t hit_flags, const StatusSnapshot& on_source, const StatusSnapshot& on_target, bool is_tick);
+
+    /// The attacker's buffs when it applied a status to an enemy, for that status's
+    /// ticks: a DoT keeps the buffs it was applied under.
+    struct DotKey {
+        uint32_t target{0};
+        uint32_t source{0};
+        uint16_t status{0};
+        bool operator==(const DotKey&) const = default;
+    };
+    struct DotKeyHash {
+        size_t operator()(const DotKey& key) const noexcept {
+            const uint64_t ids = (static_cast<uint64_t>(key.target) << 32) | key.source;
+            return std::hash<uint64_t>{}(ids ^ (static_cast<uint64_t>(key.status) * 0x9E3779B97F4A7C15ull));
+        }
+    };
+    struct DotSnapshot {
+        uint64_t applied_us{0};
+        StatusSnapshot source;
+    };
+    void remember_dot(const DotKey& key, const StatusSnapshot& source, uint64_t now_us);
+    static constexpr size_t kMaxDotSnapshots = 256;
+    static constexpr uint64_t kDotSnapshotTtlUs = 120'000'000;
+
     EncounterEngine m_engine;
     CombatConfig m_config;
     bool m_initialized{false};
@@ -130,12 +190,20 @@ private:
     std::function<void(uint32_t)> m_actor_resolver;
     std::function<void(const void*)> m_actor_object_resolver;
     HpResolver m_hp_resolver;
+    StatusReader m_status_reader;
+
+    // Game main thread only, under the engine lock.
+    RateEstimator m_rates;
+    BuffStrengths m_strengths;
+    std::unordered_map<DotKey, DotSnapshot, DotKeyHash> m_dot_snapshots;
     CombatOverlay* m_overlay{nullptr};
     GameStateProvider* m_game_state{nullptr};
     uint32_t m_sequence{0};
 
     /// Read off the orchestration thread; set from the pipe reader thread.
     std::atomic<bool> m_track_vitals{true};
+    /// Set from the pipe reader thread, saved from the orchestration thread.
+    std::atomic<uint32_t> m_dps_metric{0};
     // Orchestration thread only, under the engine lock.
     VitalsTracker m_vitals;
     std::vector<EntityId> m_vitals_seen;

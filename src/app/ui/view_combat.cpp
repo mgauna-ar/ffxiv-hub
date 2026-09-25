@@ -379,14 +379,40 @@ void combatant_name_cell(const meter::CombatantStats& c, const char* id_prefix) 
     }
 }
 
+meter::DpsMetric selected_dps_metric() {
+    return meter::dps_metric_from(static_cast<uint32_t>(cfg_int(METER, "dps_metric", 0)));
+}
+
+/// Every damage rate for one row, and the buff damage that separates them.
+void dps_figures_tooltip(const meter::CombatantStats& c) {
+    ImGui::BeginTooltip();
+    constexpr meter::DpsMetric kMetrics[] = {
+        meter::DpsMetric::Dps, meter::DpsMetric::Rdps, meter::DpsMetric::Adps,
+        meter::DpsMetric::Ndps, meter::DpsMetric::Cdps,
+    };
+    for (const meter::DpsMetric metric : kMetrics) {
+        const std::string label(meter::to_string(metric));
+        text_colored_u32(colors::TextMuted, "%-5s", label.c_str());
+        ImGui::SameLine(m(56.0f));
+        text_colored_u32(colors::TextPrimary, "%s", format_dps(meter::dps_figure(c, metric)).c_str());
+    }
+    ImGui::Separator();
+    text_colored_u32(colors::TextMuted, "Raid buffs received: %s", format_damage(c.buff_received).c_str());
+    text_colored_u32(colors::TextMuted, "Raid buffs given: %s", format_damage(c.buff_given).c_str());
+    ImGui::EndTooltip();
+}
+
 void render_damage_table(const meter::EncounterSummary& summary, float height) {
+    const meter::DpsMetric metric = selected_dps_metric();
+    const std::string metric_label(meter::to_string(metric));
+
     // Sort pointers: the structs carry a per-action map that is not worth copying.
     std::vector<const meter::CombatantStats*> combatants;
     combatants.reserve(summary.combatants.size());
     for (const auto& c : summary.combatants) combatants.push_back(&c);
     std::sort(combatants.begin(), combatants.end(),
-              [](const meter::CombatantStats* a, const meter::CombatantStats* b) {
-                  return a->dps > b->dps;
+              [metric](const meter::CombatantStats* a, const meter::CombatantStats* b) {
+                  return meter::dps_figure(*a, metric) > meter::dps_figure(*b, metric);
               });
 
     if (combatants.empty()) {
@@ -395,14 +421,14 @@ void render_damage_table(const meter::EncounterSummary& summary, float height) {
         return;
     }
 
-    const double top_dps = std::max(combatants.front()->dps, 1.0);
+    const double top_dps = std::max(meter::dps_figure(*combatants.front(), metric), 1.0);
     const auto sizing = table_sizing(760.0f, kCombatTableFlags);
     if (!ImGui::BeginTable("##DamageRankingTable", 10, sizing.flags, ImVec2(0.0f, height))) return;
 
     ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, m(30.0f));
     ImGui::TableSetupColumn("Job", ImGuiTableColumnFlags_WidthFixed, m(52.0f));
     ImGui::TableSetupColumn("Combatant", sizing.flex_flags(), sizing.flex_width(150.0f, 1.0f));
-    ImGui::TableSetupColumn("DPS", ImGuiTableColumnFlags_WidthFixed, m(90.0f));
+    ImGui::TableSetupColumn(metric_label.c_str(), ImGuiTableColumnFlags_WidthFixed, m(90.0f));
     ImGui::TableSetupColumn("Damage", ImGuiTableColumnFlags_WidthFixed, m(90.0f));
     ImGui::TableSetupColumn("Share", ImGuiTableColumnFlags_WidthFixed, m(65.0f));
     ImGui::TableSetupColumn("Crit %", ImGuiTableColumnFlags_WidthFixed, m(65.0f));
@@ -417,8 +443,9 @@ void render_damage_table(const meter::EncounterSummary& summary, float height) {
         const auto& c = *cp;
         if (!c.is_friendly() && c.dps == 0.0) continue;
 
+        const double rate = meter::dps_figure(c, metric);
         ImGui::TableNextRow();
-        row_progress_bar(static_cast<float>(c.dps / top_dps), combatant_color(c));
+        row_progress_bar(static_cast<float>(rate / top_dps), combatant_color(c));
 
         ImGui::TableSetColumnIndex(0);
         text_colored_u32(colors::TextMuted, "%d", rank++);
@@ -431,8 +458,11 @@ void render_damage_table(const meter::EncounterSummary& summary, float height) {
 
         ImGui::TableSetColumnIndex(3);
         ImGui::PushFont(bold_font());
-        text_colored_u32(combatant_color(c), "%s", format_dps(c.dps).c_str());
+        text_colored_u32(combatant_color(c), "%s", format_dps(rate).c_str());
         ImGui::PopFont();
+        if (ImGui::IsItemHovered() && c.actor_type != meter::ActorType::LimitBreak) {
+            dps_figures_tooltip(c);
+        }
 
         ImGui::TableSetColumnIndex(4);
         text_colored_u32(colors::TextBody, "%s", format_damage(c.total_damage).c_str());
@@ -602,6 +632,21 @@ void render_display_section(AppState& app_state) {
     }
     end_setting_row();
 
+    static const char* dps_modes[] = {
+        "DPS: damage dealt",
+        "rDPS: raid contribution",
+        "aDPS: without cards or dance partner",
+        "nDPS: without anyone's buffs",
+        "cDPS: aDPS plus buffs given",
+    };
+    int dps_metric = cfg_int(METER, "dps_metric", 0);
+    begin_setting_row("DPS metric", "The damage rate both tables show and rank by.");
+    if (ImGui::Combo("##dps_metric", &dps_metric, dps_modes, static_cast<int>(meter::DPS_METRIC_COUNT))) {
+        cfg_store(METER, "dps_metric", dps_metric);
+        app_state.send_combat_dps_metric(static_cast<uint32_t>(dps_metric));
+    }
+    end_setting_row();
+
     bool show_bars = cfg_bool(METER, "show_bars", true);
     if (setting_toggle("Job-coloured row bars", "Draws a role-tinted bar behind each row.", &show_bars)) {
         cfg_store(METER, "show_bars", show_bars);
@@ -668,6 +713,50 @@ void render_settings_tab(AppState& app_state) {
 /// Which breakdown a ranking tab opens under its table.
 enum class Drilldown { None, Damage, Healing };
 
+/// "Name 12.3k, Name 4.5k" for the credit rows `pick` selects, largest first
+/// (buff_credits is sorted that way). Single-target rows are marked.
+template <typename Pick>
+std::string credit_list(const meter::EncounterSummary& summary, const SummaryNames& names, Pick&& pick) {
+    std::string text;
+    for (const meter::BuffCreditRow& row : summary.buff_credits) {
+        const auto other = pick(row);
+        if (!other) continue;
+        if (!text.empty()) text += ", ";
+        text += names.name(*other) + " " + format_damage(row.amount);
+        if (row.single_target) text += " (single)";
+    }
+    return text;
+}
+
+/// Buff damage the selected player received and gave, as wrapped lines.
+void render_buff_credit_lines(const meter::EncounterSummary& summary, const meter::CombatantStats& selected) {
+    if (selected.buff_received == 0 && selected.buff_given == 0) return;
+    const SummaryNames names(summary);
+    const meter::EntityId id = selected.entity_id;
+
+    ImGui::PushTextWrapPos(0.0f);
+    if (selected.buff_received > 0) {
+        const double pct = selected.total_damage > 0
+            ? 100.0 * static_cast<double>(selected.buff_received) / static_cast<double>(selected.total_damage)
+            : 0.0;
+        const std::string from = credit_list(summary, names, [id](const meter::BuffCreditRow& row) {
+            return row.receiver == id ? std::optional<meter::EntityId>(row.giver) : std::nullopt;
+        });
+        text_colored_u32(colors::TextMuted, "Other players' buffs added %s (%s of this damage): %s",
+                         format_damage(selected.buff_received).c_str(), format_percentage(pct).c_str(),
+                         from.c_str());
+    }
+    if (selected.buff_given > 0) {
+        const std::string to = credit_list(summary, names, [id](const meter::BuffCreditRow& row) {
+            return row.giver == id ? std::optional<meter::EntityId>(row.receiver) : std::nullopt;
+        });
+        text_colored_u32(colors::TextMuted, "This player's buffs added %s to others: %s",
+                         format_damage(selected.buff_given).c_str(), to.c_str());
+    }
+    ImGui::PopTextWrapPos();
+    ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
+}
+
 /// One ability in the breakdown, measured in the tab's own metric.
 struct AbilityRow {
     const meter::ActionSummary* act{nullptr};
@@ -701,6 +790,10 @@ void render_drilldown(const meter::EncounterSummary& summary, Drilldown kind) {
         s_selected_drilldown_entity = 0;
     }
     end_section_header();
+
+    if (!healing) {
+        render_buff_credit_lines(summary, *selected);
+    }
 
     // Heals are kept apart from damage, so each tab only lists what it ranks.
     std::vector<AbilityRow> rows;

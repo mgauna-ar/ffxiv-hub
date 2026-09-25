@@ -1,9 +1,12 @@
 #include "payload/object_reader.hpp"
+#include "meter/buff_attribution.hpp"
 #include "meter/combatant_registry.hpp"
 #include "common/sigscan.hpp"
 #include "common/pe_scanner.hpp"
 #include "common/os/logger.hpp"
 #include "hub/game/entity.hpp"
+#include "hub/game/raid_buffs.hpp"
+#include "hub/game/status.hpp"
 #include <chrono>
 #include <cstring>
 
@@ -66,6 +69,29 @@ bool extract_status_list(const game::StatusManagerObject* manager, const void* e
     return true;
 }
 
+bool extract_attribution_statuses(const game::StatusManagerObject* manager, const void* expected_owner,
+                                  ipc::CombatStatusEntry* out, size_t capacity, size_t& count) noexcept {
+    count = 0;
+    if (manager == nullptr || out == nullptr) return false;
+    const uint8_t slots = manager->slot_count;
+    if (slots != game::definitions::DEFAULT_STATUS_SLOTS && slots != game::definitions::MAX_STATUS_SLOTS) {
+        return false;
+    }
+    if (expected_owner != nullptr && manager->owner != nullptr && manager->owner != expected_owner) {
+        return false;
+    }
+    for (size_t i = 0; i < slots && i < game::definitions::MAX_STATUS_SLOTS && count < capacity; ++i) {
+        const game::StatusEntry& slot = manager->statuses[i];
+        if (slot.status_id == 0 || !meter::is_attribution_status(slot.status_id)) continue;
+        ipc::CombatStatusEntry& entry = out[count++];
+        entry.status_id = slot.status_id;
+        entry.param = slot.param;
+        entry.remaining_s = slot.remaining;
+        entry.source_id = static_cast<uint32_t>(slot.source_id);
+    }
+    return true;
+}
+
 bool reads_as_lobby(const uint32_t* local_player_id) noexcept {
     return local_player_id != nullptr && *local_player_id == hub::game::NO_ENTITY_ID;
 }
@@ -79,9 +105,9 @@ void ObjectReader::note_status_layout(bool ok) {
         return;
     }
     // One odd object after reads have worked is a transient, not a moved layout.
-    if (m_status_layout_confirmed || m_status_reads_disabled) return;
+    if (m_status_layout_confirmed || m_status_reads_disabled.load(std::memory_order_relaxed)) return;
     if (++m_status_layout_failures >= kStatusLayoutStrikes) {
-        m_status_reads_disabled = true;
+        m_status_reads_disabled.store(true, std::memory_order_relaxed);
         hub::os::Logger::warn(
             "Status reads switched off: no StatusManager read passed the layout check. "
             "Its offsets in game_definitions.hpp need re-verifying for this game version.");
@@ -388,16 +414,63 @@ static bool SafeExtractStatusList(
     }
 }
 
+/// The StatusManager of a BattleChara the hook handed over, once its id and kind check out.
+static bool SafeExtractAttributionStatuses(
+    const game::CharacterObject* obj, uint32_t entity_id, ipc::CombatStatusEntry* out, size_t capacity, size_t& count
+) {
+    __try {
+        if (obj == nullptr || obj->entity_id != entity_id) return false;
+        if (obj->object_kind != 1 && obj->object_kind != 2) return false;
+        const auto* manager = reinterpret_cast<const game::StatusManagerObject*>(
+            reinterpret_cast<uintptr_t>(obj) + game::offsets::BATTLE_CHARA_STATUS_MANAGER);
+        return detail::extract_attribution_statuses(manager, obj, out, capacity, count);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        count = 0;
+        return false;
+    }
+}
+
 } // namespace
 
 ObjectReader::ObjectReader(RingBuffer* ring_buffer)
     : m_ring_buffer(ring_buffer) {}
 
+std::optional<size_t> ObjectReader::read_attribution_statuses(
+    uint32_t entity_id, const void* character, std::span<ipc::CombatStatusEntry> out
+) {
+    if (!m_initialized || !status_reads_enabled() || !game::is_real_entity_id(entity_id)) return std::nullopt;
+
+    const auto* obj = static_cast<const game::CharacterObject*>(character);
+    if (obj == nullptr) {
+        uint32_t hp = 0;
+        uint32_t max_hp = 0;
+        obj = SafeFindBattleChara(m_fp_get_object_by_id, m_game_object_mgr_addr, entity_id, hp, max_hp);
+        if (obj == nullptr) return std::nullopt;
+    }
+    size_t count = 0;
+    if (!SafeExtractAttributionStatuses(obj, entity_id, out.data(), out.size(), count)) return std::nullopt;
+
+    // Whether the status carries the steps danced or codas sung is not in the client.
+    // Logged once per value so a live session can settle it.
+    for (size_t i = 0; i < count; ++i) {
+        const game::RaidBuff* buff = game::find_raid_buff(out[i].status_id);
+        if (buff == nullptr || buff->value != game::RaidBuffValue::ByApplication) continue;
+        const uint32_t key = (static_cast<uint32_t>(out[i].status_id) << 16) | out[i].param;
+        if (m_logged_strength_params.insert(key).second) {
+            hub::os::Logger::info("Status " + std::to_string(out[i].status_id) + " (" +
+                                  game::status_name(out[i].status_id) + ") seen with param " +
+                                  std::to_string(out[i].param));
+        }
+    }
+    return count;
+}
+
 size_t ObjectReader::read_vitals(std::span<const uint32_t> enemy_ids, std::span<meter::ActorVitals> out) {
     if (!m_initialized || out.empty()) return 0;
 
     const auto read_statuses = [this](meter::ActorVitals& vitals, uintptr_t manager_addr, const void* owner, bool detail) {
-        if (m_status_reads_disabled) return;
+        if (m_status_reads_disabled.load(std::memory_order_relaxed)) return;
         bool layout_ok = false;
         if (SafeExtractStatusList(manager_addr, owner, detail, vitals, layout_ok)) {
             note_status_layout(layout_ok);
@@ -710,6 +783,12 @@ bool ObjectReader::in_lobby() const {
 
 void ObjectReader::inspect_and_sync_actor(uint32_t, meter::CombatantRegistry*) {}
 void ObjectReader::sync_party(meter::CombatantRegistry*) {}
+
+std::optional<size_t> ObjectReader::read_attribution_statuses(
+    uint32_t, const void*, std::span<ipc::CombatStatusEntry>
+) {
+    return std::nullopt;
+}
 
 size_t ObjectReader::read_vitals(std::span<const uint32_t>, std::span<meter::ActorVitals>) {
     return 0;

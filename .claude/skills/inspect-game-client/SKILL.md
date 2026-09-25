@@ -21,11 +21,12 @@ combat meter treating party slot 0 as the local player. The install is at `~/ffx
 | Who calls this? | `python3 tools/inspect_exe.py xrefs 0x140b259b0` |
 | Who reads/writes this global or struct? | `python3 tools/inspect_exe.py xrefs 0x142aa0400 --span 0x20` |
 | Who writes this struct offset? | `python3 tools/inspect_exe.py field 0x7fdc --writes` (drop `--writes` for reads) |
+| Which case of a switch reaches which handler? | `python3 tools/inspect_exe.py jumptable 0x1409010a8 77 --index 0x140901134 --first 1`: the dword table of targets, the case count, the byte table folding shared cases when there is one, and the value the switch subtracted |
 | Game sheet data | `tools/xivdata`: `Sheet(SqPack(game_dir + "/sqpack/ffxiv"), "TerritoryType").rows()`. String cells come back with SeString macros stripped, except Hyphen (`0x1F`) as `-` |
 
 `inspect_exe.py` wraps `tools/xivbin/pe.py`, which is importable for anything the CLI does
 not cover (`Image.find_pattern`, `rip_target`, `func_containing`, `xrefs`,
-`field_accesses`). Disassembly uses an `llvm-objdump` with the x86 backend;
+`field_accesses`, `jump_table`). Disassembly uses an `llvm-objdump` with the x86 backend;
 `/usr/bin/objdump` on macOS has it. The xref scan is compiled from `tools/xivbin/xrefs.cpp`
 into `$TMPDIR` on first use.
 
@@ -63,5 +64,6 @@ example "entry i goes to slot i", which is exactly the kind of fact premises dep
   "How the client dispatches an action". The party list and status lists live in the
   combat meter's "How the client fills the party list" and "How the client keeps status
   lists", ticks and effect entries in its "How the client reports DoT and HoT ticks" and
-  "How the client reads an effect entry". The lobby marker lives in the root
+  "How the client reads an effect entry", and status applications in its "How the client
+  applies statuses". The lobby marker lives in the root
   `AGENTS.md`'s "How the client marks the lobby".

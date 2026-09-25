@@ -30,6 +30,8 @@ no installer.
 
 - Live DPS and HPS, with overheal kept out of HPS. Crit, direct hit and
   crit-direct-hit rates, and a per-action breakdown.
+- rDPS, aDPS, nDPS and cDPS: the damage each raid buff added is credited to the player
+  who gave it.
 - Pets are merged into their owners, and the Limit Break gets its own row, so the table
   holds your party and nothing else.
 - Every death, with the killing blow, a recap of the hits and heals before it, and the
@@ -163,7 +165,7 @@ telemetry and draws no overlay. Flip it from the plugin's page or its dashboard 
 
 | Plugin | What it does |
 |---|---|
-| [**Combat Meter**](plugins/combat_meter/README.md) | DPS and HPS with overheal separated, crit/DH/CDH rates, automatic pet attribution, deaths with killing blow and recap, buff/debuff/DoT uptime, damage taken by ability, encounter tracking and pull history |
+| [**Combat Meter**](plugins/combat_meter/README.md) | DPS and HPS with overheal separated, rDPS/aDPS/nDPS/cDPS from raid buff credit, crit/DH/CDH rates, automatic pet attribution, deaths with killing blow and recap, buff/debuff/DoT uptime, damage taken by ability, encounter tracking and pull history |
 | [**Latency Mitigator**](plugins/latency_mitigator/README.md) | Animation lock compensation for clean double-weaving on high latency, with a live ping and RTT HUD |
 
 Each plugin's README covers how it works, its in-game overlay, its desktop view and its

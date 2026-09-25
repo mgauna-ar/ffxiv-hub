@@ -112,6 +112,23 @@ class Image:
         disp = struct.unpack_from("<i", self.data, self.va_to_off(ins_va) + disp_off)[0]
         return ins_va + ins_len + disp
 
+    def jump_table(self, targets_va, count, index_va=None, first_case=0):
+        """Case values per target of an MSVC switch, as {target_va: [case, ...]}.
+
+        MSVC emits `mov ecx, [base + 4*idx + targets_rva]` over a table of image-relative
+        dwords, optionally behind `movzx eax, byte [base + idx + index_rva]`, a byte table
+        that folds cases sharing a handler. `count` is the number of cases (the compare
+        bound plus one) and `first_case` what the switch subtracted before indexing.
+        """
+        cases = {}
+        for i in range(count):
+            slot = i
+            if index_va is not None:
+                slot = self.data[self.va_to_off(index_va) + i]
+            rva = struct.unpack_from("<I", self.data, self.va_to_off(targets_va) + 4 * slot)[0]
+            cases.setdefault(self.base + rva, []).append(first_case + i)
+        return cases
+
     # --- disassembly ----------------------------------------------------
 
     def disasm(self, start, stop):

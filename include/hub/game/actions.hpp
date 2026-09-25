@@ -19,4 +19,8 @@ namespace hub::game {
     return name.empty() ? "Action " + std::to_string(id) : std::string(name);
 }
 
+/// True for a player action on the global cooldown (cooldown group 58).
+/// Defined in src/common/game_tables.cpp.
+[[nodiscard]] bool is_gcd_action(uint32_t id) noexcept;
+
 } // namespace hub::game

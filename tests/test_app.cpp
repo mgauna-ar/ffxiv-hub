@@ -150,6 +150,48 @@ TEST_CASE(PipeServer, StatusTickFromAnOlderPayload) {
     TEST_ASSERT_EQ(overheal, 700u);
 }
 
+TEST_CASE(PipeServer, CombatPacketsWithoutCreditsFromAnOlderPayload) {
+    // Buff credits were appended to both packets; a payload loaded before them still
+    // sends the old sizes, which must arrive with no credits rather than be dropped.
+    ipc::PipeServer server;
+    uint32_t action_damage = 0;
+    uint8_t action_credits = 0xFF;
+    server.set_combat_action_callback([&](const ipc::CombatActionPayload& act) {
+        action_damage = act.damage;
+        action_credits = act.credits.count;
+    });
+    uint32_t tick_overheal = 0;
+    uint8_t tick_credits = 0xFF;
+    server.set_combat_tick_callback([&](const ipc::CombatStatusTickPayload& tick) {
+        tick_overheal = tick.overheal;
+        tick_credits = tick.credits.count;
+    });
+
+    ipc::CombatActionPayload act{};
+    act.damage = 15000;
+    act.credits.count = 1;
+    const auto* act_bytes = reinterpret_cast<const uint8_t*>(&act);
+    TEST_ASSERT(server.process_raw_packet(ipc::serialize_packet(
+        PluginId::CombatMeter, MessageType::CombatAction, 1,
+        std::span<const uint8_t>(act_bytes, ipc::COMBAT_ACTION_V1_SIZE))));
+    TEST_ASSERT_EQ(action_damage, 15000u);
+    TEST_ASSERT_EQ(action_credits, 0u);
+
+    ipc::CombatStatusTickPayload tick{};
+    tick.overheal = 700;
+    tick.credits.count = 1;
+    const auto* tick_bytes = reinterpret_cast<const uint8_t*>(&tick);
+    TEST_ASSERT(server.process_raw_packet(ipc::serialize_packet(
+        PluginId::CombatMeter, MessageType::CombatStatusTick, 2,
+        std::span<const uint8_t>(tick_bytes, ipc::COMBAT_STATUS_TICK_V2_SIZE))));
+    TEST_ASSERT_EQ(tick_overheal, 700u);
+    TEST_ASSERT_EQ(tick_credits, 0u);
+
+    TEST_ASSERT(server.process_raw_packet(ipc::serialize_typed_packet(
+        PluginId::CombatMeter, MessageType::CombatAction, 3, act)));
+    TEST_ASSERT_EQ(action_credits, 1u);
+}
+
 TEST_CASE(AppState, InitializationAndRegisteredPlugins) {
     app::AppState state;
     TEST_ASSERT(state.initialize());

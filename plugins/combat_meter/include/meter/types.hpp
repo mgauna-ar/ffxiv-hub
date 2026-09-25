@@ -275,7 +275,21 @@ struct CombatantTotals {
     uint64_t total_healing{0};
     uint64_t effective_healing{0};
     uint64_t overhealing{0};
+    /// Part of total_damage other players' buffs added, and of that, what cards and
+    /// dance partner effects added.
+    uint64_t buff_received{0};
+    uint64_t buff_received_single{0};
+    /// Damage this combatant's buffs added to other players' hits.
+    uint64_t buff_given{0};
     double dps{0.0};
+    /// dps with buff damage moved to whoever gave the buff.
+    double rdps{0.0};
+    /// dps less what cards and dance partner effects added.
+    double adps{0.0};
+    /// dps less everything other players' buffs added.
+    double ndps{0.0};
+    /// adps plus what this combatant's buffs added to others.
+    double cdps{0.0};
     double hps{0.0};
     double damage_share_pct{0.0};
     HitCounts hits;
@@ -303,6 +317,40 @@ struct CombatantTotals {
 struct CombatantStats : CombatantTotals {
     std::unordered_map<ActionId, ActionSummary> actions;
 };
+
+/// Which damage rate the meter ranks and draws by.
+enum class DpsMetric : uint8_t {
+    Dps = 0,
+    Rdps = 1,
+    Adps = 2,
+    Ndps = 3,
+    Cdps = 4,
+};
+constexpr uint32_t DPS_METRIC_COUNT = 5;
+
+[[nodiscard]] constexpr DpsMetric dps_metric_from(uint32_t value) noexcept {
+    return value < DPS_METRIC_COUNT ? static_cast<DpsMetric>(value) : DpsMetric::Dps;
+}
+
+[[nodiscard]] constexpr std::string_view to_string(DpsMetric metric) noexcept {
+    switch (metric) {
+        case DpsMetric::Rdps: return "rDPS";
+        case DpsMetric::Adps: return "aDPS";
+        case DpsMetric::Ndps: return "nDPS";
+        case DpsMetric::Cdps: return "cDPS";
+        default: return "DPS";
+    }
+}
+
+[[nodiscard]] constexpr double dps_figure(const CombatantTotals& totals, DpsMetric metric) noexcept {
+    switch (metric) {
+        case DpsMetric::Rdps: return totals.rdps;
+        case DpsMetric::Adps: return totals.adps;
+        case DpsMetric::Ndps: return totals.ndps;
+        case DpsMetric::Cdps: return totals.cdps;
+        default: return totals.dps;
+    }
+}
 
 using ipc::LifeEventKind;
 using ipc::RecapKind;
@@ -355,6 +403,14 @@ struct StatusUptimeRow {
     bool on_enemy{false};
 };
 
+/// Damage one player's buffs added to another's hits over the pull.
+struct BuffCreditRow {
+    EntityId receiver{0};
+    EntityId giver{0};
+    uint64_t amount{0};
+    bool single_target{false};
+};
+
 /// Name for an id a detail row refers to, enemies included.
 struct ActorLabel {
     EntityId entity{0};
@@ -385,6 +441,7 @@ struct EncounterSummary {
     std::vector<DeathRecord> deaths;
     std::vector<DamageTakenRow> damage_taken;
     std::vector<StatusUptimeRow> statuses;
+    std::vector<BuffCreditRow> buff_credits;
     std::vector<ActorLabel> names;
 };
 
@@ -402,6 +459,8 @@ struct CombatConfig {
     bool   show_col_cdh{true};
     /// Which table the in-game overlay draws: 0 = damage, 1 = healing.
     uint32_t overlay_metric{0};
+    /// Which damage rate both tables rank by: a DpsMetric.
+    uint32_t dps_metric{0};
     /// Polls HP and status lists for deaths, buffs and debuffs.
     bool   track_vitals{true};
     /// Position, size, lock, click-through, opacity, scale, hide conditions.

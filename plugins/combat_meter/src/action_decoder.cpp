@@ -16,6 +16,29 @@ namespace {
     /// ActionEffectEntry::param bit for a heal, which never direct hits.
     constexpr uint8_t HEAL_PARAM_CRIT = 0x20;
 
+    /// Effect kinds that apply a status, whose id is the entry's value.
+    constexpr uint8_t EFFECT_APPLY_STATUS_TO_TARGET = 0x0E;
+    constexpr uint8_t EFFECT_APPLY_STATUS_TO_SOURCE = 0x0F;
+
+    /// targets[] runs parallel to the effect blocks, slot 0 included. The animation
+    /// target is only a fallback: a self-centred AoE animates on the caster, not on
+    /// whoever its first block hit.
+    uint64_t target_of_block(const game::ActionEffectHeader& header, const uint64_t* targets, uint8_t block) noexcept {
+        if (targets != nullptr && targets[block] != 0) {
+            return targets[block];
+        }
+        return header.animation_target_id;
+    }
+
+    const game::ActionEffectEntry* block_entries(const void* effect_data, uint8_t block) noexcept {
+        return &static_cast<const game::ActionEffectEntry*>(effect_data)[
+            block * game::definitions::MAX_EFFECT_ENTRIES_PER_TARGET];
+    }
+
+    uint8_t block_count(const game::ActionEffectHeader& header) noexcept {
+        return std::min<uint8_t>(header.num_targets, static_cast<uint8_t>(game::definitions::MAX_TARGETS_PER_ACTION));
+    }
+
     /// The part of `heal` the target had no room for, or nothing when its HP is unknown.
     std::optional<uint32_t> overheal_of(uint32_t heal, uint32_t current_hp, uint32_t max_hp) noexcept {
         if (max_hp == 0 || current_hp > max_hp) {
@@ -38,15 +61,10 @@ size_t decode_action_effects(
         return 0;
     }
 
-    const uint8_t raw_num_targets = header.num_targets;
-    if (raw_num_targets == 0) {
+    const uint8_t num_targets = block_count(header);
+    if (num_targets == 0) {
         return 0;
     }
-
-    const uint8_t num_targets = std::min<uint8_t>(
-        raw_num_targets,
-        static_cast<uint8_t>(game::definitions::MAX_TARGETS_PER_ACTION)
-    );
 
     if (timestamp_us == 0) {
         timestamp_us = static_cast<uint64_t>(
@@ -61,17 +79,8 @@ size_t decode_action_effects(
     size_t packet_count = 0;
 
     for (uint8_t t = 0; t < num_targets; ++t) {
-        // targets[] runs parallel to the effect blocks, slot 0 included. The
-        // animation target is only a fallback: a self-centred AoE animates on the
-        // caster, not on whoever its first block hit.
-        uint64_t target_id = header.animation_target_id;
-        if (target_ids_ptr != nullptr && target_ids_ptr[t] != 0) {
-            target_id = target_ids_ptr[t];
-        }
-
-        const auto* entries = &reinterpret_cast<const game::ActionEffectEntry*>(
-            effect_data
-        )[t * game::definitions::MAX_EFFECT_ENTRIES_PER_TARGET];
+        const uint64_t target_id = target_of_block(header, target_ids_ptr, t);
+        const auto* entries = block_entries(effect_data, t);
 
         for (size_t i = 0; i < game::definitions::MAX_EFFECT_ENTRIES_PER_TARGET; ++i) {
             const auto& entry = entries[i];
@@ -162,6 +171,38 @@ size_t decode_action_effects(
     }
 
     return packet_count;
+}
+
+size_t decode_status_applications(
+    uint32_t source_id,
+    const game::ActionEffectHeader& header,
+    const void* effect_data,
+    const void* targets,
+    StatusApplicationCallback callback
+) {
+    if (effect_data == nullptr || !callback) {
+        return 0;
+    }
+    const auto* target_ids = static_cast<const uint64_t*>(targets);
+    size_t count = 0;
+    for (uint8_t t = 0; t < block_count(header); ++t) {
+        const auto* entries = block_entries(effect_data, t);
+        for (size_t i = 0; i < game::definitions::MAX_EFFECT_ENTRIES_PER_TARGET; ++i) {
+            const auto& entry = entries[i];
+            if (entry.effect_type != EFFECT_APPLY_STATUS_TO_TARGET && entry.effect_type != EFFECT_APPLY_STATUS_TO_SOURCE) {
+                continue;
+            }
+            StatusApplication applied{};
+            applied.receiver_id = entry.effect_type == EFFECT_APPLY_STATUS_TO_SOURCE
+                ? source_id
+                : static_cast<uint32_t>(target_of_block(header, target_ids, t));
+            applied.status_id = entry.value;
+            if (applied.status_id == 0) continue;
+            callback(applied);
+            ++count;
+        }
+    }
+    return count;
 }
 
 void apply_overheal(ipc::CombatActionPacket& packet, uint32_t current_hp, uint32_t max_hp) noexcept {

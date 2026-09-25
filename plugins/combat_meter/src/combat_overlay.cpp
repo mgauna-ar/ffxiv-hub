@@ -21,7 +21,7 @@ Rect CombatOverlay::default_geometry() const noexcept {
 }
 
 std::vector<const CombatantStats*> CombatOverlay::sorted_combatants(
-    const EncounterSummary& summary, bool party_only, bool by_healing, bool hide_inactive
+    const EncounterSummary& summary, bool party_only, bool by_healing, bool hide_inactive, DpsMetric dps_metric
 ) {
     std::vector<const CombatantStats*> list;
     list.reserve(summary.combatants.size());
@@ -39,9 +39,9 @@ std::vector<const CombatantStats*> CombatOverlay::sorted_combatants(
     for (const auto& c : summary.combatants) {
         if (c.is_pet) continue;  // Merged into the owner's totals.
         if (party_only && !in_party(c)) continue;
-        if (c.total_damage == 0 && c.total_healing == 0 && c.damage_taken == 0) continue;
+        if (c.total_damage == 0 && c.total_healing == 0 && c.damage_taken == 0 && c.buff_given == 0) continue;
         if (hide_inactive) {
-            const uint64_t contribution = by_healing ? c.effective_healing : c.total_damage;
+            const uint64_t contribution = by_healing ? c.effective_healing : c.total_damage + c.buff_given;
             if (contribution == 0) continue;
         }
         list.push_back(&c);
@@ -53,8 +53,10 @@ std::vector<const CombatantStats*> CombatOverlay::sorted_combatants(
             return a->effective_healing > b->effective_healing;
         });
     } else {
-        std::sort(list.begin(), list.end(), [](const CombatantStats* a, const CombatantStats* b) {
-            if (a->dps != b->dps) return a->dps > b->dps;
+        std::sort(list.begin(), list.end(), [dps_metric](const CombatantStats* a, const CombatantStats* b) {
+            const double rate_a = dps_figure(*a, dps_metric);
+            const double rate_b = dps_figure(*b, dps_metric);
+            if (rate_a != rate_b) return rate_a > rate_b;
             return a->total_damage > b->total_damage;
         });
     }
@@ -238,8 +240,11 @@ void CombatOverlay::render_top_bar(const EncounterSummary& current, float scale)
 }
 
 void CombatOverlay::render_damage_table(const EncounterSummary& summary, float scale) {
-    const auto players = sorted_combatants(summary, m_party_only.load(), /*by_healing=*/false, m_hide_inactive.load());
-    const double top_dps = players.empty() ? 1.0 : std::max(players.front()->dps, 1.0);
+    const DpsMetric dps_metric = m_dps_metric.load();
+    const auto players = sorted_combatants(summary, m_party_only.load(), /*by_healing=*/false,
+                                           m_hide_inactive.load(), dps_metric);
+    const double top_dps = players.empty() ? 1.0 : std::max(dps_figure(*players.front(), dps_metric), 1.0);
+    const std::string dps_label(to_string(dps_metric));
 
     const bool col_share = m_show_col_share.load();
     const bool col_crit = m_show_col_crit.load();
@@ -259,7 +264,7 @@ void CombatOverlay::render_damage_table(const EncounterSummary& summary, float s
         ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 22.0f * scale);
         ImGui::TableSetupColumn("Job", ImGuiTableColumnFlags_WidthFixed, 36.0f * scale);
         ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("DPS", ImGuiTableColumnFlags_WidthFixed, 70.0f * scale);
+        ImGui::TableSetupColumn(dps_label.c_str(), ImGuiTableColumnFlags_WidthFixed, 70.0f * scale);
         ImGui::TableSetupColumn("Damage", ImGuiTableColumnFlags_WidthFixed, 70.0f * scale);
         if (col_share) ImGui::TableSetupColumn("Share", ImGuiTableColumnFlags_WidthFixed, 56.0f * scale);
         if (col_crit) ImGui::TableSetupColumn("Crit", ImGuiTableColumnFlags_WidthFixed, 50.0f * scale);
@@ -293,7 +298,7 @@ void CombatOverlay::render_damage_table(const EncounterSummary& summary, float s
 
             ImGui::TableSetColumnIndex(col++);
             center_in_row(row_h);
-            text_rate(player->dps);
+            text_rate(dps_figure(*player, dps_metric));
 
             ImGui::TableSetColumnIndex(col++);
             center_in_row(row_h);
@@ -321,7 +326,7 @@ void CombatOverlay::render_damage_table(const EncounterSummary& summary, float s
             }
 
             render_row_progress_bar(
-                static_cast<float>(player->dps / top_dps),
+                static_cast<float>(dps_figure(*player, dps_metric) / top_dps),
                 style_color(style, 48)
             );
         }

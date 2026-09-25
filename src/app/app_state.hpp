@@ -129,6 +129,7 @@ public:
     void send_combat_column_dh(bool show);
     void send_combat_column_cdh(bool show);
     void send_combat_overlay_metric(uint32_t metric);
+    void send_combat_dps_metric(uint32_t metric);
     /// Death, buff and debuff tracking (the payload's vitals polling).
     void send_combat_track_vitals(bool enabled);
     void send_combat_reset_stats();

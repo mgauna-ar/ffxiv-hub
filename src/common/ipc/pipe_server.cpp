@@ -163,9 +163,11 @@ bool PipeServer::process_raw_packet(std::span<const uint8_t> data) {
     if (plugin == PluginId::CombatMeter) {
         switch (msg_type) {
             case MessageType::CombatAction:
-                if (payload_span.size() >= sizeof(CombatActionPayload) && m_on_combat_action) {
+                // A payload loaded before this app may send the action without its
+                // credits; they read as none.
+                if (payload_span.size() >= COMBAT_ACTION_V1_SIZE && m_on_combat_action) {
                     CombatActionPayload payload{};
-                    std::memcpy(&payload, payload_span.data(), sizeof(payload));
+                    std::memcpy(&payload, payload_span.data(), std::min(payload_span.size(), sizeof(payload)));
                     m_on_combat_action(payload);
                 }
                 break;

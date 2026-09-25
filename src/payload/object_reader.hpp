@@ -4,8 +4,11 @@
 #include "common/ipc/protocol.hpp"
 #include "common/ipc/ring_buffer.hpp"
 #include "meter/vitals.hpp"
+#include <atomic>
 #include <cstdint>
+#include <optional>
 #include <unordered_map>
+#include <unordered_set>
 #include <span>
 #include <string>
 #include <chrono>
@@ -25,6 +28,12 @@ namespace detail {
 /// timers and sources are left at 0.
 bool extract_status_list(const game::StatusManagerObject* manager, const void* expected_owner,
                          bool with_detail, meter::ActorVitals& out) noexcept;
+
+/// Copies the occupied slots meter::is_attribution_status keeps, with timers and
+/// sources, into `out` and sets `count`. False on the same layout check as
+/// extract_status_list.
+bool extract_attribution_statuses(const game::StatusManagerObject* manager, const void* expected_owner,
+                                  ipc::CombatStatusEntry* out, size_t capacity, size_t& count) noexcept;
 
 /// True when the local player id holds NO_ENTITY_ID, the client's value while no
 /// character is in the world. Any other value, or no address, is not evidence.
@@ -60,7 +69,16 @@ public:
 
     /// False once status reads were switched off because the StatusManager layout
     /// check never passed: the offsets need re-verifying after a patch.
-    [[nodiscard]] bool status_reads_enabled() const noexcept { return !m_status_reads_disabled; }
+    [[nodiscard]] bool status_reads_enabled() const noexcept {
+        return !m_status_reads_disabled.load(std::memory_order_relaxed);
+    }
+
+    /// The raid buffs and hit guarantees an actor holds right now, for attributing a
+    /// hit: read through `character` when the hook handed one over, else found by id.
+    /// Game main thread only, where statuses are written. Nullopt when the actor
+    /// cannot be read or status reads are off; never counts toward the layout check.
+    [[nodiscard]] std::optional<size_t> read_attribution_statuses(
+        uint32_t entity_id, const void* character, std::span<ipc::CombatStatusEntry> out);
 
     /// True while no character is in the world: title screen, data center or
     /// character select. False when unsure, so a missed signature shows overlays.
@@ -129,10 +147,14 @@ private:
     /// False until m_last_territory has been announced; 0 is a real value to send.
     bool m_territory_published{false};
 
-    // Status layout check; orchestration thread only.
+    // Status layout check; orchestration thread only, but the main thread reads the switch.
     uint32_t m_status_layout_failures{0};
     bool m_status_layout_confirmed{false};
-    bool m_status_reads_disabled{false};
+    std::atomic<bool> m_status_reads_disabled{false};
+
+    /// Status and param pairs already logged for buffs whose strength the applying
+    /// action decides. Main thread only.
+    std::unordered_set<uint32_t> m_logged_strength_params;
 };
 
 } // namespace hub::payload

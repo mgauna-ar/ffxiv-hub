@@ -34,6 +34,7 @@ JsonValue ConfigManager::default_document() {
         {"hide_inactive", JsonValue(false)},
         {"inactivity_timeout_seconds", JsonValue(7.0f)},
         {"overlay_metric", JsonValue(0)},
+        {"dps_metric", JsonValue(0)},
         {"show_bars", JsonValue(true)},
         {"refresh_interval_ms", JsonValue(500)},
         {"show_col_share", JsonValue(true)},
