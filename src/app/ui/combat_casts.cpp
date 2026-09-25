@@ -37,7 +37,7 @@ const char* action_kind(meter::ActionId action) {
 
 void render_player_table(const std::vector<const meter::CombatantStats*>& players, meter::EntityId shown,
                          float height) {
-    const auto sizing = table_sizing(560.0f, kCombatTableFlags);
+    const auto sizing = table_sizing(560.0f, 7, kCombatTableFlags);
     if (!ImGui::BeginTable("##CastPlayers", 7, sizing.flags, ImVec2(0.0f, height))) return;
     ImGui::TableSetupColumn("Job", ImGuiTableColumnFlags_WidthFixed, m(52.0f));
     ImGui::TableSetupColumn("Player", sizing.flex_flags(), sizing.flex_width(150.0f, 1.0f));
@@ -94,7 +94,7 @@ void render_action_table(const meter::CombatantStats& player, double duration_s)
         return a->casts != b->casts ? a->casts > b->casts : a->name < b->name;
     });
 
-    const auto sizing = table_sizing(460.0f, kCombatTableFlags);
+    const auto sizing = table_sizing(460.0f, 4, kCombatTableFlags);
     if (!ImGui::BeginTable("##CastActions", 4, sizing.flags, ImVec2(0.0f, fill_h(0.0f)))) return;
     ImGui::TableSetupColumn("Action", sizing.flex_flags(), sizing.flex_width(180.0f, 1.0f));
     ImGui::TableSetupColumn("Kind", ImGuiTableColumnFlags_WidthFixed, m(90.0f));

@@ -60,9 +60,12 @@ struct TableSizing {
     [[nodiscard]] float flex_width(float min_px, float weight) const;
 };
 
-/// `natural_width` is the unscaled width below which the table should scroll:
-/// the sum of its fixed columns plus a workable minimum for the flexible ones.
-[[nodiscard]] TableSizing table_sizing(float natural_width, ImGuiTableFlags base);
+/// `natural_width` is the unscaled width of the table's content below which it
+/// should scroll: the sum of its fixed columns plus a workable minimum for the
+/// flexible ones. `columns` is the count passed to BeginTable(); the cell padding,
+/// borders and vertical scrollbar ImGui adds around that content are counted here,
+/// since leaving them out let the flexible columns collapse just above the switch.
+[[nodiscard]] TableSizing table_sizing(float natural_width, int columns, ImGuiTableFlags base);
 
 // ----------------------------------------------------------------- text -----
 

@@ -161,7 +161,7 @@ void render_statuses(const meter::EncounterSummary& summary, float height, bool 
     }
 
     const SummaryNames names(summary);
-    const auto sizing = table_sizing(560.0f, kCombatTableFlags);
+    const auto sizing = table_sizing(560.0f, 5, kCombatTableFlags);
     if (!ImGui::BeginTable("##StatusTable", 5, sizing.flags, ImVec2(0.0f, body_h))) return;
     ImGui::TableSetupColumn("Status", sizing.flex_flags(), sizing.flex_width(180.0f, 1.4f));
     ImGui::TableSetupColumn(s_view == StatusView::EnemyDebuffs ? "Applied by" : "Players",

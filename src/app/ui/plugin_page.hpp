@@ -29,6 +29,19 @@ void render_plugin_header(AppState& app_state, PluginId id, const char* icon,
 [[nodiscard]] bool render_plugin_disabled_gate(AppState& app_state, PluginId id,
                                                const char* name);
 
+/// One tab of a plugin page: its icon, its label, and what it draws.
+struct PluginTab {
+    const char* icon{nullptr};
+    const char* label{nullptr};
+    std::function<void()> body;
+};
+
+/// The tab bar under a plugin's header. No label is ever clipped: every tab shows
+/// its icon while all of them fit, only its label once they do not, and the bar
+/// scrolls when even the bare labels do not fit. A tab keeps its id either way,
+/// so the open tab survives a resize across the switch.
+void render_plugin_tabs(const char* id, const PluginTab* tabs, size_t count);
+
 /// One card in a plugin's settings tab. The order these are listed in is the
 /// order the user sees, and it is the same order for every plugin.
 struct SettingsSection {

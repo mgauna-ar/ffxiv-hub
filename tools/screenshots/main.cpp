@@ -37,7 +37,7 @@ constexpr float kDensity = 1.5f;
 /// drawn at 100%: a 2x screen then shows it close to pixel for pixel.
 constexpr float kHeroDensity = 1.0f;
 /// Desktop window client areas. The Combat Meter's is a little larger than the
-/// window opens at, which clips its tab labels.
+/// window opens at, where its tabs drop their icons to fit.
 constexpr float kCombatWindowW = 1180.0f;
 constexpr float kCombatWindowH = 740.0f;
 constexpr float kLatencyWindowW = 1280.0f;

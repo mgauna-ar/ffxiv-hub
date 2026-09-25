@@ -484,7 +484,7 @@ void render_damage_table(const meter::EncounterSummary& summary, float height) {
     }
 
     const double top_dps = std::max(meter::dps_figure(*combatants.front(), metric), 1.0);
-    const auto sizing = table_sizing(760.0f, kCombatTableFlags);
+    const auto sizing = table_sizing(760.0f, 10, kCombatTableFlags);
     if (!ImGui::BeginTable("##DamageRankingTable", 10, sizing.flags, ImVec2(0.0f, table_h))) return;
 
     ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, m(30.0f));
@@ -564,7 +564,7 @@ void render_healing_table(const meter::EncounterSummary& summary, float height) 
     }
 
     const double top_hps = std::max(combatants.front()->hps, 1.0);
-    const auto sizing = table_sizing(680.0f, kCombatTableFlags);
+    const auto sizing = table_sizing(680.0f, 7, kCombatTableFlags);
     if (!ImGui::BeginTable("##HealingRankingTable", 7, sizing.flags, ImVec2(0.0f, height))) return;
 
     ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, m(30.0f));
@@ -891,7 +891,7 @@ void render_drilldown(const meter::EncounterSummary& summary, Drilldown kind) {
         return;
     }
 
-    const auto sizing = table_sizing(620.0f, kCombatTableFlags);
+    const auto sizing = table_sizing(620.0f, 7, kCombatTableFlags);
     if (ImGui::BeginTable("##DrilldownTable", 7, sizing.flags, ImVec2(0.0f, fill_h(0.0f)))) {
         ImGui::TableSetupColumn("Action", sizing.flex_flags(), sizing.flex_width(160.0f, 1.0f));
         // Every target of an AoE and every tick counts, so these are hits, not casts.
@@ -1019,65 +1019,41 @@ void render_view_combat(AppState& app_state) {
 
     const meter::EncounterSummary& current_summary = is_live ? s_live_summary : s_selected_pull;
 
-    if (ImGui::BeginTabBar("##CombatTabs", ImGuiTabBarFlags_None)) {
-        if (ImGui::BeginTabItem(ICON_SWORDS "  Damage")) {
-            ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
-            render_pull_view(app_state, current_summary, pull_history, selected_index,
-                             "##DamagePane", render_damage_table, Drilldown::Damage);
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem(ICON_HEART "  Healing")) {
-            ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
-            render_pull_view(app_state, current_summary, pull_history, selected_index,
-                             "##HealingPane", render_healing_table, Drilldown::Healing);
-            ImGui::EndTabItem();
-        }
-        const bool tracking_on = cfg_bool(METER, "track_vitals", true);
-        if (ImGui::BeginTabItem(ICON_SHIELD "  Damage Taken")) {
-            ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
-            render_pull_view(app_state, current_summary, pull_history, selected_index,
-                             "##TakenPane", render_damage_taken, Drilldown::None);
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem(ICON_SKULL "  Deaths")) {
-            ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
-            render_pull_view(app_state, current_summary, pull_history, selected_index, "##DeathsPane",
-                             [tracking_on](const meter::EncounterSummary& summary, float height) {
-                                 render_deaths(summary, height, tracking_on);
-                             }, Drilldown::None);
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem(ICON_SPARKLE "  Buffs & Debuffs")) {
-            ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
-            render_pull_view(app_state, current_summary, pull_history, selected_index, "##StatusPane",
-                             [tracking_on](const meter::EncounterSummary& summary, float height) {
-                                 render_statuses(summary, height, tracking_on);
-                             }, Drilldown::None);
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem(ICON_BOLT "  Casts")) {
-            ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
-            render_pull_view(app_state, current_summary, pull_history, selected_index,
-                             "##CastsPane", render_casts, Drilldown::None);
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem(ICON_TRENDING "  Timeline")) {
-            ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
-            // Fetched only while this tab is open.
-            const uint64_t shown_id = is_live ? 0 : s_selected_pull_id;
-            render_pull_view(app_state, current_summary, pull_history, selected_index, "##TimelinePane",
-                             [&app_state, shown_id](const meter::EncounterSummary& summary, float height) {
-                                 render_timeline(app_state, summary, shown_id, height);
-                             }, Drilldown::None);
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem(ICON_SLIDERS "  Settings")) {
-            ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
-            render_settings_tab(app_state);
-            ImGui::EndTabItem();
-        }
-        ImGui::EndTabBar();
-    }
+    const bool tracking_on = cfg_bool(METER, "track_vitals", true);
+    const uint64_t shown_id = is_live ? 0 : s_selected_pull_id;
+    const auto pull_tab = [&](const char* pane_id, auto render, Drilldown drilldown) {
+        return [&, pane_id, render, drilldown] {
+            render_pull_view(app_state, current_summary, pull_history, selected_index, pane_id, render,
+                             drilldown);
+        };
+    };
+    const PluginTab tabs[] = {
+        {ICON_SWORDS, "Damage", pull_tab("##DamagePane", render_damage_table, Drilldown::Damage)},
+        {ICON_HEART, "Healing", pull_tab("##HealingPane", render_healing_table, Drilldown::Healing)},
+        {ICON_SHIELD, "Damage Taken", pull_tab("##TakenPane", render_damage_taken, Drilldown::None)},
+        {ICON_SKULL, "Deaths",
+         pull_tab("##DeathsPane",
+                  [tracking_on](const meter::EncounterSummary& summary, float height) {
+                      render_deaths(summary, height, tracking_on);
+                  },
+                  Drilldown::None)},
+        {ICON_SPARKLE, "Buffs & Debuffs",
+         pull_tab("##StatusPane",
+                  [tracking_on](const meter::EncounterSummary& summary, float height) {
+                      render_statuses(summary, height, tracking_on);
+                  },
+                  Drilldown::None)},
+        {ICON_BOLT, "Casts", pull_tab("##CastsPane", render_casts, Drilldown::None)},
+        // A tab's body runs only while it is open, so the timeline is fetched only then.
+        {ICON_TRENDING, "Timeline",
+         pull_tab("##TimelinePane",
+                  [&app_state, shown_id](const meter::EncounterSummary& summary, float height) {
+                      render_timeline(app_state, summary, shown_id, height);
+                  },
+                  Drilldown::None)},
+        {ICON_SLIDERS, "Settings", [&app_state] { render_settings_tab(app_state); }},
+    };
+    render_plugin_tabs("##CombatTabs", tabs, std::size(tabs));
 #else
     (void)app_state;
 #endif

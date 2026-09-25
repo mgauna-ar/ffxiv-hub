@@ -21,7 +21,7 @@ meter::EntityId s_selected_target = 0;
 void render_player_table(const std::vector<const meter::CombatantStats*>& players,
                          const std::unordered_map<meter::EntityId, uint64_t>& hits_by_target,
                          uint64_t total_taken, float height) {
-    const auto sizing = table_sizing(520.0f, kCombatTableFlags);
+    const auto sizing = table_sizing(520.0f, 5, kCombatTableFlags);
     if (!ImGui::BeginTable("##TakenPlayers", 5, sizing.flags, ImVec2(0.0f, height))) return;
     ImGui::TableSetupColumn("Job", ImGuiTableColumnFlags_WidthFixed, m(52.0f));
     ImGui::TableSetupColumn("Player", sizing.flex_flags(), sizing.flex_width(150.0f, 1.0f));
@@ -89,7 +89,7 @@ void render_ability_table(const meter::EncounterSummary& summary, const SummaryN
         return;
     }
 
-    const auto sizing = table_sizing(640.0f, kCombatTableFlags);
+    const auto sizing = table_sizing(640.0f, 7, kCombatTableFlags);
     if (!ImGui::BeginTable("##TakenAbilities", 7, sizing.flags, ImVec2(0.0f, height))) return;
     ImGui::TableSetupColumn("Ability", sizing.flex_flags(), sizing.flex_width(160.0f, 1.2f));
     ImGui::TableSetupColumn("Source", sizing.flex_flags(), sizing.flex_width(120.0f, 1.0f));

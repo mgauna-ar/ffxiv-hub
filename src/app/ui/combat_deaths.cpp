@@ -57,7 +57,7 @@ std::string buffs_at_death(const meter::DeathRecord& death) {
 }
 
 void render_death_log(const meter::EncounterSummary& summary, const SummaryNames& names, float height) {
-    const auto sizing = table_sizing(760.0f, kCombatTableFlags);
+    const auto sizing = table_sizing(760.0f, 7, kCombatTableFlags);
     if (!ImGui::BeginTable("##DeathLog", 7, sizing.flags, ImVec2(0.0f, height))) return;
     ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthFixed, m(50.0f));
     ImGui::TableSetupColumn("Player", sizing.flex_flags(), sizing.flex_width(140.0f, 1.0f));
@@ -138,7 +138,7 @@ void render_recap(const meter::DeathRecord& death, const SummaryNames& names, fl
         return;
     }
 
-    const auto sizing = table_sizing(560.0f, kCombatTableFlags);
+    const auto sizing = table_sizing(560.0f, 5, kCombatTableFlags);
     if (!ImGui::BeginTable("##DeathRecap", 5, sizing.flags, ImVec2(0.0f, height))) return;
     ImGui::TableSetupColumn("When", ImGuiTableColumnFlags_WidthFixed, m(70.0f));
     ImGui::TableSetupColumn("Event", ImGuiTableColumnFlags_WidthFixed, m(55.0f));
