@@ -217,7 +217,7 @@ void render_action_feed(const std::vector<ipc::MitigatorTelemetryPayload>& telem
         return;
     }
 
-    const auto sizing = table_sizing(720.0f, ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY |
+    const auto sizing = table_sizing(720.0f, 8, ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY |
                                                 ImGuiTableFlags_BordersInnerV);
     if (!ImGui::BeginTable("##RecentActionsTable", 8, sizing.flags, ImVec2(0.0f, fill_h(0.0f)))) {
         return;
@@ -483,19 +483,12 @@ void render_view_latency(AppState& app_state) {
     const auto metrics_snapshot = app_state.get_mitigator_metrics();
     const auto telemetry = app_state.get_recent_telemetry(120);
 
-    if (ImGui::BeginTabBar("##LatencyTabs", ImGuiTabBarFlags_None)) {
-        if (ImGui::BeginTabItem(ICON_TRENDING "  Live telemetry")) {
-            ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
-            render_live_tab(app_state, metrics_snapshot, telemetry);
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem(ICON_SLIDERS "  Settings")) {
-            ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
-            render_settings_tab(app_state);
-            ImGui::EndTabItem();
-        }
-        ImGui::EndTabBar();
-    }
+    const PluginTab tabs[] = {
+        {ICON_TRENDING, "Live telemetry",
+         [&] { render_live_tab(app_state, metrics_snapshot, telemetry); }},
+        {ICON_SLIDERS, "Settings", [&app_state] { render_settings_tab(app_state); }},
+    };
+    render_plugin_tabs("##LatencyTabs", tabs, std::size(tabs));
 #else
     (void)app_state;
 #endif

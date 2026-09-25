@@ -112,9 +112,38 @@ float TableSizing::flex_width(float min_px, float weight) const {
     return cramped ? m(min_px) : weight;
 }
 
-TableSizing table_sizing(float natural_width, ImGuiTableFlags base) {
+namespace {
+
+/// Width ImGui lays out around `columns` columns' content under `flags`: each
+/// cell's padding, the spacing and borders between cells, the outer padding, and
+/// a vertical scrollbar when the table scrolls vertically. Mirrors BeginTable()
+/// and TableUpdateLayout() in imgui_tables.cpp.
+float table_chrome_width(int columns, ImGuiTableFlags flags) {
+    constexpr float kBorder = 1.0f;  // imgui_tables.cpp's TABLE_BORDER_SIZE
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const bool pad_outer = (flags & ImGuiTableFlags_NoPadOuterX) ? false
+                         : (flags & ImGuiTableFlags_PadOuterX)   ? true
+                                                                 : (flags & ImGuiTableFlags_BordersOuterV) != 0;
+    const bool pad_inner = (flags & ImGuiTableFlags_NoPadInnerX) == 0;
+    const bool inner_borders = (flags & ImGuiTableFlags_BordersInnerV) != 0;
+
+    const float cell_padding = (pad_inner && inner_borders) ? style.CellPadding.x : 0.0f;
+    const float spacing = (inner_borders ? kBorder : 0.0f) +
+                          ((pad_inner && !inner_borders) ? style.CellPadding.x * 2.0f : 0.0f);
+    const float outer = ((flags & ImGuiTableFlags_BordersOuterV) ? kBorder : 0.0f) +
+                        (pad_outer ? style.CellPadding.x : 0.0f) - cell_padding;
+
+    const float n = static_cast<float>(std::max(columns, 1));
+    float width = outer * 2.0f + spacing * (n - 1.0f) + cell_padding * 2.0f * n;
+    if (flags & ImGuiTableFlags_ScrollY) width += style.ScrollbarSize;
+    return width;
+}
+
+} // namespace
+
+TableSizing table_sizing(float natural_width, int columns, ImGuiTableFlags base) {
     TableSizing sizing{};
-    sizing.cramped = ImGui::GetContentRegionAvail().x < m(natural_width);
+    sizing.cramped = ImGui::GetContentRegionAvail().x < m(natural_width) + table_chrome_width(columns, base);
     sizing.flags = base | (sizing.cramped ? (ImGuiTableFlags_ScrollX | ImGuiTableFlags_SizingFixedFit)
                                           : ImGuiTableFlags_SizingStretchProp);
     return sizing;

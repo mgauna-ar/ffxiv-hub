@@ -5,7 +5,9 @@
 #include "app/ui/widgets.hpp"
 
 #ifdef HAVE_IMGUI
+#include "imgui_internal.h"
 #include <algorithm>
+#include <cstdio>
 #include <string>
 #endif
 
@@ -28,6 +30,27 @@ float header_action_width(const PluginStatus& status) {
         width += ImGui::CalcTextSize(status.text).x + m(30.0f) + m(10.0f);
     }
     return width;
+}
+
+/// A tab's label with or without its icon. The part after ### is its id, which
+/// is the same either way.
+void tab_label(char* out, size_t size, const PluginTab& tab, bool with_icon) {
+    if (with_icon && tab.icon != nullptr) {
+        std::snprintf(out, size, "%s  %s###%s", tab.icon, tab.label, tab.label);
+    } else {
+        std::snprintf(out, size, "%s###%s", tab.label, tab.label);
+    }
+}
+
+/// Width the tab bar lays its tabs out in, as TabBarLayout() adds them up.
+float tabs_width(const PluginTab* tabs, size_t count, bool with_icons) {
+    float width = 0.0f;
+    for (size_t i = 0; i < count; ++i) {
+        char label[128];
+        tab_label(label, sizeof(label), tabs[i], with_icons);
+        width += ImGui::TabItemCalcSize(label, false).x;
+    }
+    return width + ImGui::GetStyle().ItemInnerSpacing.x * static_cast<float>(count - 1);
 }
 
 } // namespace
@@ -101,6 +124,28 @@ void begin_settings_card(const char* id, const char* icon, const char* label,
 
 void end_settings_card() {
     end_card();
+}
+
+void render_plugin_tabs(const char* id, const PluginTab* tabs, size_t count) {
+    if (tabs == nullptr || count == 0) return;
+
+    // ImGui's default fitting policy shrinks tabs that do not fit and clips their
+    // labels. Drop the icons first, then scroll.
+    const float avail = ImGui::GetContentRegionAvail().x;
+    const bool with_icons = tabs_width(tabs, count, true) <= avail;
+    const bool fits = with_icons || tabs_width(tabs, count, false) <= avail;
+    if (!ImGui::BeginTabBar(id, fits ? ImGuiTabBarFlags_None : ImGuiTabBarFlags_FittingPolicyScroll)) return;
+
+    for (size_t i = 0; i < count; ++i) {
+        char label[128];
+        tab_label(label, sizeof(label), tabs[i], with_icons);
+        if (ImGui::BeginTabItem(label)) {
+            ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
+            tabs[i].body();
+            ImGui::EndTabItem();
+        }
+    }
+    ImGui::EndTabBar();
 }
 
 void render_settings_grid(const SettingsSection* sections, size_t count) {
