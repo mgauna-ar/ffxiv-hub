@@ -4,7 +4,10 @@
 #include "hub/game_state.hpp"
 #include "hub/plugin_api.hpp"
 #include "hub/types.hpp"
+#include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <limits>
 
 namespace hub::ui {
 
@@ -67,6 +70,10 @@ public:
     void set_hide_conditions(uint32_t bits) noexcept { m_hide_conditions.store(bits); }
     [[nodiscard]] uint32_t hide_conditions() const noexcept { return m_hide_conditions.load(); }
 
+    /// Seconds an overlay shown only in combat stays up once combat ends.
+    void set_hide_after_combat(float seconds) noexcept { m_hide_after_combat_s.store(std::max(seconds, 0.0f)); }
+    [[nodiscard]] float hide_after_combat() const noexcept { return m_hide_after_combat_s.load(); }
+
     /// Non-owning. Only the in-game payload owns a provider, so this stays null
     /// in the desktop app and in tests that don't need game state.
     void set_game_state(const GameStateProvider* provider) noexcept override { m_game_state = provider; }
@@ -78,6 +85,7 @@ public:
         m_opacity.store(cfg.opacity);
         m_scale.store(cfg.scale);
         m_hide_conditions.store(cfg.hide_conditions);
+        set_hide_after_combat(cfg.hide_after_combat_s);
         // Clamped at render time against the live viewport instead of here: the
         // payload has no screen metrics, and a fixed assumption would drag a
         // correctly-placed overlay inward on anything wider.
@@ -93,7 +101,8 @@ public:
             m_opacity.load(),
             m_scale.load(),
             geom.x, geom.y, geom.width, geom.height,
-            m_hide_conditions.load()
+            m_hide_conditions.load(),
+            m_hide_after_combat_s.load()
         };
     }
 
@@ -101,15 +110,38 @@ public:
     /// overlay hidden by a condition can always be unlocked and dragged back.
     /// The lobby hides it either way: there is nothing to show before login.
     [[nodiscard]] bool should_render() const noexcept override {
+        return should_render_at(std::chrono::steady_clock::now());
+    }
+
+    /// should_render at a given moment, so the time after combat can be tested.
+    [[nodiscard]] bool should_render_at(std::chrono::steady_clock::time_point now) const noexcept {
         if (m_suppressed.load() || !m_visible.load()) return false;
         if (m_game_state != nullptr && m_game_state->has(GameStateFlag::InLobby)) return false;
         if (!m_locked.load()) return true;
         const uint32_t bits = m_hide_conditions.load();
         if (bits == 0 || m_game_state == nullptr) return true;
-        return !conditions_hide(bits, m_game_state->flags());
+        uint32_t flags = m_game_state->flags();
+        // Shown only in combat, it stays up a while after, so the result can be read.
+        if (has_flag(flags, GameStateFlag::InCombat)) {
+            m_last_in_combat.store(now.time_since_epoch().count());
+        } else if (has_condition(bits, HideCondition::OutOfCombat) && combat_ended_within(now)) {
+            flags |= to_bits(GameStateFlag::InCombat);
+        }
+        return !conditions_hide(bits, flags);
     }
 
 protected:
+    [[nodiscard]] bool combat_ended_within(std::chrono::steady_clock::time_point now) const noexcept {
+        const auto last = m_last_in_combat.load();
+        if (last == kNeverInCombat) return false;
+        const std::chrono::duration<float> since =
+            now - std::chrono::steady_clock::time_point(std::chrono::steady_clock::duration(last));
+        return since.count() < m_hide_after_combat_s.load();
+    }
+
+    static constexpr std::chrono::steady_clock::rep kNeverInCombat =
+        std::numeric_limits<std::chrono::steady_clock::rep>::min();
+
     std::atomic<bool> m_visible{true};
     std::atomic<bool> m_suppressed{false};
     std::atomic<bool> m_locked{false};
@@ -117,6 +149,10 @@ protected:
     std::atomic<float> m_opacity{0.85f};
     std::atomic<float> m_scale{1.0f};
     std::atomic<uint32_t> m_hide_conditions{0};
+    std::atomic<float> m_hide_after_combat_s{DEFAULT_HIDE_AFTER_COMBAT_SECONDS};
+    /// When should_render last saw the game in combat. Written from a const call:
+    /// only the render gate knows when the overlay stopped being in combat.
+    mutable std::atomic<std::chrono::steady_clock::rep> m_last_in_combat{kNeverInCombat};
     std::atomic<bool> m_needs_geometry_restore{true};
 
     const GameStateProvider* m_game_state{nullptr};

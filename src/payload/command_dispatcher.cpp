@@ -36,6 +36,9 @@ bool dispatch_overlay_command(ui::OverlayBase* overlay, const ipc::CommandPayloa
         case CommandId::SetHideConditions:
             if (overlay) overlay->set_hide_conditions(cmd.param_uint);
             return true;
+        case CommandId::SetHideAfterCombat:
+            if (overlay) overlay->set_hide_after_combat(cmd.param_float);
+            return true;
         case CommandId::AutoHide:
             // Older clients only knew about hiding out of combat.
             if (overlay) {
@@ -93,11 +96,6 @@ void dispatch_combat_meter(const CommandDispatchTargets& t, const ipc::CommandPa
             break;
         case CommandId::SetRefreshInterval:
             if (t.combat_overlay) t.combat_overlay->set_refresh_interval_ms(cmd.param_uint);
-            break;
-        case CommandId::SetInactivityTimeout:
-            if (t.combat_plugin) {
-                t.combat_plugin->engine().set_inactivity_timeout(static_cast<double>(cmd.param_float));
-            }
             break;
         case CommandId::SetColumnShare:
             if (t.combat_overlay) t.combat_overlay->set_show_col_share(cmd.param_uint != 0);

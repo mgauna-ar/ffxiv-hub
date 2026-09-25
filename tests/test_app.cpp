@@ -3,6 +3,7 @@
 #include "app/ui/theme.hpp"
 #include "common/ui/job_style.hpp"
 #include "common/ipc/pipe_server.hpp"
+#include "hub/game_state.hpp"
 #include "common/os/tray_manager.hpp"
 #include "meter/pull_grouping.hpp"
 #include <chrono>
@@ -191,6 +192,33 @@ TEST_CASE(PipeServer, CombatPacketsWithoutCreditsFromAnOlderPayload) {
     TEST_ASSERT(server.process_raw_packet(ipc::serialize_typed_packet(
         PluginId::CombatMeter, MessageType::CombatAction, 3, act)));
     TEST_ASSERT_EQ(action_credits, 1u);
+}
+
+TEST_CASE(PipeServer, GameStateFromAnOlderPayload) {
+    // A payload loaded before client_flags sends flags alone. It must still arrive,
+    // with client_flags 0, which the meter reads as "unknown".
+    ipc::PipeServer server;
+    ipc::GameStatePayload received{};
+    int calls = 0;
+    server.set_game_state_callback([&](const ipc::GameStatePayload& gs) {
+        received = gs;
+        ++calls;
+    });
+
+    ipc::GameStatePayload gs{};
+    gs.flags = to_bits(GameStateFlag::Valid) | to_bits(GameStateFlag::InCombat);
+    gs.client_flags = gs.flags;
+    const auto* bytes = reinterpret_cast<const uint8_t*>(&gs);
+    TEST_ASSERT(server.process_raw_packet(ipc::serialize_packet(
+        PluginId::Core, MessageType::GameState, 1,
+        std::span<const uint8_t>(bytes, ipc::GAME_STATE_V1_SIZE))));
+    TEST_ASSERT_EQ(calls, 1);
+    TEST_ASSERT_EQ(received.flags, gs.flags);
+    TEST_ASSERT_EQ(received.client_flags, 0u);
+
+    TEST_ASSERT(server.process_raw_packet(ipc::serialize_typed_packet(
+        PluginId::Core, MessageType::GameState, 2, gs)));
+    TEST_ASSERT_EQ(received.client_flags, gs.client_flags);
 }
 
 TEST_CASE(PipeServer, RoutesEnemyHp) {

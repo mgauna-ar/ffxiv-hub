@@ -97,12 +97,18 @@ struct OverlayGeometryPayload {
 };
 static_assert(sizeof(OverlayGeometryPayload) == 32, "OverlayGeometryPayload must be 32 bytes");
 
-/// 0x0008: Coarse game state the overlays gate their visibility on. A
-/// hub::GameStateFlag bitmask.
+/// 0x0008: Coarse game state, as hub::GameStateFlag bitmasks.
 struct GameStatePayload {
+    /// What the overlays gate their visibility on: InCombat includes the meter's pull.
     uint32_t flags{0};
+    /// The client's Conditions alone, which the meter ends its pulls on.
+    uint32_t client_flags{0};
 };
-static_assert(sizeof(GameStatePayload) == 4, "GameStatePayload must be 4 bytes");
+static_assert(sizeof(GameStatePayload) == 8, "GameStatePayload must be 8 bytes");
+/// What a payload from before `client_flags` sends. Its missing field has no Valid
+/// bit, so the meter reads the game's combat as unknown.
+constexpr size_t GAME_STATE_V1_SIZE = 4;
+static_assert(offsetof(GameStatePayload, client_flags) == GAME_STATE_V1_SIZE, "client_flags must follow the old layout");
 
 /// 0x0101: Latency Mitigator Telemetry payload
 struct MitigatorTelemetryPayload {

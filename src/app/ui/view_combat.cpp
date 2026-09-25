@@ -623,14 +623,6 @@ void render_healing_table(const meter::EncounterSummary& summary, float height) 
 void render_plugin_section(AppState& app_state) {
     begin_settings_card("##MeterPluginCard", ICON_HISTORY, "PULL TRACKING", colors::Accent);
 
-    float timeout_s = cfg_float(METER, "inactivity_timeout_seconds", 7.0f);
-    begin_setting_row("End encounter after idle", "Inactivity before a pull is closed out.");
-    if (ImGui::SliderFloat("##idle_timeout", &timeout_s, 3.0f, 60.0f, "%.0f s")) {
-        cfg_store(METER, "inactivity_timeout_seconds", timeout_s);
-        app_state.send_combat_inactivity_timeout(timeout_s);
-    }
-    end_setting_row();
-
     int pulls_kept = cfg_int(METER, "pull_history_limit", static_cast<int>(meter::constants::DEFAULT_HISTORY_CAPACITY));
     begin_setting_row("Pulls kept", "Finished pulls the pull list holds. Lowering it drops the oldest.");
     if (ImGui::SliderInt("##pulls_kept", &pulls_kept, meter::constants::MIN_PULL_HISTORY_LIMIT,

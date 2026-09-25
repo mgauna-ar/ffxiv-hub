@@ -15,6 +15,7 @@ void serialize_overlay(const OverlayConfig& cfg, config::JsonValue& out) {
     out["overlay_width"] = config::JsonValue(static_cast<double>(cfg.width));
     out["overlay_height"] = config::JsonValue(static_cast<double>(cfg.height));
     out["overlay_hide_conditions"] = config::JsonValue(cfg.hide_conditions);
+    out["overlay_hide_after_combat_seconds"] = config::JsonValue(static_cast<double>(cfg.hide_after_combat_s));
 }
 
 void store_overlay_geometry(config::JsonValue& section,
@@ -49,6 +50,7 @@ OverlayConfig deserialize_overlay(const config::JsonValue& in, const OverlayConf
         cfg.hide_conditions = static_cast<uint32_t>(
             in["overlay_hide_conditions"].as_int(static_cast<int>(cfg.hide_conditions)));
     }
+    read_float("overlay_hide_after_combat_seconds", cfg.hide_after_combat_s);
     return cfg;
 }
 

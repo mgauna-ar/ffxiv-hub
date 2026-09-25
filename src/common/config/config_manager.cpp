@@ -30,9 +30,9 @@ JsonValue ConfigManager::default_document() {
         {"overlay_locked", JsonValue(false)},
         {"overlay_click_through", JsonValue(false)},
         {"overlay_hide_conditions", JsonValue(0)},
+        {"overlay_hide_after_combat_seconds", JsonValue(5.0f)},
         {"party_only", JsonValue(false)},
         {"hide_inactive", JsonValue(false)},
-        {"inactivity_timeout_seconds", JsonValue(7.0f)},
         {"overlay_metric", JsonValue(0)},
         {"dps_metric", JsonValue(0)},
         // Only the app reads and writes these.
@@ -65,6 +65,7 @@ JsonValue ConfigManager::default_document() {
         {"overlay_locked", JsonValue(false)},
         {"overlay_click_through", JsonValue(false)},
         {"overlay_hide_conditions", JsonValue(0)},
+        {"overlay_hide_after_combat_seconds", JsonValue(5.0f)},
         {"overlay_mode", JsonValue(0)}
     };
     return root;

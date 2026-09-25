@@ -41,9 +41,10 @@ no installer.
   pull they kept it rolling.
 - A timeline of each party member's damage, healing or damage taken across the pull,
   with the raid buff windows and the deaths on it.
-- A pull history that splits on its own after 7 s without combat, on a wipe, or on a
-  zone change, with each visit to a duty listed on its own and numbered from #1. Each
-  pull shows whether the boss died, or how much HP it had left.
+- A pull history that splits when the game takes you out of combat, on a wipe, or on a
+  zone change, so a boss's downtime never cuts a fight in two. Each visit to a duty is
+  listed on its own and numbered from #1, and each pull shows whether the boss died, or
+  how much HP it had left.
 
 **⚡ [Latency Mitigator](plugins/latency_mitigator/README.md) lets you double-weave on a
 high-ping connection.**
@@ -138,7 +139,8 @@ payload once the game window is ready, and shows a notification.
 **Hide conditions** apply only while the overlay is locked, so an unlocked overlay can
 always be found and dragged back. Each overlay can:
 
-- show always, only in combat, or only out of combat
+- show always, only in combat, or only out of combat. Shown only in combat, it stays up
+  for a set number of seconds after combat ends, 5 by default
 - show only in duty content
 - hide during cutscenes, on loading screens, or while a menu is open
 

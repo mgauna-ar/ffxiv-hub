@@ -128,7 +128,6 @@ public:
     void send_combat_show_bars(bool show);
     void send_combat_hide_inactive(bool hide);
     void send_combat_refresh_interval(uint32_t ms);
-    void send_combat_inactivity_timeout(float seconds);
     void send_combat_column_share(bool show);
     void send_combat_column_crit(bool show);
     void send_combat_column_dh(bool show);

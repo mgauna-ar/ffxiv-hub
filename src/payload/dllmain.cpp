@@ -212,6 +212,7 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
     constexpr size_t kTrackedEnemies = 4;
     std::array<hub::meter::ActorVitals, hub::game::definitions::MAX_PARTY_MEMBERS + kTrackedEnemies> vitals_buffer{};
     uint32_t last_game_state_flags = 0;
+    uint32_t last_client_flags = 0;
     const auto payload_start = std::chrono::steady_clock::now();
     uint32_t heartbeat_sequence = 0;
     size_t last_combatant_count = 0;
@@ -355,19 +356,24 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
         }
 
         // Game state, so the desktop app can show what the overlays are currently
-        // gating on. Pushed on change, plus a keepalive so a late-connecting app
-        // isn't left with a blank indicator.
+        // gating on, and its meter can end pulls when the game ends combat. Pushed on
+        // change, plus a keepalive: a late-connecting app isn't left with a blank
+        // indicator, and the app's meter takes the state as unknown after
+        // EncounterEngine::kGameStateTtl without one.
         if (connected) {
             const uint32_t flags = game_state.flags();
-            const bool changed = flags != last_game_state_flags;
+            const uint32_t client_flags = game_state.client_flags();
+            const bool changed = flags != last_game_state_flags || client_flags != last_client_flags;
             if (changed ||
                 std::chrono::duration_cast<std::chrono::milliseconds>(now - last_game_state_push).count() > 1000) {
                 hub::ipc::GameStatePayload gs{};
                 gs.flags = flags;
+                gs.client_flags = client_flags;
                 auto packet = hub::ipc::serialize_typed_packet(
                     hub::PluginId::Core, hub::MessageType::GameState, heartbeat_sequence, gs);
                 pipe_client->ring_buffer().push(std::move(packet));
                 last_game_state_flags = flags;
+                last_client_flags = client_flags;
                 last_game_state_push = now;
             }
         }

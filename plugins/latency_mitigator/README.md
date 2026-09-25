@@ -190,7 +190,7 @@ Below it are two tabs.
 | Section | Controls |
 |---|---|
 | Mitigation algorithm | *Enable animation lock mitigation*, *Target ping* (10–40 ms), *Safety floor* (25–100 ms), *Spike multiplier* (2.0–4.0×), *Dry-run mode* |
-| In-game overlay | The shared overlay controls: visibility, lock, click-through, opacity, scale and hide conditions |
+| In-game overlay | The shared overlay controls: visibility, lock, click-through, opacity, scale, hide conditions, and *Hide after combat* for a HUD shown only in combat |
 | HUD display | *HUD layout* |
 | Maintenance | *Reset HUD position*, *Reset statistics* |
 
@@ -222,6 +222,7 @@ format, not the intended interface.
 | `overlay_locked` | bool | `false` | Prevent dragging the HUD. |
 | `overlay_click_through` | bool | `false` | Pass mouse clicks through to the game. |
 | `overlay_hide_conditions` | int | `0` | Bitmask of game states that hide the HUD. Zero is always visible. |
+| `overlay_hide_after_combat_seconds` | float | `5.0` | Seconds the HUD stays up once combat ends, when it is shown only in combat. |
 
 ---
 

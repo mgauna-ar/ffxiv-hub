@@ -100,7 +100,9 @@ enum class EncounterEndReason : uint8_t {
     Inactivity = 1,
     Wipe = 2,
     ZoneChange = 3,
-    Manual = 4
+    Manual = 4,
+    /// The game took the local player out of combat.
+    CombatEnded = 5
 };
 
 [[nodiscard]] constexpr std::string_view to_string(HitSeverity severity) noexcept {
@@ -142,6 +144,7 @@ enum class EncounterEndReason : uint8_t {
         case EncounterEndReason::Wipe: return "Wipe";
         case EncounterEndReason::ZoneChange: return "Zone Change";
         case EncounterEndReason::Manual: return "Manual";
+        case EncounterEndReason::CombatEnded: return "Combat Ended";
         default: return "None";
     }
 }
@@ -506,7 +509,6 @@ struct EncounterSummary {
 /// Configuration options for the Combat Meter plugin
 struct CombatConfig {
     bool   enabled{true};
-    double inactivity_timeout_seconds{constants::DEFAULT_INACTIVITY_TIMEOUT_SECONDS};
     bool   party_only{false};
     bool   show_bars{true};
     bool   hide_inactive{false};

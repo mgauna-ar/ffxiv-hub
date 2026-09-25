@@ -108,7 +108,6 @@ CombatPlugin::CombatPlugin() {
 
 bool CombatPlugin::initialize() {
     m_initialized = true;
-    m_engine.set_inactivity_timeout(m_config.inactivity_timeout_seconds);
     return true;
 }
 
@@ -121,7 +120,12 @@ void CombatPlugin::update(double /*delta_seconds*/) {
         }
         return;
     }
-    m_engine.update(std::chrono::steady_clock::now());
+    const auto now = std::chrono::steady_clock::now();
+    if (m_game_state) {
+        // The client's word alone: flags() carries this meter's own pull.
+        m_engine.set_game_state(m_game_state->client_flags(), now);
+    }
+    m_engine.update(now);
     if (m_game_state) {
         m_game_state->set_packet_combat(m_engine.in_combat());
     }
@@ -253,7 +257,6 @@ void CombatPlugin::serialize_config(config::JsonValue& out) const {
     // Only this plugin's keys, so desktop_dps_metric stays the app's.
     out = config::JsonValue(config::JsonValue::ObjectType{});
     out["plugin_enabled"] = config::JsonValue(is_enabled());
-    out["inactivity_timeout_seconds"] = config::JsonValue(m_engine.inactivity_timeout());
     out["party_only"] = config::JsonValue(overlay ? overlay->party_only() : m_config.party_only);
     out["show_bars"] = config::JsonValue(overlay ? overlay->show_progress_bars() : m_config.show_bars);
     out["hide_inactive"] = config::JsonValue(overlay ? overlay->hide_inactive() : m_config.hide_inactive);
@@ -277,10 +280,6 @@ void CombatPlugin::deserialize_config(const config::JsonValue& in) {
     if (in.contains("enabled")) m_config.enabled = in["enabled"].as_bool(m_config.enabled);
     if (in.contains("plugin_enabled")) m_config.enabled = in["plugin_enabled"].as_bool(m_config.enabled);
     m_enabled.store(m_config.enabled, std::memory_order_relaxed);
-    if (in.contains("inactivity_timeout_seconds")) {
-        m_config.inactivity_timeout_seconds = in["inactivity_timeout_seconds"].as_double(m_config.inactivity_timeout_seconds);
-        m_engine.set_inactivity_timeout(m_config.inactivity_timeout_seconds);
-    }
     if (in.contains("party_only")) m_config.party_only = in["party_only"].as_bool(m_config.party_only);
     if (in.contains("show_bars")) m_config.show_bars = in["show_bars"].as_bool(m_config.show_bars);
     if (in.contains("hide_inactive")) m_config.hide_inactive = in["hide_inactive"].as_bool(m_config.hide_inactive);

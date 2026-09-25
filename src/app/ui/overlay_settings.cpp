@@ -127,6 +127,18 @@ void render_overlay_settings(AppState& app_state, const OverlaySettingsOptions& 
     }
     end_setting_row();
 
+    // Only "Only in combat" hides when combat ends, so only it waits.
+    const bool only_in_combat = combat_visibility_of(bits) == CombatVisibility::OnlyInCombat;
+    if (!only_in_combat) ImGui::BeginDisabled();
+    float hide_after = cfg_float(section, "overlay_hide_after_combat_seconds", defaults.hide_after_combat_s);
+    begin_setting_row("Hide after combat", "Seconds the overlay stays up once combat ends, to read the result.");
+    if (ImGui::SliderFloat("##hide_after_combat", &hide_after, 0.0f, 60.0f, "%.0f s")) {
+        cfg_store(section, "overlay_hide_after_combat_seconds", hide_after);
+        app_state.send_overlay_command(plugin, CommandId::SetHideAfterCombat, 0, hide_after);
+    }
+    end_setting_row();
+    if (!only_in_combat) ImGui::EndDisabled();
+
     bool only_in_duty = has_condition(bits, HideCondition::OutsideDuty);
     if (setting_toggle("Only in duty content", "Hidden in overworld zones and hubs.", &only_in_duty)) {
         bits = with_condition(bits, HideCondition::OutsideDuty, only_in_duty);

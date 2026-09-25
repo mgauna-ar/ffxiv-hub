@@ -98,8 +98,31 @@ public:
     /// wipe can be detected from actor info before those arrive on their own lane.
     static constexpr uint64_t kLateLifeEventUs = 5'000'000;
 
-    /// Periodic tick to check inactivity timeouts and party wipe conditions
+    /// Periodic tick: ends the pull on a wipe or once combat is over, and refreshes
+    /// the derived rates.
     void update(TimePoint now = std::chrono::steady_clock::now());
+
+    /// The client's own game state (GameStateProvider::client_flags), which says
+    /// whether the game has the local player in combat. While it does, nothing but a
+    /// wipe, a zone change or a manual end closes a pull, however long the boss stays
+    /// untargetable. Once it doesn't, the pull closes kCombatEndSettleSeconds later.
+    /// Never starts a pull and is not activity. A report without
+    /// GameStateFlag::Valid is a failed read and is ignored.
+    void set_game_state(uint32_t client_flags, TimePoint now = std::chrono::steady_clock::now());
+
+    /// Whether the game has the local player in combat, or nullopt when no report
+    /// newer than kGameStateTtl says.
+    [[nodiscard]] std::optional<bool> game_combat(TimePoint now = std::chrono::steady_clock::now()) const;
+
+    /// A report older than this says nothing. The payload reports at least once a
+    /// second, and one that stops (game closed, pipe dropped) must not hold a pull.
+    static constexpr std::chrono::seconds kGameStateTtl{3};
+
+    /// How long a pull stays open once the game ends combat, from the later of that
+    /// and the last activity. Party HP is read every 1.5 s, so a wipe that ends
+    /// combat is still seen as one; and a fight still landing hits isn't cut if the
+    /// local player's own flag drops first.
+    static constexpr double kCombatEndSettleSeconds = 2.0;
 
     /// Explicit lifecycle control
     void start_encounter(TimePoint now = std::chrono::steady_clock::now(), uint64_t timestamp_us = 0);
@@ -122,7 +145,9 @@ public:
         return m_current_zone_name;
     }
 
-    /// Timeout configuration
+    /// Idle time that ends a pull when the game's combat state is unknown (no fresh
+    /// report, a broken signature, an older payload), or for a pull the game never
+    /// had the local player in combat for.
     void set_inactivity_timeout(double seconds) {
         std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_inactivity_timeout_seconds = seconds;
@@ -209,7 +234,10 @@ public:
     [[nodiscard]] EncounterSummary current_rankings(TimePoint now = std::chrono::steady_clock::now());
 
 private:
-    void check_inactivity(TimePoint now);
+    /// Closes the pull once combat is over: kCombatEndSettleSeconds after the game
+    /// ended it, or the idle timeout when the game's state is unknown.
+    void check_pull_end(TimePoint now);
+    [[nodiscard]] bool game_state_fresh_locked(TimePoint now) const noexcept;
     void check_wipe(TimePoint now);
     /// Damage from the party's side landing on an enemy; a kill's clock stops at the last.
     [[nodiscard]] bool hits_enemy_locked(EntityId source, EntityId target) const;
@@ -254,6 +282,16 @@ private:
     TimePoint m_last_activity_time{};
     TimePoint m_last_enemy_hit_time{};
     uint64_t m_start_time_us{0};
+
+    /// The last valid game-state report.
+    bool m_has_game_state{false};
+    bool m_game_in_combat{false};
+    TimePoint m_game_state_time{};
+    /// When the game last took the local player out of combat.
+    TimePoint m_combat_ended_at{};
+    /// The game has had the local player in combat during the live pull. A pull it
+    /// never did, such as other players fighting nearby, ends on the idle timeout.
+    bool m_pull_in_game_combat{false};
 
     MetricsAccumulator m_accumulator;
     CombatantRegistry m_registry;

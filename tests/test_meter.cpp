@@ -8,6 +8,7 @@
 #include "meter/encounter_engine.hpp"
 #include "meter/pull_grouping.hpp"
 #include "meter/combat_plugin.hpp"
+#include "hub/game_state.hpp"
 #include "common/config/json.hpp"
 #include "payload/object_reader.hpp"
 #include <algorithm>
@@ -15,6 +16,7 @@
 #include <vector>
 #include <atomic>
 #include <chrono>
+#include <optional>
 #include <thread>
 #include <cstring>
 
@@ -557,6 +559,205 @@ TEST_CASE(MeterEngine, InactivityTimeoutSplit) {
     TEST_ASSERT_EQ(pull->total_damage, 25000u);
 }
 
+namespace {
+
+// What the payload reads from the Conditions array: Valid, plus InCombat while the
+// game has the local player in combat.
+constexpr uint32_t kOutOfGameCombat = hub::to_bits(hub::GameStateFlag::Valid);
+constexpr uint32_t kInGameCombat = kOutOfGameCombat | hub::to_bits(hub::GameStateFlag::InCombat);
+
+[[nodiscard]] std::chrono::steady_clock::time_point after(std::chrono::steady_clock::time_point t0, double seconds) {
+    return t0 + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(seconds));
+}
+
+[[nodiscard]] hub::ipc::CombatActionPacket landed_hit(uint32_t source = 100) {
+    hub::ipc::CombatActionPacket act{};
+    act.source_id = source;
+    act.damage = 10000;
+    act.effect_type = static_cast<uint16_t>(EffectType::Damage);
+    return act;
+}
+
+/// A report and a tick at one moment, the way the payload's loop runs them.
+void tick(EncounterEngine& engine, uint32_t client_flags, std::chrono::steady_clock::time_point at) {
+    engine.set_game_state(client_flags, at);
+    engine.update(at);
+}
+
+} // namespace
+
+TEST_CASE(MeterEngine, GameCombatHoldsAPullThroughDowntime) {
+    // A boss's untargetable phase used to split its fight in two after 7 s of quiet.
+    EncounterEngine engine;
+    const auto t0 = std::chrono::steady_clock::now();
+
+    engine.set_game_state(kInGameCombat, t0);
+    engine.process_action(landed_hit(), t0);
+    for (int s = 1; s <= 35; ++s) {
+        tick(engine, kInGameCombat, after(t0, s));
+        if (s == 5 || s == 35) engine.process_action(landed_hit(), after(t0, s));
+    }
+    TEST_ASSERT_EQ(engine.state(), EncounterState::InCombat);
+    TEST_ASSERT(!engine.latest_pull().has_value());
+
+    // The game ends combat at 36; the pull waits out the settle.
+    tick(engine, kOutOfGameCombat, after(t0, 36));
+    tick(engine, kOutOfGameCombat, after(t0, 37.9));
+    TEST_ASSERT_EQ(engine.state(), EncounterState::InCombat);
+    tick(engine, kOutOfGameCombat, after(t0, 38.1));
+    TEST_ASSERT_EQ(engine.state(), EncounterState::Complete);
+
+    const auto history = engine.pull_history_index();
+    TEST_ASSERT_EQ(history.size(), 1u);
+    const auto pull = engine.latest_pull();
+    TEST_ASSERT_EQ(pull->end_reason, EncounterEndReason::CombatEnded);
+    TEST_ASSERT_NEAR(pull->duration_seconds, 35.0, 0.05);
+    TEST_ASSERT_EQ(pull->total_damage, 30000u);
+}
+
+TEST_CASE(MeterEngine, CombatEndClosesThePullAfterTheSettle) {
+    EncounterEngine engine;
+    const auto t0 = std::chrono::steady_clock::now();
+
+    engine.set_game_state(kInGameCombat, t0);
+    engine.process_action(landed_hit(), t0);
+    for (int s = 1; s <= 19; ++s) {
+        tick(engine, kInGameCombat, after(t0, s));
+        if (s == 5) engine.process_action(landed_hit(), after(t0, s));
+    }
+    tick(engine, kOutOfGameCombat, after(t0, 20));
+    tick(engine, kOutOfGameCombat, after(t0, 21.9));
+    TEST_ASSERT_EQ(engine.state(), EncounterState::InCombat);
+    tick(engine, kOutOfGameCombat, after(t0, 22.1));
+    TEST_ASSERT_EQ(engine.state(), EncounterState::Complete);
+
+    // The quiet after the last hit is not the fight.
+    TEST_ASSERT_NEAR(engine.latest_pull()->duration_seconds, 5.0, 0.05);
+}
+
+TEST_CASE(MeterEngine, HitsAfterCombatEndsHoldTheClose) {
+    // The flag is the local player's alone. If it drops while the party still lands
+    // hits, the fight is not over.
+    EncounterEngine engine;
+    const auto t0 = std::chrono::steady_clock::now();
+
+    engine.set_game_state(kInGameCombat, t0);
+    engine.process_action(landed_hit(), t0);
+    tick(engine, kOutOfGameCombat, after(t0, 1));
+    for (double s : {2.0, 3.5, 5.0}) {
+        tick(engine, kOutOfGameCombat, after(t0, s));
+        engine.process_action(landed_hit(), after(t0, s));
+    }
+    tick(engine, kOutOfGameCombat, after(t0, 6.9));
+    TEST_ASSERT_EQ(engine.state(), EncounterState::InCombat);
+    tick(engine, kOutOfGameCombat, after(t0, 7.1));
+    TEST_ASSERT_EQ(engine.state(), EncounterState::Complete);
+    TEST_ASSERT_EQ(engine.latest_pull()->total_damage, 40000u);
+}
+
+TEST_CASE(MeterEngine, CombatComingBackKeepsOnePull) {
+    EncounterEngine engine;
+    const auto t0 = std::chrono::steady_clock::now();
+
+    engine.set_game_state(kInGameCombat, t0);
+    engine.process_action(landed_hit(), t0);
+    tick(engine, kOutOfGameCombat, after(t0, 1));
+    tick(engine, kInGameCombat, after(t0, 2));
+    engine.process_action(landed_hit(), after(t0, 2.5));
+    for (int s = 3; s <= 10; ++s) tick(engine, kInGameCombat, after(t0, s));
+    TEST_ASSERT_EQ(engine.state(), EncounterState::InCombat);
+
+    tick(engine, kOutOfGameCombat, after(t0, 11));
+    tick(engine, kOutOfGameCombat, after(t0, 13.1));
+    TEST_ASSERT_EQ(engine.state(), EncounterState::Complete);
+    TEST_ASSERT_EQ(engine.pull_history_index().size(), 1u);
+    TEST_ASSERT_EQ(engine.latest_pull()->total_damage, 20000u);
+}
+
+TEST_CASE(MeterEngine, WipeThatEndsCombatIsAWipe) {
+    // Party HP is read every 1.5 s, so the game can end combat before the wipe is
+    // seen. The settle leaves room for it.
+    EncounterEngine engine;
+    const auto t0 = std::chrono::steady_clock::now();
+
+    hub::ipc::PartySyncPacket sync{};
+    sync.party_count = 2;
+    sync.entity_ids[0] = 101; sync.job_ids[0] = static_cast<uint32_t>(Job::WAR);
+    sync.entity_ids[1] = 102; sync.job_ids[1] = static_cast<uint32_t>(Job::WHM);
+    engine.process_party_sync(sync);
+    engine.registry().update_hp(101, 80000, 80000);
+    engine.registry().update_hp(102, 60000, 60000);
+
+    engine.set_game_state(kInGameCombat, t0);
+    engine.process_action(landed_hit(101), t0);
+    tick(engine, kInGameCombat, after(t0, 1));
+    tick(engine, kOutOfGameCombat, after(t0, 5));
+    TEST_ASSERT_EQ(engine.state(), EncounterState::InCombat);
+
+    engine.registry().update_hp(101, 0);
+    engine.registry().update_hp(102, 0);
+    tick(engine, kOutOfGameCombat, after(t0, 6));
+    TEST_ASSERT_EQ(engine.state(), EncounterState::Wipe);
+    TEST_ASSERT_EQ(engine.latest_pull()->end_reason, EncounterEndReason::Wipe);
+}
+
+TEST_CASE(MeterEngine, PullNeverInGameCombatUsesTheIdleTimeout) {
+    // Other players fighting nearby: the game never puts us in combat, so nothing
+    // says when their fight ended but a quiet stretch.
+    EncounterEngine engine;
+    const auto t0 = std::chrono::steady_clock::now();
+
+    engine.set_game_state(kOutOfGameCombat, t0);
+    engine.process_action(landed_hit(), t0);
+    for (int s = 1; s <= 9; ++s) {
+        tick(engine, kOutOfGameCombat, after(t0, s));
+        if (s == 3) engine.process_action(landed_hit(), after(t0, s));
+    }
+    tick(engine, kOutOfGameCombat, after(t0, 9.9));
+    TEST_ASSERT_EQ(engine.state(), EncounterState::InCombat);
+    tick(engine, kOutOfGameCombat, after(t0, 10.1));
+    TEST_ASSERT_EQ(engine.state(), EncounterState::Complete);
+    TEST_ASSERT_EQ(engine.latest_pull()->end_reason, EncounterEndReason::Inactivity);
+    TEST_ASSERT_NEAR(engine.latest_pull()->duration_seconds, 3.0, 0.05);
+}
+
+TEST_CASE(MeterEngine, StaleGameStateUsesTheIdleTimeout) {
+    // A payload that stops reporting (game closed, pipe dropped) must not hold a pull.
+    EncounterEngine engine;
+    const auto t0 = std::chrono::steady_clock::now();
+
+    engine.set_game_state(kInGameCombat, t0);
+    engine.process_action(landed_hit(), t0);
+    engine.process_action(landed_hit(), after(t0, 1));
+    TEST_ASSERT(!engine.game_combat(after(t0, 3.1)).has_value());
+    engine.update(after(t0, 7.9));
+    TEST_ASSERT_EQ(engine.state(), EncounterState::InCombat);
+    engine.update(after(t0, 8.1));
+    TEST_ASSERT_EQ(engine.state(), EncounterState::Complete);
+    TEST_ASSERT_EQ(engine.latest_pull()->end_reason, EncounterEndReason::Inactivity);
+}
+
+TEST_CASE(MeterEngine, ReportWithoutValidIsIgnored) {
+    // A failed read publishes 0, which says nothing about combat.
+    EncounterEngine engine;
+    const auto t0 = std::chrono::steady_clock::now();
+
+    engine.set_game_state(kInGameCombat, t0);
+    engine.process_action(landed_hit(), t0);
+    engine.set_game_state(0, after(t0, 0.5));
+    TEST_ASSERT(engine.game_combat(after(t0, 2.9)) == std::optional<bool>(true));
+    engine.update(after(t0, 2.9));
+    TEST_ASSERT_EQ(engine.state(), EncounterState::InCombat);
+}
+
+TEST_CASE(MeterEngine, GameCombatNeverStartsAPull) {
+    EncounterEngine engine;
+    const auto t0 = std::chrono::steady_clock::now();
+    tick(engine, kInGameCombat, t0);
+    TEST_ASSERT_EQ(engine.state(), EncounterState::Idle);
+    TEST_ASSERT_EQ(engine.pulls_started(), 0u);
+}
+
 TEST_CASE(MeterEngine, PartyWipeDetection) {
     EncounterEngine engine;
     const auto t0 = std::chrono::steady_clock::now();
@@ -962,17 +1163,18 @@ TEST_CASE(MeterPlugin, PluginLifecycleAndConfig) {
     hub::config::JsonValue json{hub::config::JsonValue::ObjectType{}};
     plugin.serialize_config(json);
     TEST_ASSERT_TRUE(json["plugin_enabled"].as_bool(false));
-    TEST_ASSERT_NEAR(json["inactivity_timeout_seconds"].as_double(0.0), 7.0, 0.01);
+    TEST_ASSERT_NEAR(json["overlay_hide_after_combat_seconds"].as_double(0.0), 5.0, 0.01);
+    // Pulls end when the game ends combat, so there is no idle time to save.
+    TEST_ASSERT_FALSE(json.contains("inactivity_timeout_seconds"));
     TEST_ASSERT_FALSE(json["party_only"].as_bool(true));
 
     // Modify and deserialize back
-    json["inactivity_timeout_seconds"] = hub::config::JsonValue(10.0);
+    json["overlay_hide_after_combat_seconds"] = hub::config::JsonValue(10.0);
     json["party_only"] = hub::config::JsonValue(true);
     json["overlay_width"] = hub::config::JsonValue(950);
     plugin.deserialize_config(json);
 
-    TEST_ASSERT_NEAR(plugin.config().inactivity_timeout_seconds, 10.0, 0.01);
-    TEST_ASSERT_NEAR(plugin.engine().inactivity_timeout(), 10.0, 0.01);
+    TEST_ASSERT_NEAR(plugin.config().overlay.hide_after_combat_s, 10.0f, 0.01f);
     TEST_ASSERT_TRUE(plugin.config().party_only);
     TEST_ASSERT_NEAR(plugin.config().overlay.width, 950.0f, 0.01f);
 
@@ -1240,6 +1442,34 @@ TEST_CASE(MeterPlugin, DisablingMidPullClearsPacketCombat) {
     TEST_ASSERT_FALSE(game_state.has(hub::GameStateFlag::InCombat));
 }
 
+TEST_CASE(MeterPlugin, UpdateReadsTheClientCombatOnly) {
+    // flags() folds this meter's own pull into InCombat. Ending pulls on it would
+    // have every pull hold itself open.
+    CombatPlugin plugin;
+    plugin.initialize();
+    hub::GameStateProvider game_state;
+    plugin.set_game_state(&game_state);
+
+    hub::game::ActionEffectHeader header{};
+    header.animation_target_id = 0x40001;
+    header.action_id = 31;
+    header.num_targets = 1;
+    std::array<hub::game::ActionEffectEntry, 8> entries{};
+    entries[0].effect_type = 0x03; // Damage
+    entries[0].value = 25000;
+
+    game_state.publish(kInGameCombat);
+    plugin.on_receive_action_effect(777, nullptr, &header, entries.data(), nullptr);
+    plugin.update(0.05);
+    TEST_ASSERT(plugin.engine().game_combat() == std::optional<bool>(true));
+
+    // The game ends combat while the pull, and so the packet bit, is still live.
+    game_state.publish(kOutOfGameCombat);
+    TEST_ASSERT_TRUE(game_state.has(hub::GameStateFlag::InCombat));
+    plugin.update(0.05);
+    TEST_ASSERT(plugin.engine().game_combat() == std::optional<bool>(false));
+}
+
 TEST_CASE(MeterEngine, ConcurrentProducersAndReaders) {
     // The in-game engine is reached by the detour thread, the orchestration
     // thread and the Present thread at once. Run under -fsanitize=thread to
@@ -1294,7 +1524,11 @@ TEST_CASE(MeterEngine, ConcurrentProducersAndReaders) {
     });
 
     std::thread ticker([&] {
+        uint32_t n = 0;
         while (!stop.load()) {
+            // The game's state rides the same tick, as CombatPlugin::update feeds it.
+            engine.set_game_state((++n % 3) ? kInGameCombat : kOutOfGameCombat);
+            (void)engine.game_combat();
             engine.update();
         }
     });

@@ -70,7 +70,8 @@ TEST_CASE(Config, ConfigManagerDefaults) {
     TEST_ASSERT_TRUE(root.contains("latency_mitigator"));
 
     TEST_ASSERT_EQ(root["hub"]["refresh_interval_ms"].as_int(), 500);
-    TEST_ASSERT_NEAR(root["combat_meter"]["inactivity_timeout_seconds"].as_float(), 7.0f, 0.1f);
+    TEST_ASSERT_NEAR(root["combat_meter"]["overlay_hide_after_combat_seconds"].as_float(), 5.0f, 0.1f);
+    TEST_ASSERT_NEAR(root["latency_mitigator"]["overlay_hide_after_combat_seconds"].as_float(), 5.0f, 0.1f);
     TEST_ASSERT_NEAR(root["latency_mitigator"]["target_ping_ms"].as_float(), 15.0f, 0.1f);
     TEST_ASSERT_NEAR(root["latency_mitigator"]["min_animation_lock_ms"].as_float(), 25.0f, 0.1f);
 }

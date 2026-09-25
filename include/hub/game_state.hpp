@@ -71,6 +71,13 @@ public:
         return has_flag(flags(), f);
     }
 
+    /// The client's Conditions alone, without the packet flag or the lobby. The
+    /// combat meter ends its pulls on this one: flags() carries the meter's own pull,
+    /// and a pull read back through it would hold itself open.
+    [[nodiscard]] uint32_t client_flags() const noexcept {
+        return m_flags.load(std::memory_order_relaxed);
+    }
+
 private:
     std::atomic<uint32_t> m_flags{0};
     std::atomic<bool> m_packet_combat{false};

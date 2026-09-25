@@ -1,5 +1,6 @@
 #include "meter/encounter_engine.hpp"
 #include "hub/game/entity.hpp"
+#include "hub/game_state.hpp"
 #include <algorithm>
 #include <unordered_set>
 
@@ -30,7 +31,7 @@ void EncounterEngine::process_action(const ipc::CombatActionPacket& packet, Time
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
 
     if (m_state == EncounterState::InCombat) {
-        check_inactivity(now);
+        check_pull_end(now);
     }
 
     if (m_state != EncounterState::InCombat) {
@@ -60,7 +61,7 @@ void EncounterEngine::process_status_tick(const ipc::StatusTickPacket& packet, T
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
 
     if (m_state == EncounterState::InCombat) {
-        check_inactivity(now);
+        check_pull_end(now);
     }
 
     // Passive status ticks must not start a combat encounter if Idle, Wipe, or Complete.
@@ -176,7 +177,7 @@ void EncounterEngine::process_enemy_hp(const ipc::EnemyHpPacket& packet) {
 void EncounterEngine::process_cast(const ipc::CastPacket& packet, TimePoint now) {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (m_state == EncounterState::InCombat) {
-        check_inactivity(now);
+        check_pull_end(now);
     }
     if (m_state != EncounterState::InCombat || packet.timestamp_us < m_start_time_us) {
         return;
@@ -209,7 +210,7 @@ void EncounterEngine::update(TimePoint now) {
             return;
         }
 
-        check_inactivity(now);
+        check_pull_end(now);
         if (m_state != EncounterState::InCombat) {
             return;
         }
@@ -220,6 +221,36 @@ void EncounterEngine::update(TimePoint now) {
         m_accumulator.recalculate(dur, &m_registry);
         m_dirty = false;
     }
+}
+
+void EncounterEngine::set_game_state(uint32_t client_flags, TimePoint now) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    // A failed read says nothing; the last good report stands until it goes stale.
+    if (!has_flag(client_flags, GameStateFlag::Valid)) {
+        return;
+    }
+    const bool in_combat = has_flag(client_flags, GameStateFlag::InCombat);
+    if (m_game_in_combat && !in_combat) {
+        m_combat_ended_at = now;
+    }
+    m_has_game_state = true;
+    m_game_in_combat = in_combat;
+    m_game_state_time = now;
+    if (in_combat && m_state == EncounterState::InCombat) {
+        m_pull_in_game_combat = true;
+    }
+}
+
+std::optional<bool> EncounterEngine::game_combat(TimePoint now) const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (!game_state_fresh_locked(now)) {
+        return std::nullopt;
+    }
+    return m_game_in_combat;
+}
+
+bool EncounterEngine::game_state_fresh_locked(TimePoint now) const noexcept {
+    return m_has_game_state && now - m_game_state_time < kGameStateTtl;
 }
 
 void EncounterEngine::start_encounter(TimePoint now, uint64_t timestamp_us) {
@@ -242,6 +273,7 @@ void EncounterEngine::start_encounter_locked(TimePoint now, uint64_t timestamp_u
     m_bosses.clear();
     m_last_enemy_hit_time = TimePoint{};
     m_live_holds_latest_pull = false;
+    m_pull_in_game_combat = game_state_fresh_locked(now) && m_game_in_combat;
 }
 
 void EncounterEngine::end_encounter(EncounterEndReason reason, TimePoint now, uint64_t timestamp_us) {
@@ -575,12 +607,26 @@ EncounterSummary EncounterEngine::summary_locked(TimePoint now, bool with_detail
     return summary;
 }
 
-void EncounterEngine::check_inactivity(TimePoint now) {
-    if (m_state == EncounterState::InCombat) {
-        const double elapsed = std::chrono::duration<double>(now - m_last_activity_time).count();
-        if (elapsed >= m_inactivity_timeout_seconds) {
-            end_encounter_locked(EncounterEndReason::Inactivity, now);
+void EncounterEngine::check_pull_end(TimePoint now) {
+    if (m_state != EncounterState::InCombat) {
+        return;
+    }
+    const auto seconds_since = [now](TimePoint t) { return std::chrono::duration<double>(now - t).count(); };
+    const bool known = game_state_fresh_locked(now);
+    if (known && m_game_in_combat) {
+        // A boss's untargetable phase is still the fight, however quiet.
+        return;
+    }
+    if (known && m_pull_in_game_combat) {
+        if (seconds_since(std::max(m_combat_ended_at, m_last_activity_time)) >= kCombatEndSettleSeconds) {
+            end_encounter_locked(EncounterEndReason::CombatEnded, now);
         }
+        return;
+    }
+    // The game's state is unknown, or it never had the local player in this fight:
+    // a quiet stretch ends it.
+    if (seconds_since(m_last_activity_time) >= m_inactivity_timeout_seconds) {
+        end_encounter_locked(EncounterEndReason::Inactivity, now);
     }
 }
 

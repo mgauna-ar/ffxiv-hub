@@ -560,7 +560,7 @@ TEST_CASE(Payload, MeterSettingsFromTheAppSurviveTheAutosave) {
     send(CommandId::SetShowBars, 0);
     send(CommandId::SetHideInactive, 1);
     send(CommandId::SetRefreshInterval, 250);
-    send(CommandId::SetInactivityTimeout, 0, 20.0f);
+    send(CommandId::SetHideAfterCombat, 0, 20.0f);
     send(CommandId::SetColumnShare, 0);
     send(CommandId::SetColumnCrit, 0);
     send(CommandId::SetColumnDh, 0);
@@ -573,7 +573,7 @@ TEST_CASE(Payload, MeterSettingsFromTheAppSurviveTheAutosave) {
     TEST_ASSERT_FALSE(saved["show_bars"].as_bool(true));
     TEST_ASSERT_TRUE(saved["hide_inactive"].as_bool(false));
     TEST_ASSERT_EQ(saved["refresh_interval_ms"].as_int(0), 250);
-    TEST_ASSERT_NEAR(saved["inactivity_timeout_seconds"].as_double(0.0), 20.0, 1e-6);
+    TEST_ASSERT_NEAR(saved["overlay_hide_after_combat_seconds"].as_double(0.0), 20.0, 1e-6);
     TEST_ASSERT_FALSE(saved["show_col_share"].as_bool(true));
     TEST_ASSERT_FALSE(saved["show_col_crit"].as_bool(true));
     TEST_ASSERT_FALSE(saved["show_col_dh"].as_bool(true));
@@ -589,7 +589,7 @@ TEST_CASE(Payload, MeterSettingsFromTheAppSurviveTheAutosave) {
     TEST_ASSERT_FALSE(reloaded_overlay.show_progress_bars());
     TEST_ASSERT_TRUE(reloaded_overlay.hide_inactive());
     TEST_ASSERT_EQ(reloaded_overlay.refresh_interval_ms(), 250u);
-    TEST_ASSERT_NEAR(reloaded.engine().inactivity_timeout(), 20.0, 1e-6);
+    TEST_ASSERT_NEAR(reloaded_overlay.hide_after_combat(), 20.0f, 1e-6f);
     TEST_ASSERT_EQ(reloaded_overlay.metric(), meter::MeterMetric::Healing);
 
     reloaded.set_overlay(nullptr);
@@ -756,7 +756,57 @@ TEST_CASE(Payload, SharedOverlayCommandsReachBothPlugins) {
         payload::dispatch_command(targets, cmd);
         TEST_ASSERT_EQ(c.overlay->hide_conditions(),
                        hub::ui::to_bits(hub::ui::HideCondition::InCutscene));
+
+        cmd.command_id = static_cast<uint32_t>(CommandId::SetHideAfterCombat);
+        cmd.param_uint = 0;
+        cmd.param_float = 12.0f;
+        payload::dispatch_command(targets, cmd);
+        TEST_ASSERT_NEAR(c.overlay->hide_after_combat(), 12.0f, 0.001f);
     }
+}
+
+TEST_CASE(Payload, OnlyInCombatOverlayStaysUpAfterCombat) {
+    // Shown only in combat, an overlay used to vanish the moment the pull closed,
+    // before the result could be read.
+    meter::CombatOverlay overlay;
+    GameStateProvider game_state;
+    overlay.set_game_state(&game_state);
+    overlay.set_locked(true);
+    overlay.set_hide_conditions(hub::ui::to_bits(hub::ui::HideCondition::OutOfCombat));
+    overlay.set_hide_after_combat(5.0f);
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto at = [t0](double s) {
+        return t0 + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(s));
+    };
+
+    // Nothing to linger after before any combat.
+    TEST_ASSERT_FALSE(overlay.should_render_at(at(0)));
+
+    game_state.set_packet_combat(true);
+    TEST_ASSERT(overlay.should_render_at(at(1)));
+    game_state.set_packet_combat(false);
+    TEST_ASSERT(overlay.should_render_at(at(5.9)));
+    TEST_ASSERT_FALSE(overlay.should_render_at(at(6.1)));
+
+    // Unlocked, conditions are off and it always draws.
+    overlay.set_locked(false);
+    TEST_ASSERT(overlay.should_render_at(at(7)));
+    overlay.set_locked(true);
+
+    // No delay hides it at once.
+    overlay.set_hide_after_combat(0.0f);
+    game_state.set_packet_combat(true);
+    TEST_ASSERT(overlay.should_render_at(at(10)));
+    game_state.set_packet_combat(false);
+    TEST_ASSERT_FALSE(overlay.should_render_at(at(10)));
+
+    // Shown only out of combat, it appears the moment combat ends: nothing waits.
+    overlay.set_hide_after_combat(5.0f);
+    overlay.set_hide_conditions(hub::ui::to_bits(hub::ui::HideCondition::InCombat));
+    game_state.set_packet_combat(true);
+    TEST_ASSERT_FALSE(overlay.should_render_at(at(20)));
+    game_state.set_packet_combat(false);
+    TEST_ASSERT(overlay.should_render_at(at(20.5)));
 }
 
 TEST_CASE(Payload, AutoHideMapsOntoOutOfCombatCondition) {

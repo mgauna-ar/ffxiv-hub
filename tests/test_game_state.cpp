@@ -145,3 +145,14 @@ TEST_CASE(GameState, ProviderKeepsTheLobbyInItsOwnWord) {
     provider.set_in_lobby(false);
     TEST_ASSERT_EQ(provider.flags(), to_bits(GameStateFlag::Valid));
 }
+
+TEST_CASE(GameState, ClientFlagsLeaveOutTheMeterAndTheLobby) {
+    // The meter ends its pulls on client_flags(). Its own packet bit folded in
+    // there would hold every pull open for good.
+    GameStateProvider provider;
+    provider.publish(to_bits(GameStateFlag::Valid) | to_bits(GameStateFlag::InDuty));
+    provider.set_packet_combat(true);
+    provider.set_in_lobby(true);
+    TEST_ASSERT_TRUE(provider.has(GameStateFlag::InCombat));
+    TEST_ASSERT_EQ(provider.client_flags(), to_bits(GameStateFlag::Valid) | to_bits(GameStateFlag::InDuty));
+}

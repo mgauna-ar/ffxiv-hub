@@ -21,6 +21,7 @@ constexpr uint32_t kValid = to_bits(GameStateFlag::Valid);
         .width = 640.0f,
         .height = 400.0f,
         .hide_conditions = to_bits(HideCondition::InCutscene) | to_bits(HideCondition::Loading),
+        .hide_after_combat_s = 12.0f,
     };
 }
 

@@ -68,7 +68,7 @@ enum class CommandId : uint32_t {
     SetShowBars         = 23,
     SetHideInactive     = 24,
     SetRefreshInterval  = 25,
-    SetInactivityTimeout = 26,
+    // 26 was SetInactivityTimeout. Never reused: an older app may still send it.
     SetColumnShare      = 27,
     SetColumnCrit       = 28,
     SetColumnDh         = 29,
@@ -86,6 +86,8 @@ enum class CommandId : uint32_t {
     SetVitalsTracking   = 37,
     /// param_uint is a hub::meter::DpsMetric
     SetDpsMetric        = 38,
+    /// param_float: seconds an overlay shown only in combat stays up after it
+    SetHideAfterCombat  = 39,
 };
 
 /// 2D Floating-point rectangle coordinates for overlay geometry

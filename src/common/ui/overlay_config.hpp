@@ -37,6 +37,9 @@ enum class HideCondition : uint32_t {
     return on ? (bits | to_bits(c)) : (bits & ~to_bits(c));
 }
 
+/// How long an overlay shown only in combat stays up once combat ends, by default.
+inline constexpr float DEFAULT_HIDE_AFTER_COMBAT_SECONDS = 5.0f;
+
 /// Everything an overlay owns that isn't specific to what it displays.
 struct OverlayConfig {
     bool visible{true};
@@ -50,6 +53,8 @@ struct OverlayConfig {
     float width{0.0f};
     float height{0.0f};
     uint32_t hide_conditions{0};
+    /// Seconds an overlay with HideCondition::OutOfCombat stays up after combat.
+    float hide_after_combat_s{DEFAULT_HIDE_AFTER_COMBAT_SECONDS};
 
     bool operator==(const OverlayConfig&) const = default;
 };

@@ -14,7 +14,7 @@ app, or from its card on the dashboard.
 ## At a glance
 
 - **Honest numbers.** A pull's clock starts on the first hit that lands and stops at the
-  last action, not at the timeout. HPS counts effective healing only.
+  last action, not when the pull closes. HPS counts effective healing only.
 - **One row per player.** Pets are merged into their owners, and the Limit Break gets its
   own row that is never counted toward anyone's DPS.
 - **Credit for buffs.** rDPS moves the damage a raid buff added to whoever gave it, so a
@@ -25,9 +25,10 @@ app, or from its card on the dashboard.
 - **Uptime you can trust.** Buffs, debuffs and DoTs are tracked per target and per source.
   A status that expires between reads is closed at its own timer, so uptime isn't rounded
   to the polling interval.
-- **A pull history.** Pulls split on their own after inactivity, on a wipe, or on a zone
-  change. They are listed by each time you entered a duty, numbered from #1, and each
-  shows whether the boss died, and if it didn't, how much HP it had left.
+- **A pull history.** A pull ends when the game takes you out of combat, on a wipe, or on
+  a zone change, so a boss's untargetable phase never splits a fight. Pulls are listed by
+  each time you entered a duty, numbered from #1, and each shows whether the boss died,
+  and if it didn't, how much HP it had left.
 - **Casts and GCD uptime.** What each player pressed, their casts per minute, the GCD they
   ran at, and how much of the pull they kept it rolling. A spell with a cast time counts
   from when its cast started, so casters and healers read true.
@@ -49,13 +50,21 @@ already running — and the healer already ranked — before anyone had touched 
 Damage-over-time and heal-over-time ticks never start one either, or a lingering DoT on a
 mob you walked away from would open a pull on its own.
 
-Once the pull is underway, healing counts as normal, both toward HPS and as activity that
-holds off the inactivity timeout. So does every action a player presses, so a stretch
-where the party only buffs, heals or dances doesn't split the pull.
+After the first hit, healing counts as normal toward HPS. It is also activity, like every
+action a player presses: when combat is over, a pull waits for activity to stop before it
+closes.
 
 It ends in one of four ways:
 
-1. **Inactivity** — 7 seconds with no combat activity splits the encounter and archives it.
+1. **Combat ends** — the game takes you out of combat. While it has you in combat, nothing
+   else ends a pull, so a boss that stays untargetable for a long time is still one fight.
+   The pull closes 2 seconds after combat ends, or after the last action if that came
+   later. That leaves time to see a wipe, since party HP is read every 1.5 s, and a fight
+   your party is still landing hits in isn't cut if you drop out of combat first.
+
+   When the meter can't tell whether you're in combat, such as after a game patch breaks
+   that reading, a pull ends after 7 seconds without combat activity. So does a fight you
+   were never in combat for, like other players fighting near you.
 2. **Wipe** — every synced party member confirmed dead. One survivor, or a raise, cancels it.
    Party HP is read from the party list on each sync (every 1.5 s); a death or a raise is
    republished to the desktop app so both sides see the wipe. A member whose HP has never
@@ -68,11 +77,12 @@ It ends in one of four ways:
    started in.
 4. **Manual** — ended from the desktop app.
 
-Duration is measured to the *last combat action*, not to the moment the timeout fired, so
-a 7-second gap does not inflate the pull and deflate everyone's DPS. Wipes and zone
-changes are trimmed the same way, since both are also detected after the fact. Only a
-manual end takes the full elapsed time. A kill stops the clock earlier still, whatever
-ended the pull; see [The boss and how a pull ended](#the-boss-and-how-a-pull-ended).
+Duration is measured to the *last combat action*, not to the moment the pull closed, so
+the quiet at the end of a fight does not inflate the pull and deflate everyone's DPS.
+Wipes and zone changes are trimmed the same way, since both are also detected after the
+fact. Only a manual end takes the full elapsed time. A kill stops the clock earlier
+still, whatever ended the pull; see
+[The boss and how a pull ended](#the-boss-and-how-a-pull-ended).
 
 ### The boss and how a pull ended
 
@@ -83,15 +93,14 @@ got:
 
 - **Clear**: the boss's HP read 0.
 - **Wipe**: the party died with the boss still standing.
-- **Ended**: both sides lived. The party reset or walked away, the fight had a downtime
-  longer than the idle timeout, or the zone changed.
+- **Ended**: both sides lived. The party reset or walked away, or the zone changed.
 
 A wipe or an ended pull shows the boss's HP left. With `track_vitals` off no HP is read,
 so a pull the party survived is badged **Clear**, and the boss is still named.
 
 A kill stops the pull's clock at the party's last hit on an enemy. Heals and HoT ticks after
-it keep the pull open until the idle timeout, but they are not the fight and don't count
-toward its duration. A 0 read for the boss up to 5 seconds after the pull ended still
+it keep the pull open a little longer, but they are not the fight and don't count toward
+its duration. A 0 read for the boss up to 5 seconds after the pull ended still
 marks it cleared, since a wipe can be noticed a moment before that read arrives. Any
 other read that late is ignored: by then the boss may already be resetting.
 
@@ -328,6 +337,8 @@ chart has no buff bands and no deaths.
   table, so the overlay and the desktop always agree.
 - The Job column shows a three-letter abbreviation. Hover it for the full job name, or
   *Limit Break* on the LB row.
+- Shown only in combat, it stays up for *Hide after combat* seconds (5 by default) once
+  combat ends, so the result can be read.
 - It is hidden while the Hub is closed. The meter keeps counting in the background.
 
 <!-- ![The Combat Meter's Damage tab with the pull list rail](../../docs/images/combat-damage-tab.png) -->
@@ -374,8 +385,8 @@ The in-game overlay stays a damage or healing table; the other views are desktop
 
 | Section | Controls |
 |---|---|
-| Pull tracking | *End encounter after idle*, *Pulls kept*, *Track deaths, buffs and debuffs* |
-| In-game overlay | The shared overlay controls: visibility, lock, click-through, opacity, scale and hide conditions |
+| Pull tracking | *Pulls kept*, *Track deaths, buffs and debuffs* |
+| In-game overlay | The shared overlay controls: visibility, lock, click-through, opacity, scale, hide conditions, and *Hide after combat* for a meter shown only in combat |
 | Meter display | What the in-game meter shows: *Table*, *DPS metric*, *Party members only*, *Hide idle combatants*, *Job-coloured row bars*, *Refresh rate*, and under Columns a toggle for each of the share, crit, direct hit and crit-direct-hit columns |
 | Maintenance | *Reset overlay position*, *End encounter*, *Reset all statistics* |
 
@@ -396,7 +407,6 @@ not the intended interface.
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `plugin_enabled` | bool | `true` | Master switch. Off means no hook dispatch, no telemetry, no overlay. |
-| `inactivity_timeout_seconds` | float | `7.0` | Gap that splits one encounter from the next. |
 | `party_only` | bool | `false` | In-game meter: restrict rows to the synced party and the Limit Break row. Solo there is no party list, so it keeps every friendly row. |
 | `show_bars` | bool | `true` | In-game meter: job-coloured progress bars behind rows. |
 | `hide_inactive` | bool | `false` | In-game meter: hide combatants with no activity. |
@@ -418,6 +428,7 @@ not the intended interface.
 | `overlay_locked` | bool | `false` | Prevent dragging the overlay. |
 | `overlay_click_through` | bool | `false` | Pass mouse clicks through to the game. |
 | `overlay_hide_conditions` | int | `0` | Bitmask of game states that hide the overlay. Zero is always visible. |
+| `overlay_hide_after_combat_seconds` | float | `5.0` | Seconds the overlay stays up once combat ends, when it is shown only in combat. |
 
 An older `enabled` key is still read, so a configuration written before the master switch
 existed keeps its meaning.
@@ -472,9 +483,14 @@ DPS only. See [Limit Break](#limit-break).
 
 <br>
 
-Seven seconds without combat ends a pull, and so do a wipe and a zone change. For fights
-with long downtime, raise *End encounter after idle* in Settings. See
-[Starting and ending a pull](#starting-and-ending-a-pull).
+A pull ends when the game takes you out of combat, and on a wipe or a zone change. While
+the game keeps you in combat, a boss's downtime never splits it. On a striking dummy the
+pull ends only once the game drops you out of combat; *End encounter* under Maintenance
+closes it at once.
+
+A downtime that still splits a pull means the meter couldn't read the game's combat state,
+for instance after a game patch, and fell back to ending a pull after 7 seconds without
+combat. See [Starting and ending a pull](#starting-and-ending-a-pull).
 
 </details>
 
@@ -505,9 +521,8 @@ apart, so only the newest is kept, and it never takes a duty's place in the hist
 
 <br>
 
-The boss was still standing when the pull ended. The party reset, walked away, or sat
-through a downtime longer than the idle timeout; the rail shows how much HP the boss had
-left. For fights with long downtime, raise *End encounter after idle* in Settings. See
+The boss was still standing when the pull ended. The party reset or walked away, or the
+zone changed; the rail shows how much HP the boss had left. See
 [The boss and how a pull ended](#the-boss-and-how-a-pull-ended).
 
 </details>

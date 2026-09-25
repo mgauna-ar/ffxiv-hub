@@ -110,14 +110,7 @@ void AppState::set_plugin_enabled(PluginId id, bool enabled) {
 }
 
 void AppState::apply_config_to_mirror_engine() {
-    // The mirror engine has to close pulls on the same schedule as the in-game
-    // one, or the app's history lands on different encounter boundaries.
     const auto& meter_cfg = config::ConfigManager::instance().root()["combat_meter"];
-    if (meter_cfg.contains("inactivity_timeout_seconds")) {
-        std::lock_guard<std::mutex> lock(m_combat_mutex);
-        m_engine.set_inactivity_timeout(meter_cfg["inactivity_timeout_seconds"].as_double(
-            meter::constants::DEFAULT_INACTIVITY_TIMEOUT_SECONDS));
-    }
     // Only this engine keeps pulls to browse, so the limit is the app's alone.
     if (meter_cfg.contains("pull_history_limit")) {
         set_pull_history_limit(meter_cfg["pull_history_limit"].as_int(
@@ -224,6 +217,9 @@ void AppState::register_ipc_callbacks() {
 
     m_pipe_server.set_game_state_callback([this](const ipc::GameStatePayload& gs) {
         m_game_state_flags.store(gs.flags);
+        // The same word the in-game engine ends its pulls on, so both close together.
+        std::lock_guard<std::mutex> lock(m_combat_mutex);
+        m_engine.set_game_state(gs.client_flags);
     });
 
     m_pipe_server.set_mitigator_telemetry_callback([this](const ipc::MitigatorTelemetryPayload& telem) {
@@ -611,14 +607,6 @@ void AppState::send_combat_hide_inactive(bool hide) {
 
 void AppState::send_combat_refresh_interval(uint32_t ms) {
     m_pipe_server.send_command(PluginId::CombatMeter, CommandId::SetRefreshInterval, ms);
-}
-
-void AppState::send_combat_inactivity_timeout(float seconds) {
-    {
-        std::lock_guard<std::mutex> lock(m_combat_mutex);
-        m_engine.set_inactivity_timeout(static_cast<double>(seconds));
-    }
-    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::SetInactivityTimeout, 0, seconds);
 }
 
 void AppState::send_combat_column_share(bool show) {
