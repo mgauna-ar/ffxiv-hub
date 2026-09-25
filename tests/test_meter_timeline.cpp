@@ -349,6 +349,8 @@ TEST_CASE(MeterTimeline, AnArchivedPullKeepsItsOwn) {
     EncounterEngine engine;
     setup(engine);
     engine.set_history_capacity(2);
+    // In a zone: an unknown zone keeps only its newest pull.
+    engine.set_zone(1238);
     const Clock clock;
     for (int pull = 0; pull < 3; ++pull) {
         const double s = 20.0 * pull;

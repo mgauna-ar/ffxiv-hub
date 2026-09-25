@@ -136,6 +136,7 @@ void LatencyPlugin::shutdown() {
 
 void LatencyPlugin::serialize_config(config::JsonValue& out) const {
     const auto cfg = m_mitigator.get_config();
+    out = config::JsonValue(config::JsonValue::ObjectType{});
     out["plugin_enabled"] = config::JsonValue(m_plugin_enabled.load());
     out["enabled"] = config::JsonValue(cfg.enabled);
     out["dry_run"] = config::JsonValue(cfg.dry_run);

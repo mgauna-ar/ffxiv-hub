@@ -25,9 +25,9 @@ app, or from its card on the dashboard.
 - **Uptime you can trust.** Buffs, debuffs and DoTs are tracked per target and per source.
   A status that expires between reads is closed at its own timer, so uptime isn't rounded
   to the polling interval.
-- **Every pull kept.** Pulls split on their own after inactivity, on a wipe, or on a zone
-  change, and are listed by duty. Each shows whether the boss died, and if it didn't, how
-  much HP it had left.
+- **A pull history.** Pulls split on their own after inactivity, on a wipe, or on a zone
+  change. They are listed by each time you entered a duty, numbered from #1, and each
+  shows whether the boss died, and if it didn't, how much HP it had left.
 - **Casts and GCD uptime.** What each player pressed, their casts per minute, the GCD they
   ran at, and how much of the pull they kept it rolling. A spell with a cast time counts
   from when its cast started, so casters and healers read true.
@@ -63,8 +63,9 @@ It ends in one of four ways:
    the same schedule, and nobody else you have come across counts.
 3. **Zone change** — any in-progress pull is finalised and archived. The zone is read from
    the party list, so solo play has no zone and pulls are filed under *Unknown zone*.
-   Going solo mid-pull (the party disbanding) is not a zone change: the pull carries on
-   and keeps the zone it started in.
+   Nothing tells those pulls apart, so only the newest one is kept. Going solo mid-pull
+   (the party disbanding) is not a zone change: the pull carries on and keeps the zone it
+   started in.
 4. **Manual** — ended from the desktop app.
 
 Duration is measured to the *last combat action*, not to the moment the timeout fired, so
@@ -155,8 +156,8 @@ applied them. That gives five damage rates:
 | **nDPS** | Damage dealt, less what every other player's buffs added to it. |
 | **cDPS** | aDPS, plus what your buffs added to other players' damage. |
 
-*DPS metric* in Settings picks the rate the meter shows and ranks by, in game and on the
-desktop.
+*DPS metric* in Settings picks the rate the in-game meter shows and ranks by. On the
+desktop, the buttons above the Damage table pick it, and the Timeline follows them.
 
 How each buff's part is measured:
 
@@ -296,8 +297,9 @@ draws it as one line per player, in their job colour.
 - **Your party only.** The timeline follows your party, or you alone when solo. In an
   alliance raid or the open world, other players keep their rows in the tables but get no
   line. The Limit Break has none either.
-- **Any damage rate.** Damage lines follow the *DPS metric*, so rDPS moves the damage a
-  raid buff added to whoever gave it, second by second, as the tables do.
+- **Any damage rate.** Damage lines follow the rate picked above the Damage table, so rDPS
+  moves the damage a raid buff added to whoever gave it, second by second, as the table
+  does.
 - **Smoothing.** Each point averages the 5, 15 or 30 seconds around it, weighing the middle
   most. At the start and end of a pull the window holds fewer seconds and averages those.
 - **Raid buffs.** Bands mark when a party-wide raid buff was up, or a debuff such as Chain
@@ -331,18 +333,22 @@ The in-game meter keeps no timeline, so it costs the game nothing. The desktop a
 
 **Desktop view.** Eight tabs: **Damage**, **Healing**, **Damage Taken**, **Deaths**,
 **Buffs & Debuffs**, **Casts**, **Timeline**, and **Settings**. Every tab but Settings
-shows a pull list rail on the left. The live fight is at the top, then the pull history
-grouped by duty: each pull has an outcome dot (gold clear, red wipe, grey ended), its
-number and duration, then the boss's HP left, its death count and end time while the rail
-has room for them. Hovering a pull shows all of it, with the boss's name. The trash button
-in the history header clears the archive after asking. The rail is the only place a pull
-is chosen, and it narrows on a small window. Beside it, a header names the selected pull's
-duty and boss and sums it up: duration, raid DPS and HPS, combatants, deaths, the boss's
-HP and the outcome. Below it:
+shows a pull list rail on the left. The live fight is at the top, then the pull history,
+one group for each time you entered a zone: leaving a duty and coming back starts a new
+group, and each group numbers its pulls from #1. Only the newest pull with no zone is
+kept, under *Unknown zone*. Each pull has an outcome dot (gold clear, red wipe, grey
+ended), its number and duration, then the boss's HP left, its death count and end time
+while the rail has room for them. Hovering a group shows how many pulls it holds and when
+they ended; hovering a pull shows all of it, with the boss's name. The trash button in the
+history header clears the archive after asking, and numbering starts again at #1. The
+rail is the only place a pull is chosen, and it narrows on a small window. Beside it, a
+header names the selected pull's duty and boss and sums it up: duration, raid DPS and HPS,
+combatants, deaths, the boss's HP and the outcome. Below it:
 
 - **Damage** and **Healing**: the selected pull's rankings. Damage has share, crit, direct
-  hit and crit-direct-hit rates, job-coloured bars and a Deaths column. Its rate column
-  shows the *DPS metric*; hover it for all five rates. Healing has total, effective and
+  hit and crit-direct-hit rates, job-coloured bars and a Deaths column. The buttons above
+  it pick the rate it ranks by, DPS, rDPS, aDPS, nDPS or cDPS, without changing the
+  in-game meter's; hover a row's rate for all five. Healing has total, effective and
   overheal. Selecting a row opens a per-ability breakdown in the tab's own metric, damage
   or effective healing: hits, total, min/avg/max and crit rate. A damage breakdown first
   lists the buff damage the player received and gave, and from and to whom.
@@ -365,10 +371,13 @@ The in-game overlay stays a damage or healing table; the other views are desktop
 
 | Section | Controls |
 |---|---|
-| Meter behaviour | *Party members only*, *Track deaths, buffs and debuffs*, *Hide idle combatants*, *Overlay refresh*, *End encounter after idle* |
+| Pull tracking | *End encounter after idle*, *Track deaths, buffs and debuffs* |
 | In-game overlay | The shared overlay controls: visibility, lock, click-through, opacity, scale and hide conditions |
-| Meter display | *Meter metric*, *DPS metric*, *Job-coloured row bars*, and a toggle for each of the share, crit, direct hit and crit-direct-hit columns |
+| Meter display | What the in-game meter shows: *Table*, *DPS metric*, *Party members only*, *Hide idle combatants*, *Job-coloured row bars*, *Refresh rate*, and under Columns a toggle for each of the share, crit, direct hit and crit-direct-hit columns |
 | Maintenance | *Reset overlay position*, *End encounter*, *Reset all statistics* |
+
+The desktop tables have no settings here: the Damage tab picks its own rate above its
+table.
 
 Job colours are per-job, not per-role, and live in `src/common/ui/job_style.cpp` as the
 single source of truth.
@@ -385,16 +394,17 @@ not the intended interface.
 |---|---|---|---|
 | `plugin_enabled` | bool | `true` | Master switch. Off means no hook dispatch, no telemetry, no overlay. |
 | `inactivity_timeout_seconds` | float | `7.0` | Gap that splits one encounter from the next. |
-| `party_only` | bool | `false` | In-game overlay only: restrict rows to the synced party and the Limit Break row. Solo there is no party list, so it keeps every friendly row. |
-| `show_bars` | bool | `true` | Job-coloured progress bars behind rows. |
-| `hide_inactive` | bool | `false` | Hide combatants with no activity. |
-| `refresh_interval_ms` | int | `500` | How often the displayed snapshot refreshes. |
-| `show_col_share` | bool | `true` | Show the damage share column. |
-| `show_col_crit` | bool | `true` | Show the crit rate column. |
-| `show_col_dh` | bool | `true` | Show the direct hit column. |
-| `show_col_cdh` | bool | `true` | Show the crit-direct-hit column. |
-| `overlay_metric` | int | `0` | In-game overlay metric: `0` damage, `1` healing. |
-| `dps_metric` | int | `0` | Damage rate the tables rank by and the timeline draws: `0` DPS, `1` rDPS, `2` aDPS, `3` nDPS, `4` cDPS. |
+| `party_only` | bool | `false` | In-game meter: restrict rows to the synced party and the Limit Break row. Solo there is no party list, so it keeps every friendly row. |
+| `show_bars` | bool | `true` | In-game meter: job-coloured progress bars behind rows. |
+| `hide_inactive` | bool | `false` | In-game meter: hide combatants with no activity. |
+| `refresh_interval_ms` | int | `500` | How often the in-game meter redraws. |
+| `show_col_share` | bool | `true` | In-game meter: show the damage share column. |
+| `show_col_crit` | bool | `true` | In-game meter: show the crit rate column. |
+| `show_col_dh` | bool | `true` | In-game meter: show the direct hit column. |
+| `show_col_cdh` | bool | `true` | In-game meter: show the crit-direct-hit column. |
+| `overlay_metric` | int | `0` | Table the in-game meter draws: `0` damage, `1` healing. |
+| `dps_metric` | int | `0` | Damage rate the in-game meter ranks by: `0` DPS, `1` rDPS, `2` aDPS, `3` nDPS, `4` cDPS. |
+| `desktop_dps_metric` | int | `0` | Damage rate the desktop's Damage tab ranks by and its Timeline draws, with the same values as `dps_metric`. Set with the buttons above the Damage table; the game never writes it. |
 | `track_vitals` | bool | `true` | Read HP and status lists four times a second for deaths, buffs, debuffs and the boss's HP. Off, nothing is read. |
 | `overlay_visible` | bool | `true` | Draw the in-game overlay. |
 | `overlay_x`, `overlay_y` | float | `-1.0` | Position. Negative means never placed — the overlay picks its own default. |
@@ -460,6 +470,28 @@ DPS only. See [Limit Break](#limit-break).
 
 Seven seconds without combat ends a pull, and so do a wipe and a zone change. For fights
 with long downtime, raise *End encounter after idle* in Settings. See
+[Starting and ending a pull](#starting-and-ending-a-pull).
+
+</details>
+
+<details>
+<summary><b>A duty is listed twice</b></summary>
+
+<br>
+
+Each time you enter a zone starts a new group with its pulls numbered from #1, so leaving
+a duty and coming back lists it again. Hover a group's name to see when its pulls ended.
+See [Views](#views).
+
+</details>
+
+<details>
+<summary><b>Only one pull is listed under Unknown zone</b></summary>
+
+<br>
+
+The zone comes from the party list, and solo there is none. Nothing tells those pulls
+apart, so only the newest is kept, and it never takes a duty's place in the history. See
 [Starting and ending a pull](#starting-and-ending-a-pull).
 
 </details>

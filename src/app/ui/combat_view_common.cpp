@@ -15,7 +15,21 @@ void combat_table_headers_row() {
 }
 
 meter::DpsMetric selected_dps_metric() {
-    return meter::dps_metric_from(static_cast<uint32_t>(cfg_int("combat_meter", "dps_metric", 0)));
+    return meter::dps_metric_from(static_cast<uint32_t>(cfg_int("combat_meter", "desktop_dps_metric", 0)));
+}
+
+void set_selected_dps_metric(meter::DpsMetric metric) {
+    cfg_store("combat_meter", "desktop_dps_metric", static_cast<int>(metric));
+}
+
+const char* dps_metric_label(meter::DpsMetric metric) {
+    switch (metric) {
+        case meter::DpsMetric::Rdps: return "rDPS: raid contribution";
+        case meter::DpsMetric::Adps: return "aDPS: without cards or dance partner";
+        case meter::DpsMetric::Ndps: return "nDPS: without anyone's buffs";
+        case meter::DpsMetric::Cdps: return "cDPS: aDPS plus buffs given";
+        default: return "DPS: damage dealt";
+    }
 }
 
 SummaryNames::SummaryNames(const meter::EncounterSummary& summary) {

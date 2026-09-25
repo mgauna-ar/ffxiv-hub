@@ -472,6 +472,11 @@ struct EncounterSummary {
     uint64_t encounter_id{0};
     uint32_t zone_id{0};
     std::string zone_name;
+    /// The stay in the zone this pull was fought in. Every zone change starts a new
+    /// one, coming back to a zone seen before included.
+    uint32_t zone_visit{0};
+    /// 1 for the first pull archived in its visit. 0 on the live summary.
+    uint32_t pull_number{0};
     uint64_t start_time_us{0};
     uint64_t end_time_us{0};
     /// Wall-clock end, for display. start/end_time_us are steady_clock based.

@@ -132,7 +132,7 @@ bool pull_row(const meter::PullHistoryEntry& pull, bool selected, float number_w
                                            ImVec2(0.0f, row_h));
 
     const Badge outcome = pull_outcome_badge(pull.state, pull.boss);
-    const std::string number = "#" + std::to_string(pull.encounter_id);
+    const std::string number = "#" + std::to_string(pull.pull_number);
     const std::string duration = format_duration(static_cast<uint64_t>(pull.duration_seconds));
     const bool has_clock = pull.ended_at_unix_s != 0;
     const std::string clock = format_clock_time(pull.ended_at_unix_s);
@@ -189,6 +189,22 @@ bool pull_row(const meter::PullHistoryEntry& pull, bool selected, float number_w
     return clicked;
 }
 
+/// A visit's name, pull count and when its pulls ended, so two visits to one duty
+/// can be told apart.
+std::string visit_tooltip(const meter::PullGroup& group,
+                          const std::vector<meter::PullHistoryEntry>& pull_history) {
+    const size_t count = group.pulls.size();
+    std::string tip = group.label + "\n" + std::to_string(count) + (count == 1 ? " pull" : " pulls");
+    // Newest first, so the last one is the oldest.
+    const uint64_t first = pull_history[group.pulls.back()].ended_at_unix_s;
+    const uint64_t last = pull_history[group.pulls.front()].ended_at_unix_s;
+    if (first != 0 && last != 0) {
+        tip += ", " + format_clock_time(first);
+        if (count > 1) tip += " - " + format_clock_time(last);
+    }
+    return tip;
+}
+
 /// Clearing drops every archived pull, so it asks first.
 void render_clear_history_popup(AppState& app_state, size_t pull_count) {
     if (!ImGui::BeginPopupModal("##ConfirmClearPulls", nullptr,
@@ -238,7 +254,7 @@ void render_history_header(bool has_pulls) {
 }
 
 /// The one place a pull is chosen: live at the top, then the archive grouped by
-/// duty. The tables beside it always show whatever is selected here.
+/// zone visit. The tables beside it always show whatever is selected here.
 void render_pull_rail(AppState& app_state, const std::vector<meter::PullHistoryEntry>& pull_history,
                       bool is_live, float width) {
     CardOptions opts{};
@@ -262,27 +278,27 @@ void render_pull_rail(AppState& app_state, const std::vector<meter::PullHistoryE
         ImGui::BeginChild("##PullList", ImVec2(0.0f, fill_h(0.0f)), ImGuiChildFlags_None);
 
         // Sized to the widest number so every row's duration starts in one column.
-        uint64_t max_id = 0;
-        for (const auto& pull : pull_history) max_id = std::max(max_id, pull.encounter_id);
-        const float number_w = ImGui::CalcTextSize(("#" + std::to_string(max_id)).c_str()).x;
+        uint32_t max_number = 0;
+        for (const auto& pull : pull_history) max_number = std::max(max_number, pull.pull_number);
+        const float number_w = ImGui::CalcTextSize(("#" + std::to_string(max_number)).c_str()).x;
 
         const auto selected_idx = find_pull_index(pull_history, s_selected_pull_id);
-        const auto groups = meter::group_pulls_by_zone(pull_history);
+        const auto groups = meter::group_pulls_by_visit(pull_history);
         for (size_t g = 0; g < groups.size(); ++g) {
             const auto& group = groups[g];
             const bool holds_selection =
                 selected_idx && std::find(group.pulls.begin(), group.pulls.end(), *selected_idx)
                                     != group.pulls.end();
 
-            // Opened once so the newest duty (and whichever holds the current
+            // Opened once so the newest visit (and whichever holds the current
             // selection) starts expanded; after that the user's own toggling wins.
-            ImGui::PushID(static_cast<int>(group.zone_id));
+            ImGui::PushID(static_cast<int>(group.zone_visit));
             ImGui::SetNextItemOpen(g == 0 || holds_selection, ImGuiCond_Once);
             const std::string header = group.label + "  (" + std::to_string(group.pulls.size()) + ")";
             ImGui::PushStyleColor(ImGuiCol_Text, v4(colors::TextMuted));
             const bool open = ImGui::TreeNodeEx(header.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth);
             ImGui::PopStyleColor();
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", group.label.c_str());
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", visit_tooltip(group, pull_history).c_str());
             if (open) {
                 for (size_t idx : group.pulls) {
                     const auto& pull = pull_history[idx];
@@ -319,7 +335,7 @@ void render_top_bar(AppState& app_state, const meter::EncounterSummary& summary,
         std::string zone = meter::zone_label(archived->zone_id, archived->zone_name);
         if (zone.empty()) zone = "Unknown zone";
         if (!boss.name.empty()) zone += " \xC2\xB7 " + boss.name;
-        title = zone + "  -  Pull #" + std::to_string(archived->encounter_id);
+        title = zone + "  -  Pull #" + std::to_string(archived->pull_number);
     }
     ImGui::PushFont(bold_font());
     text_colored_u32(colors::TextPrimary, "%s", title.c_str());
@@ -407,14 +423,15 @@ void combatant_name_cell(const meter::CombatantStats& c, const char* id_prefix) 
     }
 }
 
+constexpr meter::DpsMetric kDpsMetrics[] = {
+    meter::DpsMetric::Dps, meter::DpsMetric::Rdps, meter::DpsMetric::Adps,
+    meter::DpsMetric::Ndps, meter::DpsMetric::Cdps,
+};
+
 /// Every damage rate for one row, and the buff damage that separates them.
 void dps_figures_tooltip(const meter::CombatantStats& c) {
     ImGui::BeginTooltip();
-    constexpr meter::DpsMetric kMetrics[] = {
-        meter::DpsMetric::Dps, meter::DpsMetric::Rdps, meter::DpsMetric::Adps,
-        meter::DpsMetric::Ndps, meter::DpsMetric::Cdps,
-    };
-    for (const meter::DpsMetric metric : kMetrics) {
+    for (const meter::DpsMetric metric : kDpsMetrics) {
         const std::string label(meter::to_string(metric));
         text_colored_u32(colors::TextMuted, "%-5s", label.c_str());
         ImGui::SameLine(m(56.0f));
@@ -426,7 +443,28 @@ void dps_figures_tooltip(const meter::CombatantStats& c) {
     ImGui::EndTooltip();
 }
 
+/// One button per damage rate. The Timeline follows the one picked here; the
+/// in-game meter keeps its own, in Settings.
+void render_dps_metric_switch() {
+    const meter::DpsMetric current = selected_dps_metric();
+    for (size_t i = 0; i < std::size(kDpsMetrics); ++i) {
+        const meter::DpsMetric metric = kDpsMetrics[i];
+        const std::string label = std::string(meter::to_string(metric)) + "##DamageRate";
+        if (i > 0) same_line_if_room(button_width(label.c_str(), ButtonSize::Fit), 4.0f);
+        if (button(label.c_str(), metric == current ? ButtonKind::Primary : ButtonKind::Secondary,
+                   ButtonSize::Fit)) {
+            set_selected_dps_metric(metric);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", dps_metric_label(metric));
+    }
+}
+
 void render_damage_table(const meter::EncounterSummary& summary, float height) {
+    const float top = ImGui::GetCursorPosY();
+    render_dps_metric_switch();
+    ImGui::Dummy(ImVec2(0.0f, m(2.0f)));
+    const float table_h = std::max(height - (ImGui::GetCursorPosY() - top), ImGui::GetFrameHeight());
+
     const meter::DpsMetric metric = selected_dps_metric();
     const std::string metric_label(meter::to_string(metric));
 
@@ -447,7 +485,7 @@ void render_damage_table(const meter::EncounterSummary& summary, float height) {
 
     const double top_dps = std::max(meter::dps_figure(*combatants.front(), metric), 1.0);
     const auto sizing = table_sizing(760.0f, kCombatTableFlags);
-    if (!ImGui::BeginTable("##DamageRankingTable", 10, sizing.flags, ImVec2(0.0f, height))) return;
+    if (!ImGui::BeginTable("##DamageRankingTable", 10, sizing.flags, ImVec2(0.0f, table_h))) return;
 
     ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, m(30.0f));
     ImGui::TableSetupColumn("Job", ImGuiTableColumnFlags_WidthFixed, m(52.0f));
@@ -580,14 +618,18 @@ void render_healing_table(const meter::EncounterSummary& summary, float height) 
 // destructive actions.
 // ---------------------------------------------------------------------------
 
+/// How pulls are recorded. Everything that only changes the in-game meter is under
+/// Meter display.
 void render_plugin_section(AppState& app_state) {
-    begin_settings_card("##MeterPluginCard", ICON_SLIDERS, "METER BEHAVIOUR", colors::Accent);
+    begin_settings_card("##MeterPluginCard", ICON_HISTORY, "PULL TRACKING", colors::Accent);
 
-    bool party_only = cfg_bool(METER, "party_only", false);
-    if (setting_toggle("Party members only", "Exclude everyone outside your party.", &party_only)) {
-        cfg_store(METER, "party_only", party_only);
-        app_state.send_combat_overlay_party_only(party_only);
+    float timeout_s = cfg_float(METER, "inactivity_timeout_seconds", 7.0f);
+    begin_setting_row("End encounter after idle", "Inactivity before a pull is closed out.");
+    if (ImGui::SliderFloat("##idle_timeout", &timeout_s, 3.0f, 60.0f, "%.0f s")) {
+        cfg_store(METER, "inactivity_timeout_seconds", timeout_s);
+        app_state.send_combat_inactivity_timeout(timeout_s);
     }
+    end_setting_row();
 
     bool track_vitals = cfg_bool(METER, "track_vitals", true);
     if (setting_toggle("Track deaths, buffs and debuffs",
@@ -597,28 +639,6 @@ void render_plugin_section(AppState& app_state) {
         cfg_store(METER, "track_vitals", track_vitals);
         app_state.send_combat_track_vitals(track_vitals);
     }
-
-    bool hide_inactive = cfg_bool(METER, "hide_inactive", false);
-    if (setting_toggle("Hide idle combatants", "Drops anyone with no contribution this pull.", &hide_inactive)) {
-        cfg_store(METER, "hide_inactive", hide_inactive);
-        app_state.send_combat_hide_inactive(hide_inactive);
-    }
-
-    int refresh_ms = cfg_int(METER, "refresh_interval_ms", 500);
-    begin_setting_row("Overlay refresh", "How often the in-game meter redraws.");
-    if (ImGui::SliderInt("##refresh_ms", &refresh_ms, 100, 2000, "%d ms")) {
-        cfg_store(METER, "refresh_interval_ms", refresh_ms);
-        app_state.send_combat_refresh_interval(static_cast<uint32_t>(refresh_ms));
-    }
-    end_setting_row();
-
-    float timeout_s = cfg_float(METER, "inactivity_timeout_seconds", 7.0f);
-    begin_setting_row("End encounter after idle", "Inactivity before a pull is closed out.");
-    if (ImGui::SliderFloat("##idle_timeout", &timeout_s, 3.0f, 60.0f, "%.0f s")) {
-        cfg_store(METER, "inactivity_timeout_seconds", timeout_s);
-        app_state.send_combat_inactivity_timeout(timeout_s);
-    }
-    end_setting_row();
 
     end_settings_card();
 }
@@ -645,59 +665,80 @@ void render_overlay_section(AppState& app_state) {
     end_card();
 }
 
+/// What the in-game meter's table shows. The desktop tables have their own controls.
 void render_display_section(AppState& app_state) {
     begin_settings_card("##MeterDisplayCard", ICON_CHECKLIST, "METER DISPLAY", colors::Violet);
 
     static const char* metric_modes[] = { "Damage", "Healing" };
     int metric = cfg_int(METER, "overlay_metric", 0);
-    begin_setting_row("Meter metric", "Which table the in-game meter draws.");
+    begin_setting_row("Table", "Which table the in-game meter draws.");
     if (ImGui::Combo("##meter_metric", &metric, metric_modes, 2)) {
         cfg_store(METER, "overlay_metric", metric);
         app_state.send_combat_overlay_metric(static_cast<uint32_t>(metric));
     }
     end_setting_row();
 
-    static const char* dps_modes[] = {
-        "DPS: damage dealt",
-        "rDPS: raid contribution",
-        "aDPS: without cards or dance partner",
-        "nDPS: without anyone's buffs",
-        "cDPS: aDPS plus buffs given",
-    };
     int dps_metric = cfg_int(METER, "dps_metric", 0);
-    begin_setting_row("DPS metric", "The damage rate the tables rank by and the timeline draws.");
-    if (ImGui::Combo("##dps_metric", &dps_metric, dps_modes, static_cast<int>(meter::DPS_METRIC_COUNT))) {
+    begin_setting_row("DPS metric", "The damage rate the in-game meter ranks by. The Damage tab picks its own.");
+    const auto label_of = [](void*, int idx) {
+        return dps_metric_label(meter::dps_metric_from(static_cast<uint32_t>(idx)));
+    };
+    if (ImGui::Combo("##dps_metric", &dps_metric, label_of, nullptr, static_cast<int>(meter::DPS_METRIC_COUNT))) {
         cfg_store(METER, "dps_metric", dps_metric);
         app_state.send_combat_dps_metric(static_cast<uint32_t>(dps_metric));
     }
     end_setting_row();
 
+    bool party_only = cfg_bool(METER, "party_only", false);
+    if (setting_toggle("Party members only",
+                       "Lists your party and the Limit Break. Solo, every friendly row stays.", &party_only)) {
+        cfg_store(METER, "party_only", party_only);
+        app_state.send_combat_overlay_party_only(party_only);
+    }
+
+    bool hide_inactive = cfg_bool(METER, "hide_inactive", false);
+    if (setting_toggle("Hide idle combatants", "Drops anyone with no contribution this pull.", &hide_inactive)) {
+        cfg_store(METER, "hide_inactive", hide_inactive);
+        app_state.send_combat_hide_inactive(hide_inactive);
+    }
+
     bool show_bars = cfg_bool(METER, "show_bars", true);
-    if (setting_toggle("Job-coloured row bars", "Draws a role-tinted bar behind each row.", &show_bars)) {
+    if (setting_toggle("Job-coloured row bars", "Draws a bar in each row's job colour behind it.", &show_bars)) {
         cfg_store(METER, "show_bars", show_bars);
         app_state.send_combat_show_bars(show_bars);
     }
 
+    int refresh_ms = cfg_int(METER, "refresh_interval_ms", 500);
+    begin_setting_row("Refresh rate", "How often the in-game meter redraws.");
+    if (ImGui::SliderInt("##refresh_ms", &refresh_ms, 100, 2000, "%d ms")) {
+        cfg_store(METER, "refresh_interval_ms", refresh_ms);
+        app_state.send_combat_refresh_interval(static_cast<uint32_t>(refresh_ms));
+    }
+    end_setting_row();
+
+    ImGui::Dummy(ImVec2(0.0f, m(6.0f)));
+    section_header(ICON_LAYERS, "COLUMNS", colors::Violet);
+
     bool col_share = cfg_bool(METER, "show_col_share", true);
-    if (setting_toggle("Damage share column", "Percentage of total raid damage.", &col_share)) {
+    if (setting_toggle("Damage share", "Percentage of total raid damage.", &col_share)) {
         cfg_store(METER, "show_col_share", col_share);
         app_state.send_combat_column_share(col_share);
     }
 
     bool col_crit = cfg_bool(METER, "show_col_crit", true);
-    if (setting_toggle("Critical hit rate column", "Per-combatant crit percentage.", &col_crit)) {
+    if (setting_toggle("Critical hit rate", "Per-combatant crit percentage.", &col_crit)) {
         cfg_store(METER, "show_col_crit", col_crit);
         app_state.send_combat_column_crit(col_crit);
     }
 
     bool col_dh = cfg_bool(METER, "show_col_dh", true);
-    if (setting_toggle("Direct hit rate column", "Per-combatant direct hit percentage.", &col_dh)) {
+    if (setting_toggle("Direct hit rate", "Per-combatant direct hit percentage.", &col_dh)) {
         cfg_store(METER, "show_col_dh", col_dh);
         app_state.send_combat_column_dh(col_dh);
     }
 
     bool col_cdh = cfg_bool(METER, "show_col_cdh", true);
-    if (setting_toggle("Critical direct hit column", "Combined crit-and-direct percentage.", &col_cdh)) {
+    if (setting_toggle("Critical direct hit", "Combined crit-and-direct percentage.", &col_cdh)) {
         cfg_store(METER, "show_col_cdh", col_cdh);
         app_state.send_combat_column_cdh(col_cdh);
     }
@@ -961,8 +1002,11 @@ void render_view_combat(AppState& app_state) {
         // An archived pull never changes, so it is fetched once per selection
         // rather than on the live timer. The id only advances on a hit, or a
         // pull that failed to load would leave the tables showing its
-        // predecessor under the new pull's header.
-        if (auto pull = app_state.get_pull(*selected_index)) {
+        // predecessor under the new pull's header. The archive can shift after
+        // the listing was read (an eviction, or an older unknown-zone pull
+        // dropped), so a neighbour at that position is not taken for it.
+        auto pull = app_state.get_pull(*selected_index);
+        if (pull && pull->encounter_id == s_selected_pull_id) {
             s_selected_pull = std::move(*pull);
             s_cached_pull_id = s_selected_pull_id;
         }

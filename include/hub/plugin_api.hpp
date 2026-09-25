@@ -72,7 +72,9 @@ class IConfigurable {
 public:
     virtual ~IConfigurable() = default;
 
-    /// Serialize current configuration fields into JSON value
+    /// Replaces `out` with this plugin's keys and nothing else. The payload's
+    /// autosave writes the section as it stands, so a key it only loaded from the
+    /// file, such as one only the app sets, would go back over the app's value.
     virtual void serialize_config(config::JsonValue& out) const = 0;
 
     /// Deserialize configuration fields from JSON value

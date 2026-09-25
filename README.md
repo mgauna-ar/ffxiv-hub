@@ -31,7 +31,7 @@ no installer.
 - Live DPS and HPS, with overheal kept out of HPS. Crit, direct hit and
   crit-direct-hit rates, and a per-action breakdown.
 - rDPS, aDPS, nDPS and cDPS: the damage each raid buff added is credited to the player
-  who gave it.
+  who gave it. One click above the Damage table switches between them.
 - Pets are merged into their owners, and the Limit Break gets its own row, so the table
   holds your party and nothing else.
 - Every death, with the killing blow, a recap of the hits and heals before it, and the
@@ -42,7 +42,8 @@ no installer.
 - A timeline of each party member's damage, healing or damage taken across the pull,
   with the raid buff windows and the deaths on it.
 - A pull history that splits on its own after 7 s without combat, on a wipe, or on a
-  zone change. Each pull shows whether the boss died, or how much HP it had left.
+  zone change, with each visit to a duty listed on its own and numbered from #1. Each
+  pull shows whether the boss died, or how much HP it had left.
 
 **⚡ [Latency Mitigator](plugins/latency_mitigator/README.md) lets you double-weave on a
 high-ping connection.**
@@ -349,7 +350,8 @@ plugin:
 
 - **Saving.** Changes are saved as you make them. The running game also saves overlay
   state every few seconds, such as a HUD you just dragged. It writes only the plugin
-  sections, merged into the file as it is on disk, so it never reverts a Hub setting.
+  settings it uses, merged into the file as it is on disk, so it never reverts a Hub
+  setting or one only the desktop app reads.
 - **Resetting.** **Hub Settings → Reset all settings** puts every key back to its default,
   in the app and in game, and switches every plugin back on. *Start with Windows* keeps
   following the registry.

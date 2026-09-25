@@ -279,6 +279,8 @@ void EncounterEngine::end_encounter_locked(EncounterEndReason reason, TimePoint 
     summary.encounter_id = ++m_next_encounter_id;
     summary.zone_id = m_current_zone_id;
     summary.zone_name = m_current_zone_name;
+    summary.zone_visit = m_zone_visit;
+    summary.pull_number = ++m_visit_pulls;
     summary.start_time_us = m_start_time_us;
     summary.end_time_us = (timestamp_us > 0 && !trim_to_kill)
         ? timestamp_us
@@ -311,6 +313,11 @@ void EncounterEngine::end_encounter_locked(EncounterEndReason reason, TimePoint 
     m_status_changes.clear();
     m_registry.clear_enemy_statuses(summary.end_time_us, m_status_changes);
 
+    // Nothing tells one unknown-zone pull from another, so only the newest is kept.
+    // Dropped before the capacity check, so a solo pull never evicts a duty's.
+    if (summary.zone_id == 0) {
+        std::erase_if(m_pull_history, [](const ArchivedPull& archived) { return archived.summary.zone_id == 0; });
+    }
     while (m_pull_history.size() >= m_history_capacity && !m_pull_history.empty()) {
         m_pull_history.pop_front();
     }
@@ -324,10 +331,16 @@ void EncounterEngine::end_encounter_locked(EncounterEndReason reason, TimePoint 
 
 void EncounterEngine::apply_pending_zone_locked() {
     if (m_zone_unknown_pending) {
-        m_current_zone_id = 0;
-        m_current_zone_name.clear();
         m_zone_unknown_pending = false;
+        enter_zone_locked(0, "");
     }
+}
+
+void EncounterEngine::enter_zone_locked(uint32_t zone_id, std::string zone_name) {
+    m_current_zone_id = zone_id;
+    m_current_zone_name = std::move(zone_name);
+    ++m_zone_visit;
+    m_visit_pulls = 0;
 }
 
 void EncounterEngine::split_encounter(TimePoint now) {
@@ -368,11 +381,11 @@ void EncounterEngine::set_zone_locked(uint32_t zone_id, std::string zone_name, T
     }
     m_zone_unknown_pending = false;
     if (zone_id != m_current_zone_id) {
+        // Archived first, under the visit it was fought in.
         if (m_state == EncounterState::InCombat) {
             end_encounter_locked(EncounterEndReason::ZoneChange, now);
         }
-        m_current_zone_id = zone_id;
-        m_current_zone_name = std::move(zone_name);
+        enter_zone_locked(zone_id, std::move(zone_name));
     }
 }
 
@@ -404,6 +417,8 @@ std::vector<PullHistoryEntry> EncounterEngine::pull_history_index() const {
             .encounter_id = pull.encounter_id,
             .zone_id = pull.zone_id,
             .zone_name = pull.zone_name,
+            .zone_visit = pull.zone_visit,
+            .pull_number = pull.pull_number,
             .ended_at_unix_s = pull.ended_at_unix_s,
             .duration_seconds = pull.duration_seconds,
             .total_damage = pull.total_damage,
@@ -537,6 +552,7 @@ EncounterSummary EncounterEngine::summary_locked(TimePoint now, bool with_detail
     summary.encounter_id = m_next_encounter_id + 1;
     summary.zone_id = m_current_zone_id;
     summary.zone_name = m_current_zone_name;
+    summary.zone_visit = m_zone_visit;
     summary.start_time_us = m_start_time_us;
     summary.duration_seconds = dur;
     summary.end_time_us = m_start_time_us + static_cast<uint64_t>(dur * 1e6);

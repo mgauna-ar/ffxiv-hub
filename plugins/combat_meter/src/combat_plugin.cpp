@@ -247,6 +247,8 @@ void CombatPlugin::serialize_config(config::JsonValue& out) const {
         ? (overlay->metric() == MeterMetric::Healing ? 1u : 0u)
         : m_config.overlay_metric;
 
+    // Only this plugin's keys, so desktop_dps_metric stays the app's.
+    out = config::JsonValue(config::JsonValue::ObjectType{});
     out["plugin_enabled"] = config::JsonValue(is_enabled());
     out["inactivity_timeout_seconds"] = config::JsonValue(m_engine.inactivity_timeout());
     out["party_only"] = config::JsonValue(overlay ? overlay->party_only() : m_config.party_only);

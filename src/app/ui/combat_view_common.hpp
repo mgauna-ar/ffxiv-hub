@@ -20,8 +20,13 @@ constexpr ImGuiTableFlags kCombatTableFlags = ImGuiTableFlags_RowBg | ImGuiTable
 /// Header row in the dim header colour every Combat table uses.
 void combat_table_headers_row();
 
-/// The damage rate the Damage tab and the Timeline follow (Settings, "DPS metric").
+/// The damage rate the Damage tab ranks by and the Timeline draws, picked above the
+/// Damage table. The in-game meter keeps its own, in Settings.
 [[nodiscard]] meter::DpsMetric selected_dps_metric();
+void set_selected_dps_metric(meter::DpsMetric metric);
+
+/// A rate's name and what it counts: "rDPS: raid contribution".
+[[nodiscard]] const char* dps_metric_label(meter::DpsMetric metric);
 
 /// Names and jobs for the ids a summary's detail rows refer to: its combatants,
 /// plus the labels it carries for everyone else, enemies included.

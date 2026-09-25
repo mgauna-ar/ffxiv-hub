@@ -400,9 +400,9 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
 
         // Persist live overlay/plugin state (position, lock, opacity, ...) to
         // config.json every few seconds, so in-game changes (dragging an overlay,
-        // the padlock icon, desktop app commands) survive a restart. Only the
-        // plugin sections are merged into the file as it is now, so app-only keys
-        // saved since injection are not reverted. Throttled since it hits disk and
+        // the padlock icon, desktop app commands) survive a restart. Only the keys
+        // each plugin serializes are merged into the file as it is now, so an
+        // app-only key is never reverted. Throttled since it hits disk and
         // the game process can be killed outright on exit rather than reaching
         // the graceful teardown path below.
         if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_config_save).count() > 5000) {

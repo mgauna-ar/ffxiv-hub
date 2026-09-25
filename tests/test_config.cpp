@@ -257,6 +257,44 @@ TEST_CASE(Config, PayloadSaveKeepsAppOnlySections) {
     std::filesystem::remove(tmp);
 }
 
+TEST_CASE(Config, PayloadAutosaveKeepsTheDesktopRate) {
+    // A key only the app sets, already on file when the payload loaded it, used to
+    // be written back by the payload's autosave within 5 s of the app changing it.
+    const auto tmp = std::filesystem::temp_directory_path() / "hub_desktop_rate_test.json";
+    auto sidecar = tmp;
+    sidecar += ".tmp";
+    std::filesystem::remove(tmp);
+    std::filesystem::remove(sidecar);
+
+    ConfigManager app;
+    ConfigManager payload;
+    app.set_custom_path_for_testing(tmp);
+    payload.set_custom_path_for_testing(tmp);
+
+    app.root()["combat_meter"]["desktop_dps_metric"] = JsonValue(1);
+    TEST_ASSERT(app.save());
+    payload.set_owned_sections({"combat_meter", "latency_mitigator"});
+    TEST_ASSERT(payload.load());
+
+    app.root()["combat_meter"]["desktop_dps_metric"] = JsonValue(3);
+    TEST_ASSERT(app.save());
+
+    // What the payload's autosave does.
+    hub::meter::CombatPlugin combat;
+    combat.initialize();
+    combat.serialize_config(payload.root()["combat_meter"]);
+    TEST_ASSERT(payload.save());
+    combat.shutdown();
+
+    ConfigManager reader;
+    reader.set_custom_path_for_testing(tmp);
+    TEST_ASSERT(reader.load());
+    TEST_ASSERT_EQ(reader.root()["combat_meter"]["desktop_dps_metric"].as_int(0), 3);
+    TEST_ASSERT(reader.root()["combat_meter"].contains("plugin_enabled"));
+
+    std::filesystem::remove(tmp);
+}
+
 TEST_CASE(Config, ResetToDefaultsDiscardsEveryChange) {
     // "Reset everything" used to delete the file and call load(), which returns
     // early with no file and left every in-memory value as it was.

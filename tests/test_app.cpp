@@ -4,6 +4,7 @@
 #include "common/ui/job_style.hpp"
 #include "common/ipc/pipe_server.hpp"
 #include "common/os/tray_manager.hpp"
+#include "meter/pull_grouping.hpp"
 #include <chrono>
 #include <filesystem>
 
@@ -577,6 +578,12 @@ TEST_CASE(AppState, PullHistoryIndexMatchesFullSummaries) {
     app::AppState state;
     state.initialize();
 
+    // In a zone: an unknown zone keeps only its newest pull.
+    ipc::CombatControlPayload zone{};
+    zone.zone_id = 1238;
+    state.pipe_server().process_raw_packet(
+        ipc::serialize_typed_packet(PluginId::CombatMeter, MessageType::CombatControl, 0, zone));
+
     // Two pulls: damage, then an explicit end, twice over.
     for (uint32_t pull = 0; pull < 2; ++pull) {
         ipc::CombatActionPayload act{};
@@ -601,6 +608,8 @@ TEST_CASE(AppState, PullHistoryIndexMatchesFullSummaries) {
 
     for (size_t i = 0; i < index.size(); ++i) {
         TEST_ASSERT_EQ(index[i].encounter_id, full[i].encounter_id);
+        TEST_ASSERT_EQ(index[i].zone_visit, full[i].zone_visit);
+        TEST_ASSERT_EQ(index[i].pull_number, full[i].pull_number);
         TEST_ASSERT_EQ(index[i].total_damage, full[i].total_damage);
         TEST_ASSERT_EQ(index[i].combatant_count, full[i].combatants.size());
         TEST_ASSERT(index[i].state == full[i].state);
@@ -611,6 +620,57 @@ TEST_CASE(AppState, PullHistoryIndexMatchesFullSummaries) {
     }
 
     TEST_ASSERT(!state.get_pull(index.size()).has_value());
+
+    state.shutdown();
+}
+
+TEST_CASE(AppState, ZoneVisitsNumberPullsFromOne) {
+    // The rail's groups and numbers come from the payload's zone announcements.
+    app::AppState state;
+    state.initialize();
+
+    uint32_t sequence = 0;
+    const auto enter = [&](uint32_t zone_id) {
+        ipc::CombatControlPayload zone{};
+        zone.zone_id = zone_id;
+        state.pipe_server().process_raw_packet(
+            ipc::serialize_typed_packet(PluginId::CombatMeter, MessageType::CombatControl, ++sequence, zone));
+    };
+    const auto pull = [&] {
+        ipc::CombatActionPayload act{};
+        act.source_id = 1001;
+        act.target_id = 0x40000001;
+        act.action_id = 31;
+        act.damage = 1000;
+        act.effect_type = static_cast<uint16_t>(meter::EffectType::Damage);
+        state.pipe_server().process_raw_packet(
+            ipc::serialize_typed_packet(PluginId::CombatMeter, MessageType::CombatAction, ++sequence, act));
+        ipc::CombatControlPayload end{};
+        end.control_command = 1; // EndEncounter
+        state.pipe_server().process_raw_packet(
+            ipc::serialize_typed_packet(PluginId::CombatMeter, MessageType::CombatControl, ++sequence, end));
+    };
+
+    enter(1238);
+    pull();
+    pull();
+    enter(1037);
+    pull();
+    enter(1238);
+    pull();
+
+    const auto index = state.get_pull_history_index();
+    TEST_ASSERT_EQ(index.size(), 4u);
+    TEST_ASSERT_EQ(index[1].pull_number, 2u);
+    TEST_ASSERT_EQ(index[2].pull_number, 1u);
+    TEST_ASSERT_EQ(index[3].pull_number, 1u);
+
+    const auto groups = meter::group_pulls_by_visit(index);
+    TEST_ASSERT_EQ(groups.size(), 3u);
+    TEST_ASSERT_EQ(groups[0].zone_id, 1238u);
+    TEST_ASSERT_EQ(groups[0].pulls.size(), 1u);
+    TEST_ASSERT_EQ(groups[2].zone_id, 1238u);
+    TEST_ASSERT_EQ(groups[2].pulls.size(), 2u);
 
     state.shutdown();
 }
