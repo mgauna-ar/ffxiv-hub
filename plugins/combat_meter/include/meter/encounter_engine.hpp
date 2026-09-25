@@ -8,6 +8,7 @@
 #include "meter/death_log.hpp"
 #include "meter/boss_tracker.hpp"
 #include "meter/timeline.hpp"
+#include <algorithm>
 #include <chrono>
 #include <vector>
 #include <string>
@@ -176,9 +177,18 @@ public:
         m_pull_history.clear();
         m_visit_pulls = 0;
     }
+    /// Pulls the archive holds. Never below one: the live view and late deaths use
+    /// the newest. Lowering it drops the oldest at once.
     void set_history_capacity(size_t capacity) {
         std::lock_guard<std::recursive_mutex> lock(m_mutex);
-        m_history_capacity = capacity;
+        m_history_capacity = std::max<size_t>(capacity, 1);
+        while (m_pull_history.size() > m_history_capacity) {
+            m_pull_history.pop_front();
+        }
+    }
+    [[nodiscard]] size_t history_capacity() const {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        return m_history_capacity;
     }
 
     /// Keeps every pull second by second for the Timeline tab. Off by default: the

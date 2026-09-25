@@ -34,7 +34,9 @@ namespace constants {
     constexpr double DEFAULT_INACTIVITY_TIMEOUT_SECONDS = 7.0;
     constexpr size_t MAX_PARTY_MEMBERS = 8;
     constexpr size_t MAX_NAME_LENGTH = 32;
-    constexpr size_t DEFAULT_HISTORY_CAPACITY = 25;
+    constexpr size_t DEFAULT_HISTORY_CAPACITY = 100;
+    constexpr int MIN_PULL_HISTORY_LIMIT = 10;
+    constexpr int MAX_PULL_HISTORY_LIMIT = 500;
     constexpr int DEFAULT_WINDOW_WIDTH = 800;
     constexpr int DEFAULT_WINDOW_HEIGHT = 480;
     constexpr int MIN_WINDOW_WIDTH = 300;

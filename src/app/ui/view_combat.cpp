@@ -631,6 +631,19 @@ void render_plugin_section(AppState& app_state) {
     }
     end_setting_row();
 
+    int pulls_kept = cfg_int(METER, "pull_history_limit", static_cast<int>(meter::constants::DEFAULT_HISTORY_CAPACITY));
+    begin_setting_row("Pulls kept", "Finished pulls the pull list holds. Lowering it drops the oldest.");
+    if (ImGui::SliderInt("##pulls_kept", &pulls_kept, meter::constants::MIN_PULL_HISTORY_LIMIT,
+                         meter::constants::MAX_PULL_HISTORY_LIMIT, "%d pulls",
+                         ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_AlwaysClamp)) {
+        cfg_store(METER, "pull_history_limit", pulls_kept);
+    }
+    // Applied on release: a drag through a low value would otherwise drop pulls for good.
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        app_state.set_pull_history_limit(pulls_kept);
+    }
+    end_setting_row();
+
     bool track_vitals = cfg_bool(METER, "track_vitals", true);
     if (setting_toggle("Track deaths, buffs and debuffs",
                        "Reads party and enemy HP and status lists 4 times a second. Off, the "

@@ -118,6 +118,11 @@ void AppState::apply_config_to_mirror_engine() {
         m_engine.set_inactivity_timeout(meter_cfg["inactivity_timeout_seconds"].as_double(
             meter::constants::DEFAULT_INACTIVITY_TIMEOUT_SECONDS));
     }
+    // Only this engine keeps pulls to browse, so the limit is the app's alone.
+    if (meter_cfg.contains("pull_history_limit")) {
+        set_pull_history_limit(meter_cfg["pull_history_limit"].as_int(
+            static_cast<int>(meter::constants::DEFAULT_HISTORY_CAPACITY)));
+    }
 }
 
 void AppState::reset_config() {
@@ -510,6 +515,13 @@ void AppState::reset_encounter() {
 void AppState::clear_pull_history() {
     std::lock_guard<std::mutex> lock(m_combat_mutex);
     m_engine.clear_history();
+}
+
+void AppState::set_pull_history_limit(int pulls) {
+    const int limit = std::clamp(pulls, meter::constants::MIN_PULL_HISTORY_LIMIT,
+                                 meter::constants::MAX_PULL_HISTORY_LIMIT);
+    std::lock_guard<std::mutex> lock(m_combat_mutex);
+    m_engine.set_history_capacity(static_cast<size_t>(limit));
 }
 
 void AppState::send_combat_overlay_party_only(bool party_only) {

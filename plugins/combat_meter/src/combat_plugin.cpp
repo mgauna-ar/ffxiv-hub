@@ -101,7 +101,10 @@ ipc::StatusListPacket make_status_list(const ActorVitals& vitals, const Combatan
 
 } // namespace
 
-CombatPlugin::CombatPlugin() = default;
+CombatPlugin::CombatPlugin() {
+    // Nothing in-game reads past the latest pull; the list the player browses is the app's.
+    m_engine.set_history_capacity(1);
+}
 
 bool CombatPlugin::initialize() {
     m_initialized = true;

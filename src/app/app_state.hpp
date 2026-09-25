@@ -119,6 +119,9 @@ public:
     [[nodiscard]] meter::EncounterTimeline get_timeline(uint64_t encounter_id);
     void reset_encounter();
     void clear_pull_history();
+    /// Pulls the archive keeps, clamped to the setting's range. Lowering it drops
+    /// the oldest at once.
+    void set_pull_history_limit(int pulls);
 
     // Combat Overlay in-game controls
     void send_combat_overlay_party_only(bool party_only);

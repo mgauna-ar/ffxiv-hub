@@ -748,3 +748,55 @@ TEST_CASE(AppState, ResetConfigRestoresDefaultsEverywhere) {
     std::filesystem::remove(tmp);
     cfg.set_custom_path_for_testing({});
 }
+
+TEST_CASE(AppState, PullHistoryLimitComesFromTheConfig) {
+    auto& cfg = config::ConfigManager::instance();
+    const auto tmp = std::filesystem::temp_directory_path() / "hub_pull_limit_test.json";
+    std::filesystem::remove(tmp);
+    cfg.set_custom_path_for_testing(tmp);
+    const int before = cfg.root()["combat_meter"]["pull_history_limit"].as_int(100);
+    cfg.root()["combat_meter"]["pull_history_limit"] = config::JsonValue(12);
+    TEST_ASSERT(cfg.save());
+
+    app::AppState state;
+    TEST_ASSERT(state.initialize());
+
+    uint32_t sequence = 0;
+    ipc::CombatControlPayload zone{};
+    zone.zone_id = 1238;
+    state.pipe_server().process_raw_packet(
+        ipc::serialize_typed_packet(PluginId::CombatMeter, MessageType::CombatControl, ++sequence, zone));
+    for (int pull = 0; pull < 13; ++pull) {
+        ipc::CombatActionPayload act{};
+        act.source_id = 1001;
+        act.target_id = 0x40000001;
+        act.action_id = 31;
+        act.damage = 1000;
+        act.effect_type = static_cast<uint16_t>(meter::EffectType::Damage);
+        state.pipe_server().process_raw_packet(
+            ipc::serialize_typed_packet(PluginId::CombatMeter, MessageType::CombatAction, ++sequence, act));
+        ipc::CombatControlPayload end{};
+        end.control_command = 1; // EndEncounter
+        state.pipe_server().process_raw_packet(
+            ipc::serialize_typed_packet(PluginId::CombatMeter, MessageType::CombatControl, ++sequence, end));
+    }
+
+    auto index = state.get_pull_history_index();
+    TEST_ASSERT_EQ(index.size(), 12u);
+    TEST_ASSERT_EQ(index.front().encounter_id, 2u);
+
+    // What the slider's release does: the oldest go at once.
+    state.set_pull_history_limit(10);
+    index = state.get_pull_history_index();
+    TEST_ASSERT_EQ(index.size(), 10u);
+    TEST_ASSERT_EQ(index.front().encounter_id, 4u);
+
+    // Below the setting's range is its minimum.
+    state.set_pull_history_limit(3);
+    TEST_ASSERT_EQ(state.get_pull_history_index().size(), 10u);
+
+    state.shutdown();
+    std::filesystem::remove(tmp);
+    cfg.root()["combat_meter"]["pull_history_limit"] = config::JsonValue(before);
+    cfg.set_custom_path_for_testing({});
+}

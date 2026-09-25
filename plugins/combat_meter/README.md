@@ -313,8 +313,9 @@ Hovering the chart shows each line's value at that moment, the raid buffs that w
 anyone who died then. Clicking a name under the chart hides or shows that player's line.
 
 The in-game meter keeps no timeline, so it costs the game nothing. The desktop app keeps
-24 bytes per party member per second: about 110 KB for a ten-minute pull of eight. With
-*Track deaths, buffs and debuffs* off, the chart has no buff bands and no deaths.
+24 bytes per party member per second: about 110 KB for a ten-minute pull of eight, and
+11 MB for a full history of 100 of them. With *Track deaths, buffs and debuffs* off, the
+chart has no buff bands and no deaths.
 
 ---
 
@@ -336,7 +337,9 @@ The in-game meter keeps no timeline, so it costs the game nothing. The desktop a
 shows a pull list rail on the left. The live fight is at the top, then the pull history,
 one group for each time you entered a zone: leaving a duty and coming back starts a new
 group, and each group numbers its pulls from #1. Only the newest pull with no zone is
-kept, under *Unknown zone*. Each pull has an outcome dot (gold clear, red wipe, grey
+kept, under *Unknown zone*. The history holds the last 100 pulls, oldest dropped first;
+*Pulls kept* in Settings sets it from 10 to 500. Lowering it drops the extra pulls when
+you release the slider. Each pull has an outcome dot (gold clear, red wipe, grey
 ended), its number and duration, then the boss's HP left, its death count and end time
 while the rail has room for them. Hovering a group shows how many pulls it holds and when
 they ended; hovering a pull shows all of it, with the boss's name. The trash button in the
@@ -371,7 +374,7 @@ The in-game overlay stays a damage or healing table; the other views are desktop
 
 | Section | Controls |
 |---|---|
-| Pull tracking | *End encounter after idle*, *Track deaths, buffs and debuffs* |
+| Pull tracking | *End encounter after idle*, *Pulls kept*, *Track deaths, buffs and debuffs* |
 | In-game overlay | The shared overlay controls: visibility, lock, click-through, opacity, scale and hide conditions |
 | Meter display | What the in-game meter shows: *Table*, *DPS metric*, *Party members only*, *Hide idle combatants*, *Job-coloured row bars*, *Refresh rate*, and under Columns a toggle for each of the share, crit, direct hit and crit-direct-hit columns |
 | Maintenance | *Reset overlay position*, *End encounter*, *Reset all statistics* |
@@ -405,6 +408,7 @@ not the intended interface.
 | `overlay_metric` | int | `0` | Table the in-game meter draws: `0` damage, `1` healing. |
 | `dps_metric` | int | `0` | Damage rate the in-game meter ranks by: `0` DPS, `1` rDPS, `2` aDPS, `3` nDPS, `4` cDPS. |
 | `desktop_dps_metric` | int | `0` | Damage rate the desktop's Damage tab ranks by and its Timeline draws, with the same values as `dps_metric`. Set with the buttons above the Damage table; the game never writes it. |
+| `pull_history_limit` | int | `100` | Pulls the desktop's pull history keeps, `10`–`500`; the oldest is dropped first. Only the app reads it: the game keeps just the latest pull. |
 | `track_vitals` | bool | `true` | Read HP and status lists four times a second for deaths, buffs, debuffs and the boss's HP. Off, nothing is read. |
 | `overlay_visible` | bool | `true` | Draw the in-game overlay. |
 | `overlay_x`, `overlay_y` | float | `-1.0` | Position. Negative means never placed — the overlay picks its own default. |

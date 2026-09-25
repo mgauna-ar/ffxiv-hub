@@ -904,6 +904,53 @@ TEST_CASE(MeterEngine, PullHistoryArchive) {
     TEST_ASSERT(engine.pull_history()[2].ended_at_unix_s > 0u);
 }
 
+TEST_CASE(MeterEngine, LoweringTheHistoryCapacityDropsTheOldest) {
+    // Lowering it used to wait for the next pull's end, then drop all the excess at once.
+    EncounterEngine engine;
+    TEST_ASSERT_EQ(engine.history_capacity(), 100u);
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto at = [t0](int s) { return t0 + std::chrono::seconds(s); };
+    engine.set_zone(1000, "", at(0));
+    for (int i = 0; i < 5; ++i) {
+        archive_pull(engine, at(10 + 10 * i));
+    }
+
+    engine.set_history_capacity(2);
+    auto index = engine.pull_history_index();
+    TEST_ASSERT_EQ(index.size(), 2u);
+    TEST_ASSERT_EQ(index[0].encounter_id, 4u);
+    TEST_ASSERT_EQ(index[1].encounter_id, 5u);
+
+    // Never below one: the live view and late deaths use the newest.
+    engine.set_history_capacity(0);
+    TEST_ASSERT_EQ(engine.history_capacity(), 1u);
+    index = engine.pull_history_index();
+    TEST_ASSERT_EQ(index.size(), 1u);
+    TEST_ASSERT_EQ(index[0].encounter_id, 5u);
+    TEST_ASSERT_EQ(engine.latest_pull()->encounter_id, 5u);
+    // Out of combat the live view takes its duration from the newest archived pull.
+    TEST_ASSERT_NEAR(engine.current_summary(at(100)).duration_seconds, 2.0, 0.01);
+}
+
+TEST_CASE(MeterPlugin, InGameEngineKeepsOnlyTheLatestPull) {
+    // Nothing in-game reads past the latest pull, so the game holds no archive.
+    CombatPlugin plugin;
+    plugin.initialize();
+    EncounterEngine& engine = plugin.engine();
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto at = [t0](int s) { return t0 + std::chrono::seconds(s); };
+    engine.set_zone(1000, "", at(0));
+    for (int i = 0; i < 3; ++i) {
+        archive_pull(engine, at(10 + 10 * i));
+    }
+
+    const auto index = engine.pull_history_index();
+    TEST_ASSERT_EQ(index.size(), 1u);
+    TEST_ASSERT_EQ(index[0].encounter_id, 3u);
+    TEST_ASSERT_EQ(index[0].pull_number, 3u);
+    plugin.shutdown();
+}
+
 TEST_CASE(MeterPlugin, PluginLifecycleAndConfig) {
     CombatPlugin plugin;
     TEST_ASSERT_EQ(plugin.id(), hub::PluginId::CombatMeter);
