@@ -80,9 +80,11 @@ std::vector<StatusGroup> group_rows(const meter::EncounterSummary& summary, Stat
     return sorted;
 }
 
+/// Sized to its label, like a tab, so all three stay on one line at the
+/// window's minimum width.
 void view_button(const char* label, StatusView view) {
     const bool active = s_view == view;
-    if (button(label, active ? ButtonKind::Primary : ButtonKind::Secondary, ButtonSize::Small)) {
+    if (button(label, active ? ButtonKind::Primary : ButtonKind::Secondary, ButtonSize::Fit)) {
         s_view = view;
     }
 }
@@ -138,12 +140,13 @@ void render_group_row(const StatusGroup& group, const SummaryNames& names, Statu
 
 void render_statuses(const meter::EncounterSummary& summary, float height, bool tracking_on) {
     const float top = ImGui::GetCursorPosY();
+    const char* buffs_label = ICON_SHIELD "  Buffs on party##StatusView1";
+    const char* enemies_label = ICON_TARGET "  On enemies##StatusView2";
     view_button(ICON_WARNING "  Debuffs on party##StatusView0", StatusView::PartyDebuffs);
-    const float button_w = m(160.0f);
-    same_line_if_room(button_w);
-    view_button(ICON_SHIELD "  Buffs on party##StatusView1", StatusView::PartyBuffs);
-    same_line_if_room(button_w);
-    view_button(ICON_TARGET "  On enemies##StatusView2", StatusView::EnemyDebuffs);
+    same_line_if_room(button_width(buffs_label, ButtonSize::Fit));
+    view_button(buffs_label, StatusView::PartyBuffs);
+    same_line_if_room(button_width(enemies_label, ButtonSize::Fit));
+    view_button(enemies_label, StatusView::EnemyDebuffs);
     ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
     const float body_h = std::max(height - (ImGui::GetCursorPosY() - top), ImGui::GetTextLineHeight() * 3.0f);
 

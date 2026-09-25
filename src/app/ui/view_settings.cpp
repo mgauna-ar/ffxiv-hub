@@ -83,11 +83,12 @@ void render_config_card(AppState& app_state) {
     text_colored_u32(colors::TextDim, "%%APPDATA%%/ffxiv-hub/config.json");
     ImGui::Dummy(ImVec2(0.0f, m(6.0f)));
 
+    const char* reload_label = ICON_REFRESH "  Reload from disk";
     if (button(ICON_SAVE "  Save now", ButtonKind::Secondary, ButtonSize::Medium)) {
         app_state.config_manager().save();
     }
-    same_line_if_room(m(metrics::ButtonLg));
-    if (button(ICON_REFRESH "  Reload from disk", ButtonKind::Secondary, ButtonSize::Large)) {
+    same_line_if_room(button_width(reload_label, ButtonSize::Medium));
+    if (button(reload_label, ButtonKind::Secondary, ButtonSize::Medium)) {
         app_state.config_manager().load();
         // The payload holds its own copy and autosaves over hand edits, so it has
         // to be told as well.
@@ -99,18 +100,20 @@ void render_config_card(AppState& app_state) {
     }
 
     ImGui::Dummy(ImVec2(0.0f, m(8.0f)));
-    if (button(ICON_RESET "  Reset all settings", ButtonKind::Danger, ButtonSize::Large)) {
+    const char* unload_label = ICON_POWER "  Unload payload";
+    if (button(ICON_RESET "  Reset all settings", ButtonKind::Danger, ButtonSize::Medium)) {
         ImGui::OpenPopup("##ConfirmResetDefaults");
     }
-    same_line_if_room(m(metrics::ButtonMd));
+    same_line_if_room(button_width(unload_label, ButtonSize::Medium));
 
     // Previously the only way to unload the payload was killing the game.
     ImGui::BeginDisabled(!app_state.is_connected());
-    if (button(ICON_POWER "  Unload payload", ButtonKind::Danger, ButtonSize::Medium)) {
+    if (button(unload_label, ButtonKind::Danger, ButtonSize::Medium)) {
         app_state.send_unhook_and_exit();
     }
     ImGui::EndDisabled();
-    if (ImGui::IsItemHovered() && !app_state.is_connected()) {
+    // A disabled item reports no hover without this flag.
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !app_state.is_connected()) {
         ImGui::SetTooltip("No payload is currently attached.");
     }
 
@@ -143,13 +146,17 @@ void render_config_card(AppState& app_state) {
 
 void render_log_card() {
     begin_card("##LogCard", ImVec2(0.0f, fill_h(0.0f)));
+    const char* open_log_label = ICON_FILE "  Open log in editor";
+    const char* logs_folder_label = ICON_FOLDER "  Logs folder";
+    const float logs_folder_w = button_width(logs_folder_label, ButtonSize::Medium);
     begin_section_header(ICON_TERMINAL, "DIAGNOSTIC LOG",
-                         m(metrics::ButtonLg) + m(metrics::ButtonMd) + m(8.0f), colors::Warning);
-    if (button(ICON_FILE "  Open log in editor", ButtonKind::Secondary, ButtonSize::Large)) {
+                         button_width(open_log_label, ButtonSize::Medium) + m(8.0f) + logs_folder_w,
+                         colors::Warning);
+    if (button(open_log_label, ButtonKind::Secondary, ButtonSize::Medium)) {
         os::Logger::open_log_file();
     }
-    same_line_if_room(m(metrics::ButtonMd));
-    if (button(ICON_FOLDER "  Logs folder", ButtonKind::Secondary, ButtonSize::Medium)) {
+    same_line_if_room(logs_folder_w);
+    if (button(logs_folder_label, ButtonKind::Secondary, ButtonSize::Medium)) {
         os::Logger::open_config_folder();
     }
     end_section_header();

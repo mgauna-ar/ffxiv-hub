@@ -24,7 +24,7 @@ enum class MeterMetric : uint8_t {
  * frame presentation. Features:
  * - A single table, damage or healing (effective vs overheal), picked in the app
  * - Job/Role colored full-row horizontal progress bars
- * - Dynamic row heights (24px to 34px) and TrueType fonts
+ * - Fonts, headers, columns and row heights that follow the overlay scale
  * - Single-row responsive top bar
  */
 class CombatOverlay : public hub::ui::OverlayBase {
@@ -96,11 +96,15 @@ private:
     std::chrono::steady_clock::time_point m_last_refresh{};
 
 #ifdef _WIN32
-    void render_top_bar(const EncounterSummary& current);
-    void render_damage_table(const EncounterSummary& summary);
-    void render_healing_table(const EncounterSummary& summary);
+    /// Scale each table's columns were last laid out at. Render thread only.
+    float m_damage_layout_scale{0.0f};
+    float m_healing_layout_scale{0.0f};
+
+    void render_top_bar(const EncounterSummary& current, float scale);
+    void render_damage_table(const EncounterSummary& summary, float scale);
+    void render_healing_table(const EncounterSummary& summary, float scale);
     void render_row_progress_bar(float fraction, uint32_t color_u32);
-    [[nodiscard]] float row_height() const;
+    [[nodiscard]] float row_height(float scale) const;
 #endif
 };
 

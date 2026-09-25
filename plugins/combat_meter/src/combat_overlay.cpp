@@ -98,19 +98,24 @@ void render_job_cell(const CombatantStats& c, const hub::common::ui::CombatantSt
     }
 }
 
-/// Table headers render in bold; the body font is whatever the window pushed.
-void push_header_font() {
-    ImFont* bold = hub::payload::OverlayHost::instance().font_bold();
-    if (bold != nullptr && bold != ImGui::GetFont()) {
-        ImGui::PushFont(bold);
-    }
+/// Table headers render in bold at the rows' own size tier; the base bold font
+/// left them smaller than the rows once the meter was scaled up. Returns whether
+/// it pushed, since above the base tier the rows are bold already.
+bool push_header_font(float scale) {
+    ImFont* bold = hub::payload::OverlayHost::instance().font_for_scale(scale, /*bold_base=*/true).font;
+    if (bold == nullptr || bold == ImGui::GetFont()) return false;
+    ImGui::PushFont(bold);
+    return true;
 }
 
-void pop_header_font() {
-    ImFont* bold = hub::payload::OverlayHost::instance().font_bold();
-    if (bold != nullptr && bold == ImGui::GetFont()) {
-        ImGui::PopFont();
+/// A resizable table takes its TableSetupColumn widths only when it is created,
+/// so a scale change resets it to be laid out again at the new widths.
+void relayout_on_scale_change(const char* table_id, float scale, float& laid_out_at) {
+    if (laid_out_at == scale) return;
+    if (ImGuiTable* table = ImGui::TableFindByID(ImGui::GetID(table_id))) {
+        table->IsResetAllRequest = true;
     }
+    laid_out_at = scale;
 }
 
 void format_number(char* buf, size_t n, uint64_t val) {
@@ -157,9 +162,10 @@ void center_in_row(float row_h) {
 
 } // namespace
 
-float CombatOverlay::row_height() const {
-    // Rows track the rendered text so they stay proportionate as scale changes.
-    return std::clamp(ImGui::GetTextLineHeightWithSpacing() + 6.0f, 24.0f, 34.0f);
+float CombatOverlay::row_height(float scale) const {
+    // Rows track the rendered text, padding included, so they stay proportionate
+    // as scale changes.
+    return ImGui::GetTextLineHeightWithSpacing() + 6.0f * scale;
 }
 
 
@@ -183,10 +189,11 @@ void CombatOverlay::render_row_progress_bar(float fraction, uint32_t color_u32) 
     ImGui::GetWindowDrawList()->AddRectFilled(row_min, row_max, color_u32, 0.0f);
 }
 
-void CombatOverlay::render_top_bar(const EncounterSummary& current) {
+void CombatOverlay::render_top_bar(const EncounterSummary& current, float scale) {
+    // Breakpoints grow with the text they make room for.
     const float avail_w = ImGui::GetWindowWidth();
-    const bool compact = avail_w < 520.0f;
-    const bool roomy = avail_w >= 700.0f;
+    const bool compact = avail_w < 520.0f * scale;
+    const bool roomy = avail_w >= 700.0f * scale;
     const bool healing = (m_metric.load() == MeterMetric::Healing);
 
     // Status pill: whether the numbers below are still moving.
@@ -230,7 +237,7 @@ void CombatOverlay::render_top_bar(const EncounterSummary& current) {
     }
 }
 
-void CombatOverlay::render_damage_table(const EncounterSummary& summary) {
+void CombatOverlay::render_damage_table(const EncounterSummary& summary, float scale) {
     const auto players = sorted_combatants(summary, m_party_only.load(), /*by_healing=*/false, m_hide_inactive.load());
     const double top_dps = players.empty() ? 1.0 : std::max(players.front()->dps, 1.0);
 
@@ -246,23 +253,25 @@ void CombatOverlay::render_damage_table(const EncounterSummary& summary) {
                             ImGuiTableFlags_Resizable |
                             ImGuiTableFlags_SizingStretchSame;
 
-    if (ImGui::BeginTable("##DmgTable", columns, flags, ImVec2(0, 0))) {
-        ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 22.0f);
-        ImGui::TableSetupColumn("Job", ImGuiTableColumnFlags_WidthFixed, 36.0f);
+    const char* table_id = "##DmgTable";
+    relayout_on_scale_change(table_id, scale, m_damage_layout_scale);
+    if (ImGui::BeginTable(table_id, columns, flags, ImVec2(0, 0))) {
+        ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 22.0f * scale);
+        ImGui::TableSetupColumn("Job", ImGuiTableColumnFlags_WidthFixed, 36.0f * scale);
         ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("DPS", ImGuiTableColumnFlags_WidthFixed, 70.0f);
-        ImGui::TableSetupColumn("Damage", ImGuiTableColumnFlags_WidthFixed, 70.0f);
-        if (col_share) ImGui::TableSetupColumn("Share", ImGuiTableColumnFlags_WidthFixed, 56.0f);
-        if (col_crit) ImGui::TableSetupColumn("Crit", ImGuiTableColumnFlags_WidthFixed, 50.0f);
-        if (col_dh) ImGui::TableSetupColumn("DH", ImGuiTableColumnFlags_WidthFixed, 46.0f);
-        if (col_cdh) ImGui::TableSetupColumn("CDH", ImGuiTableColumnFlags_WidthFixed, 48.0f);
+        ImGui::TableSetupColumn("DPS", ImGuiTableColumnFlags_WidthFixed, 70.0f * scale);
+        ImGui::TableSetupColumn("Damage", ImGuiTableColumnFlags_WidthFixed, 70.0f * scale);
+        if (col_share) ImGui::TableSetupColumn("Share", ImGuiTableColumnFlags_WidthFixed, 56.0f * scale);
+        if (col_crit) ImGui::TableSetupColumn("Crit", ImGuiTableColumnFlags_WidthFixed, 50.0f * scale);
+        if (col_dh) ImGui::TableSetupColumn("DH", ImGuiTableColumnFlags_WidthFixed, 46.0f * scale);
+        if (col_cdh) ImGui::TableSetupColumn("CDH", ImGuiTableColumnFlags_WidthFixed, 48.0f * scale);
         ImGui::TableSetupScrollFreeze(0, 1);
 
-        push_header_font();
+        const bool header_font = push_header_font(scale);
         ImGui::TableHeadersRow();
-        pop_header_font();
+        if (header_font) ImGui::PopFont();
 
-        const float row_h = row_height();
+        const float row_h = row_height(scale);
         int rank = 1;
         for (const CombatantStats* player : players) {
             ImGui::TableNextRow(0, row_h);
@@ -320,7 +329,7 @@ void CombatOverlay::render_damage_table(const EncounterSummary& summary) {
     }
 }
 
-void CombatOverlay::render_healing_table(const EncounterSummary& summary) {
+void CombatOverlay::render_healing_table(const EncounterSummary& summary, float scale) {
     const auto healers = sorted_combatants(summary, m_party_only.load(), /*by_healing=*/true, m_hide_inactive.load());
     const double top_hps = healers.empty() ? 1.0 : std::max(healers.front()->hps, 1.0);
 
@@ -333,22 +342,24 @@ void CombatOverlay::render_healing_table(const EncounterSummary& summary) {
                             ImGuiTableFlags_Resizable |
                             ImGuiTableFlags_SizingStretchSame;
 
-    if (ImGui::BeginTable("##HealTable", columns, flags, ImVec2(0, 0))) {
-        ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 22.0f);
-        ImGui::TableSetupColumn("Job", ImGuiTableColumnFlags_WidthFixed, 36.0f);
+    const char* table_id = "##HealTable";
+    relayout_on_scale_change(table_id, scale, m_healing_layout_scale);
+    if (ImGui::BeginTable(table_id, columns, flags, ImVec2(0, 0))) {
+        ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 22.0f * scale);
+        ImGui::TableSetupColumn("Job", ImGuiTableColumnFlags_WidthFixed, 36.0f * scale);
         ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("HPS", ImGuiTableColumnFlags_WidthFixed, 70.0f);
-        ImGui::TableSetupColumn("Heal", ImGuiTableColumnFlags_WidthFixed, 70.0f);
-        ImGui::TableSetupColumn("Overheal", ImGuiTableColumnFlags_WidthFixed, 70.0f);
-        ImGui::TableSetupColumn("OH%", ImGuiTableColumnFlags_WidthFixed, 56.0f);
-        if (col_crit) ImGui::TableSetupColumn("Crit", ImGuiTableColumnFlags_WidthFixed, 50.0f);
+        ImGui::TableSetupColumn("HPS", ImGuiTableColumnFlags_WidthFixed, 70.0f * scale);
+        ImGui::TableSetupColumn("Heal", ImGuiTableColumnFlags_WidthFixed, 70.0f * scale);
+        ImGui::TableSetupColumn("Overheal", ImGuiTableColumnFlags_WidthFixed, 70.0f * scale);
+        ImGui::TableSetupColumn("OH%", ImGuiTableColumnFlags_WidthFixed, 56.0f * scale);
+        if (col_crit) ImGui::TableSetupColumn("Crit", ImGuiTableColumnFlags_WidthFixed, 50.0f * scale);
         ImGui::TableSetupScrollFreeze(0, 1);
 
-        push_header_font();
+        const bool header_font = push_header_font(scale);
         ImGui::TableHeadersRow();
-        pop_header_font();
+        if (header_font) ImGui::PopFont();
 
-        const float row_h = row_height();
+        const float row_h = row_height(scale);
         int rank = 1;
         for (const CombatantStats* player : healers) {
             ImGui::TableNextRow(0, row_h);
@@ -469,13 +480,13 @@ void CombatOverlay::render() {
             }
         }
 
-        render_top_bar(m_cached_summary);
+        render_top_bar(m_cached_summary, scale);
         ImGui::Separator();
 
         if (m_metric.load() == MeterMetric::Healing) {
-            render_healing_table(m_cached_summary);
+            render_healing_table(m_cached_summary, scale);
         } else {
-            render_damage_table(m_cached_summary);
+            render_damage_table(m_cached_summary, scale);
         }
     }
     ImGui::End();

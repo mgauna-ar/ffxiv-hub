@@ -81,7 +81,7 @@ constexpr float ChipSize    = 28.0f;  // icon chip square
 constexpr float ChipSizeLg  = 36.0f;
 constexpr float RowHeight   = 30.0f;  // one settings row's control
 constexpr float ButtonH     = 30.0f;
-constexpr float ButtonSm    = 110.0f;
+constexpr float ButtonSm    = 110.0f; // button widths are minimums; see button_width()
 constexpr float ButtonMd    = 150.0f;
 constexpr float ButtonLg    = 200.0f;
 constexpr float ControlW    = 186.0f; // right-hand control column in a settings row
@@ -94,6 +94,8 @@ constexpr float CardMinW    = 260.0f; // narrowest a card in a grid is allowed t
 constexpr float HeaderActionMinW = 360.0f; // below this a page header's action drops to its own line
 constexpr float WindowMinW  = 880.0f; // smallest client area the layout is designed for
 constexpr float WindowMinH  = 600.0f;
+constexpr float WindowDefaultW = 1000.0f; // client area the window opens at
+constexpr float WindowDefaultH = 640.0f;
 } // namespace metrics
 
 /// Applies sleek Slate Dark styling to Dear ImGui context

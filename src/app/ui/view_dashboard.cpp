@@ -226,7 +226,7 @@ void render_plugin_cards(AppState& app_state) {
     }
 
     // Cards stack rather than halve an already narrow window.
-    const int columns = grid_columns(static_cast<int>(plugins.size()), metrics::CardMinW);
+    const int columns = balanced_columns(static_cast<int>(plugins.size()), metrics::CardMinW);
     const float card_w = split_w(columns);
 
     for (size_t i = 0; i < plugins.size(); ++i) {
@@ -247,11 +247,15 @@ void render_plugin_cards(AppState& app_state) {
 
 void render_view_dashboard(AppState& app_state) {
 #ifdef HAVE_IMGUI
+    const char* rescan_label = ICON_REFRESH "  Re-scan";
     begin_page_header(ICON_DASHBOARD, "System Dashboard",
                       "Runtime supervision for the hub itself; plugin telemetry lives in its own view",
-                      m(metrics::ButtonMd));
-    if (button(ICON_REFRESH "  Re-scan", ButtonKind::Secondary, ButtonSize::Medium)) {
-        app_state.update();
+                      button_width(rescan_label, ButtonSize::Medium));
+    if (button(rescan_label, ButtonKind::Secondary, ButtonSize::Medium)) {
+        app_state.rescan();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Looks for the game now. The hub also checks every second on its own.");
     }
     end_page_header();
     ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
@@ -268,7 +272,7 @@ void render_view_dashboard(AppState& app_state) {
     render_plugin_cards(app_state);
 
     ImGui::Dummy(ImVec2(0.0f, m(metrics::Gutter)));
-    if (button(ICON_FOLDER "  Open logs folder", ButtonKind::Secondary, ButtonSize::Large)) {
+    if (button(ICON_FOLDER "  Open logs folder", ButtonKind::Secondary, ButtonSize::Medium)) {
         os::Logger::open_config_folder();
     }
     ImGui::SameLine(0.0f, m(8.0f));
@@ -276,11 +280,13 @@ void render_view_dashboard(AppState& app_state) {
         os::Logger::open_log_file();
     }
     ImGui::SameLine();
-    const float pipe_w = m(240.0f);
+    const char* pipe_label = "\\\\.\\pipe\\ffxiv_hub_pipe  -  FFXH v1";
+    const float pipe_w = ImGui::CalcTextSize(pipe_label).x;
     if (ImGui::GetContentRegionAvail().x > pipe_w) {
         right_align(pipe_w);
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + m(7.0f));
-        text_colored_u32(colors::TextFaint, "\\\\.\\pipe\\ffxiv_hub_pipe  -  FFXH v1");
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() +
+                             (m(metrics::ButtonH) - ImGui::GetTextLineHeight()) * 0.5f);
+        text_colored_u32(colors::TextFaint, "%s", pipe_label);
     } else {
         ImGui::NewLine();
     }

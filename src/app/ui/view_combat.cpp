@@ -336,14 +336,20 @@ void render_top_bar(AppState& app_state, const meter::EncounterSummary& summary,
          summary.deaths.empty() ? colors::TextPrimary : colors::DangerLight);
 
     const Badge state = encounter_state_badge(summary.state);
-    const float actions_w = pill_width(state.label) + m(10.0f) + m(metrics::ButtonMd);
+    const char* reset_label = ICON_RESET "  Reset encounter";
+    const float actions_w = pill_width(state.label) + m(10.0f) +
+                            button_width(reset_label, ButtonSize::Medium);
     if (same_line_if_room(actions_w, metrics::Gutter)) {
         right_align(actions_w);
         ImGui::SetCursorPosY(line_top + m(3.0f));
     }
+    // The pill is shorter than the button, so it is centred on it.
+    const float actions_y = ImGui::GetCursorPosY();
+    ImGui::SetCursorPosY(actions_y + (m(metrics::ButtonH) - pill_height()) * 0.5f);
     pill(state.label, state.color);
     ImGui::SameLine(0.0f, m(10.0f));
-    if (button(ICON_RESET "  Reset encounter", ButtonKind::Danger, ButtonSize::Medium)) {
+    ImGui::SetCursorPosY(actions_y);
+    if (button(reset_label, ButtonKind::Danger, ButtonSize::Medium)) {
         app_state.reset_encounter();
         s_selected_pull_id = 0;
         s_selected_drilldown_entity = 0;
@@ -688,8 +694,10 @@ void render_drilldown(const meter::EncounterSummary& summary, Drilldown kind) {
     char header[128];
     std::snprintf(header, sizeof(header), "%s BREAKDOWN - %s", healing ? "HEALING" : "ABILITY",
                   selected->name.c_str());
-    begin_section_header(ICON_CROSSHAIR, header, m(metrics::ButtonSm), combatant_color(*selected));
-    if (button(ICON_CIRCLE_X "  Close", ButtonKind::Secondary, ButtonSize::Small)) {
+    const char* close_label = ICON_CIRCLE_X "  Close";
+    begin_section_header(ICON_CROSSHAIR, header, button_width(close_label, ButtonSize::Small),
+                         combatant_color(*selected));
+    if (button(close_label, ButtonKind::Secondary, ButtonSize::Small)) {
         s_selected_drilldown_entity = 0;
     }
     end_section_header();

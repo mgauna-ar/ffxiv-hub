@@ -293,6 +293,11 @@ void AppState::update() {
     }
 }
 
+void AppState::rescan() {
+    m_last_process_check = {};
+    check_game_process();
+}
+
 void AppState::check_game_process() {
     const auto now = std::chrono::steady_clock::now();
     if (std::chrono::duration_cast<std::chrono::milliseconds>(now - m_last_process_check).count() < 1000) {

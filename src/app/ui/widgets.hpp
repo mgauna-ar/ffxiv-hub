@@ -40,6 +40,10 @@ bool same_line_if_room(float item_width, float spacing = 8.0f);
 /// dropping below `min_col` unscaled pixels. Always at least one.
 [[nodiscard]] int grid_columns(int desired, float min_col);
 
+/// grid_columns() for `count` items that wrap: rows come out as even as they can,
+/// so four tiles go two and two rather than three and an orphan.
+[[nodiscard]] int balanced_columns(int count, float min_col);
+
 // ---------------------------------------------------------------- tables ----
 
 /// Table sizing that degrades to horizontal scrolling instead of crushing its
@@ -88,9 +92,10 @@ void icon_chip(const char* icon, uint32_t accent, float size = metrics::ChipSize
 void section_header(const char* icon, const char* label, uint32_t accent = colors::Accent);
 
 /// Same header, with a right-aligned action slot of `action_width` on the header's
-/// own line. The caller emits its buttons between the two calls.
+/// own line. The caller emits its buttons between the two calls. The row is one
+/// button tall, with the chip and label centred on it and the slot at its top.
 ///
-///     begin_section_header(ICON_TERMINAL, "DIAGNOSTIC LOG", m(metrics::ButtonLg));
+///     begin_section_header(ICON_TERMINAL, "DIAGNOSTIC LOG", button_width("Open log"));
 ///     if (button("Open log")) { ... }
 ///     end_section_header();
 void begin_section_header(const char* icon, const char* label, float action_width,
@@ -116,6 +121,9 @@ void pill(const char* text, uint32_t color);
 
 /// Width pill() takes for `text` when it is not clamped, for right-aligning one.
 [[nodiscard]] float pill_width(const char* text);
+
+/// Height of every pill, for centring one against a taller neighbour.
+[[nodiscard]] float pill_height();
 
 /// Gradient bar behind the current table row, left-aligned, a fraction of the full
 /// row width. Call straight after TableNextRow(); it leaves the cursor in column 0.
@@ -153,12 +161,18 @@ void empty_state(const char* icon, const char* title, const char* hint);
 bool toggle(const char* id, bool* value);
 
 enum class ButtonKind { Primary, Secondary, Danger };
-/// Icon is a frame-height square for a lone glyph; give it a tooltip.
+/// Small, Medium and Large are minimum widths: a longer label widens the button
+/// rather than being clipped. Icon is a frame-height square for a lone glyph;
+/// give it a tooltip.
 enum class ButtonSize { Small, Medium, Large, Fit, Icon };
 
 /// The app's only button. Retires the nine ad-hoc ImVec2 sizes.
 bool button(const char* label, ButtonKind kind = ButtonKind::Secondary,
             ButtonSize size = ButtonSize::Medium);
+
+/// Width button() will take for this label and size. Reserve space for a button
+/// with this, never with the nominal metrics::Button* width.
+[[nodiscard]] float button_width(const char* label, ButtonSize size = ButtonSize::Medium);
 
 // -------------------------------------------------------------- settings ----
 

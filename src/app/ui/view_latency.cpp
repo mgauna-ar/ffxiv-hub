@@ -143,12 +143,23 @@ void render_rtt_graph(const std::vector<ipc::MitigatorTelemetryPayload>& samples
     ImGui::Dummy(canvas_size);
 }
 
+/// Width legend_entry() takes, so the header slot fits the legend exactly.
+float legend_entry_width(const char* label) {
+    return m(18.0f) + m(5.0f) + ImGui::CalcTextSize(label).x;
+}
+
+/// One legend key in a section header's action slot. That row is a button tall
+/// and SameLine returns to its top, so each entry centres itself on it.
 void legend_entry(const char* label, uint32_t color) {
+    const float y = ImGui::GetCursorPosY() +
+                    (m(metrics::ButtonH) - ImGui::GetTextLineHeight()) * 0.5f;
+    ImGui::SetCursorPosY(y);
     const ImVec2 p = ImGui::GetCursorScreenPos();
-    const float y = p.y + ImGui::GetTextLineHeight() * 0.5f;
-    ImGui::GetWindowDrawList()->AddLine(ImVec2(p.x, y), ImVec2(p.x + m(14.0f), y), color, m(2.2f));
+    const float mid = p.y + ImGui::GetTextLineHeight() * 0.5f;
+    ImGui::GetWindowDrawList()->AddLine(ImVec2(p.x, mid), ImVec2(p.x + m(14.0f), mid), color, m(2.2f));
     ImGui::Dummy(ImVec2(m(18.0f), ImGui::GetTextLineHeight()));
     ImGui::SameLine(0.0f, m(5.0f));
+    ImGui::SetCursorPosY(y);
     text_colored_u32(colors::TextDim, "%s", label);
 }
 
@@ -306,7 +317,9 @@ void render_live_tab(AppState& app_state, const AppState::MitigatorMetrics& metr
     const float graph_card_h = std::max(remaining * 0.46f, m(150.0f));
 
     begin_card("##RttGraphCard", ImVec2(0.0f, graph_card_h));
-    begin_section_header(ICON_TRENDING, "ROUND-TRIP TIME HISTORY", m(260.0f));
+    const float legend_w = legend_entry_width("smoothed") + legend_entry_width("measured") +
+                           legend_entry_width("target") + m(12.0f) * 2.0f;
+    begin_section_header(ICON_TRENDING, "ROUND-TRIP TIME HISTORY", legend_w);
     legend_entry("smoothed", colors::AccentHover);
     ImGui::SameLine(0.0f, m(12.0f));
     legend_entry("measured", colors::with_alpha(colors::AccentHover, 0.38f));

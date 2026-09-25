@@ -12,6 +12,7 @@
 #include "common/os/single_instance.hpp"
 #include "common/os/tray_manager.hpp"
 #include "common/config/config_manager.hpp"
+#include <algorithm>
 #include <iostream>
 #include <string>
 
@@ -157,7 +158,9 @@ LRESULT WINAPI MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             RECT frame{ 0, 0,
                         static_cast<LONG>(hub::app::ui::metrics::WindowMinW * g_dpi_scale),
                         static_cast<LONG>(hub::app::ui::metrics::WindowMinH * g_dpi_scale) };
-            AdjustWindowRect(&frame, WS_OVERLAPPEDWINDOW, FALSE);
+            // The frame at the window's own DPI, not the system's.
+            AdjustWindowRectExForDpi(&frame, WS_OVERLAPPEDWINDOW, FALSE, WS_EX_APPWINDOW,
+                                     GetDpiForWindow(hWnd));
             mmi->ptMinTrackSize.x = frame.right - frame.left;
             mmi->ptMinTrackSize.y = frame.bottom - frame.top;
             return 0;
@@ -279,6 +282,28 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     // at a fixed 96-DPI pixel size on today's scaled displays.
     const float dpi_scale = static_cast<float>(GetDpiForWindow(hwnd)) / 96.0f;
     g_dpi_scale = dpi_scale;
+
+    // CreateWindowExW sizes in physical pixels, so its size is only right at 100%;
+    // at 150% the window opened below the layout's own minimum. Re-applied here in
+    // scaled units before the first show, clamped to the work area and centred.
+    {
+        RECT frame{ 0, 0,
+                    static_cast<LONG>(hub::app::ui::metrics::WindowDefaultW * dpi_scale),
+                    static_cast<LONG>(hub::app::ui::metrics::WindowDefaultH * dpi_scale) };
+        AdjustWindowRectExForDpi(&frame, WS_OVERLAPPEDWINDOW, FALSE, WS_EX_APPWINDOW,
+                                 GetDpiForWindow(hwnd));
+        MONITORINFO monitor{};
+        monitor.cbSize = sizeof(monitor);
+        if (GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &monitor)) {
+            const RECT& work = monitor.rcWork;
+            const LONG width = std::min(frame.right - frame.left, work.right - work.left);
+            const LONG height = std::min(frame.bottom - frame.top, work.bottom - work.top);
+            SetWindowPos(hwnd, nullptr,
+                         work.left + (work.right - work.left - width) / 2,
+                         work.top + (work.bottom - work.top - height) / 2,
+                         width, height, SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+    }
 
     // Best-effort: make the native titlebar match the app's dark theme instead of the default
     // light chrome. No-ops silently on pre-1809 Windows.

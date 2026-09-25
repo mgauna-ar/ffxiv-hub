@@ -76,7 +76,8 @@ bool same_line_if_room(float item_width, float spacing) {
     // The test has to happen after SameLine: until the cursor is back on the line
     // the remaining width is the full row, and nothing ever looks like it wraps.
     ImGui::SameLine(0.0f, m(spacing));
-    if (ImGui::GetContentRegionAvail().x >= item_width) return true;
+    // Half a pixel of slack: a slot sized to fit exactly must not wrap on rounding.
+    if (ImGui::GetContentRegionAvail().x + 0.5f >= item_width) return true;
     ImGui::NewLine();
     ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
     return false;
@@ -88,6 +89,13 @@ int grid_columns(int desired, float min_col) {
     const float step = m(min_col) + m(metrics::Gutter);
     int columns = static_cast<int>((avail + m(metrics::Gutter)) / step);
     return std::clamp(columns, 1, desired);
+}
+
+int balanced_columns(int count, float min_col) {
+    if (count <= 1) return 1;
+    const int fit = grid_columns(count, min_col);
+    const int rows = (count + fit - 1) / fit;
+    return (count + rows - 1) / rows;
 }
 
 int settings_columns(int max_columns) {
@@ -209,10 +217,19 @@ void icon_chip(const char* icon, uint32_t accent, float size) {
 void begin_section_header(const char* icon, const char* label, float action_width, uint32_t accent) {
     const float chip = metrics::ChipSize * 0.78f;
     const float start_y = ImGui::GetCursorPosY();
+    // With an action slot the row is a button tall, so the label shares the
+    // buttons' midline instead of riding above it.
+    const float row_h = action_width > 0.0f ? std::max(m(chip), m(metrics::ButtonH)) : m(chip);
+    const float chip_y = start_y + (row_h - m(chip)) * 0.5f;
+    // Anchors the line at the row's top. SameLine returns every later item there,
+    // so a second button in the slot lines up with the first.
+    ImGui::Dummy(ImVec2(0.0f, 0.0f));
+    ImGui::SameLine(0.0f, 0.0f);
+    ImGui::SetCursorPosY(chip_y);
     icon_chip(icon, accent, chip);
 
     ImGui::SameLine(0.0f, m(9.0f));
-    ImGui::SetCursorPosY(start_y + (m(chip) - ImGui::GetTextLineHeight()) * 0.5f);
+    ImGui::SetCursorPosY(chip_y + (m(chip) - ImGui::GetTextLineHeight()) * 0.5f);
     ImGui::PushFont(bold_font());
     text_colored_u32(colors::TextBody, "%s", label);
     ImGui::PopFont();
@@ -221,7 +238,8 @@ void begin_section_header(const char* icon, const char* label, float action_widt
     ImGui::SameLine(0.0f, m(10.0f));
     const ImVec2 rule = ImGui::GetCursorScreenPos();
     const float rule_w = std::max(ImGui::GetContentRegionAvail().x - action_width, m(8.0f));
-    const float rule_y = rule.y + ImGui::GetTextLineHeight() * 0.5f;
+    // SameLine puts the cursor back on the row's top, not the label's.
+    const float rule_y = rule.y + row_h * 0.5f;
     ImGui::GetWindowDrawList()->AddRectFilledMultiColor(
         ImVec2(rule.x, rule_y), ImVec2(rule.x + rule_w, rule_y + m(1.0f)),
         colors::with_alpha(accent, 0.35f), colors::with_alpha(accent, 0.0f),
@@ -235,7 +253,9 @@ void begin_section_header(const char* icon, const char* label, float action_widt
 }
 
 void end_section_header() {
-    ImGui::NewLine();
+    // An action slot's last item has already ended the line, and a NewLine after
+    // it would add a blank line under only the headers that have actions.
+    if (ImGui::GetCurrentWindow()->DC.IsSameLine) ImGui::NewLine();
     ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
 }
 
@@ -302,11 +322,14 @@ float pill_width(const char* text) {
     return ImGui::CalcTextSize(text).x + m(9.0f) * 2.0f + m(3.0f) * 4.0f;
 }
 
+float pill_height() {
+    return ImGui::GetTextLineHeight() + m(6.0f);
+}
+
 void pill(const char* text, uint32_t color) {
-    const ImVec2 label = ImGui::CalcTextSize(text);
     const float pad_x = m(9.0f);
     const float dot_r = m(3.0f);
-    const float height = label.y + m(6.0f);
+    const float height = pill_height();
     // Clamped to the space available: a status string long enough to overflow its
     // container would otherwise push a scrollbar onto the whole panel.
     const float width = std::min(pill_width(text),
@@ -397,7 +420,7 @@ void stat_tile(const char* id, float width, const char* icon, const char* label,
 void stat_tile_row(const StatTileSpec* tiles, size_t count) {
     if (tiles == nullptr || count == 0) return;
 
-    const int columns = grid_columns(static_cast<int>(count), metrics::TileMinW);
+    const int columns = balanced_columns(static_cast<int>(count), metrics::TileMinW);
     const float width = split_w(columns);
     for (size_t i = 0; i < count; ++i) {
         const bool first_in_row = (i % static_cast<size_t>(columns)) == 0;
@@ -478,16 +501,27 @@ bool toggle(const char* id, bool* value) {
     return changed;
 }
 
-bool button(const char* label, ButtonKind kind, ButtonSize size) {
-    float width = 0.0f;
-    float height = m(metrics::ButtonH);
+float button_width(const char* label, ButtonSize size) {
+    if (size == ButtonSize::Icon) return ImGui::GetFrameHeight();
+
+    // Only the visible part counts: ImGui hides everything from "##" on.
+    const float fit = ImGui::CalcTextSize(label, nullptr, true).x +
+                      ImGui::GetStyle().FramePadding.x * 2.0f;
     switch (size) {
-        case ButtonSize::Small:  width = m(metrics::ButtonSm); break;
-        case ButtonSize::Medium: width = m(metrics::ButtonMd); break;
-        case ButtonSize::Large:  width = m(metrics::ButtonLg); break;
-        case ButtonSize::Fit:    width = 0.0f; break;
-        case ButtonSize::Icon:   width = height = ImGui::GetFrameHeight(); break;
+        case ButtonSize::Small:  return std::max(m(metrics::ButtonSm), fit);
+        case ButtonSize::Medium: return std::max(m(metrics::ButtonMd), fit);
+        case ButtonSize::Large:  return std::max(m(metrics::ButtonLg), fit);
+        case ButtonSize::Fit:
+        case ButtonSize::Icon:   break;
     }
+    return fit;
+}
+
+bool button(const char* label, ButtonKind kind, ButtonSize size) {
+    // A label wider than its size class widens the button: a fixed width let
+    // ImGui clip it at the right border.
+    const float width = button_width(label, size);
+    const float height = size == ButtonSize::Icon ? ImGui::GetFrameHeight() : m(metrics::ButtonH);
 
     switch (kind) {
         case ButtonKind::Primary:

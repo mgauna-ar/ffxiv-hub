@@ -63,6 +63,9 @@ public:
     /// Periodically called on UI/Main thread to supervise game process and connection
     void update();
 
+    /// Runs the game process check now rather than on its next one-second tick.
+    void rescan();
+
     // Navigation
     [[nodiscard]] DesktopView current_view() const noexcept { return m_current_view; }
     void set_current_view(DesktopView view) noexcept { m_current_view = view; }

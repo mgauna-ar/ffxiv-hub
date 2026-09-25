@@ -78,11 +78,11 @@ bool render_plugin_disabled_gate(AppState& app_state, PluginId id, const char* n
     empty_state(ICON_POWER, "Plugin disabled", hint.c_str());
 
     // Centered under the empty state, so the way back is where the eye already is.
-    const float button_w = m(metrics::ButtonLg);
+    const std::string label = std::string(ICON_PLAY "  Enable ") + name;
+    const float button_w = button_width(label.c_str(), ButtonSize::Large);
     ImGui::Dummy(ImVec2(0.0f, m(8.0f)));
     const float indent = std::max((ImGui::GetContentRegionAvail().x - button_w) * 0.5f, 0.0f);
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + indent);
-    const std::string label = std::string(ICON_PLAY "  Enable ") + name;
     if (button(label.c_str(), ButtonKind::Primary, ButtonSize::Large)) {
         app_state.set_plugin_enabled(id, true);
     }
