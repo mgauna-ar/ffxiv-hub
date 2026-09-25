@@ -426,7 +426,9 @@ ffxiv-hub/
 
 ### Tests (macOS, Linux or Windows)
 
-You need a C++20 compiler (`clang++` by default) and `make`:
+You need a C++20 compiler and `make`. Plain `make` uses make's own default compiler
+(`g++`, which is Apple clang on macOS); `make CXX=clang++` picks clang. g++ 13 and
+clang 18 to 20 all build it with warnings as errors.
 
 ```bash
 make

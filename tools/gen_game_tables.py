@@ -236,7 +236,7 @@ def gen_tables_cpp(tables, detrimental, gcd, pressed):
     blocks, functions = [], []
     for fn, rows in tables:
         entries = "\n".join(
-            f"    {{{row_id:>6}u, {cpp_string(name)}}}," for row_id, name in rows
+            f"    {{{row_id:>6}u, {cpp_string(name)}sv}}," for row_id, name in rows
         )
         upper = fn.upper()
         blocks.append(
@@ -295,6 +295,11 @@ def gen_tables_cpp(tables, detrimental, gcd, pressed):
 
 namespace hub::game {{
 namespace {{
+
+// The sv literal carries each name's length, so the constant evaluator does not walk
+// every string to find it. Built from plain literals, the Action table alone exceeds
+// clang's default -fconstexpr-steps.
+using namespace std::string_view_literals;
 
 struct Entry {{
     uint32_t id;

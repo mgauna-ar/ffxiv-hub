@@ -23,10 +23,14 @@ TEST_SRCS = $(wildcard tests/*.cpp)
 # so this is syntax-only and does not link.
 IMGUI_DIR = src/third_party/imgui
 UI_CHECK_SRCS = $(APP_SRCS)
+# clang 20's -Wnontrivial-memcall fires on imgui.h's own memset(this, ...) constructors.
+# Older clang rejects the unknown -Wno- option under -Werror and g++ has no such
+# warning, so it is only passed to a compiler that knows it.
+NO_NONTRIVIAL_MEMCALL := $(shell $(CXX) -Werror -Wnontrivial-memcall -x c++ -fsyntax-only /dev/null 2>/dev/null && echo -Wno-nontrivial-memcall)
 UI_CHECK_FLAGS = -std=c++20 -Wall -Wextra -Wpedantic -Werror \
                  -Iinclude -Isrc -Iplugins -Iplugins/latency_mitigator/include -Iplugins/combat_meter/include \
                  -I$(IMGUI_DIR) -DHAVE_IMGUI=1 -include $(IMGUI_DIR)/imgui.h \
-                 -Wno-nontrivial-memcall
+                 $(NO_NONTRIVIAL_MEMCALL)
 
 all: test
 

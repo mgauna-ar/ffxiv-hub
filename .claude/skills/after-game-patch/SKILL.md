@@ -67,6 +67,10 @@ Litany (786, a buff) and Vulnerability Up (638, a debuff); check both in the dif
 - **Action and Status are large** (~45k and ~4.8k rows), so they live in one `.cpp` with
   only a declaration in the header. Do not move them into a header: pulling 1.6 MB into
   every translation unit is the difference between a 37s build and a much worse one.
+- **Their names are `sv` literals.** A plain literal makes the constant evaluator walk
+  each name to find its length, and the Action table alone then exceeds clang's default
+  `-fconstexpr-steps`; the `sv` suffix passes the length in. Keep it if you touch
+  `gen_tables_cpp`, and check `make CXX=clang++` as well as g++.
 - **`pets.hpp` is deliberately NOT generated.** The game's `Pet` sheet also lists every
   Beastmaster tameable (`squirrel`, `crab`, `bat`, `ghost`, `behemoth`, `chimera`...),
   whose names collide with ordinary enemies; generating it would merge bosses into player

@@ -3,6 +3,7 @@
 #include <iomanip>
 #include <sstream>
 #include <cmath>
+#include <cstdio>
 #include <algorithm>
 
 #ifdef _WIN32
@@ -187,7 +188,9 @@ std::string format_percentage(double pct) {
 std::string format_duration(uint64_t seconds) {
     const uint64_t m = seconds / 60;
     const uint64_t s = seconds % 60;
-    char buf[16];
+    // Sized for the largest minute count a uint64_t yields (18 digits): g++'s
+    // -Wformat-truncation rejects anything smaller.
+    char buf[24];
     std::snprintf(buf, sizeof(buf), "%02llu:%02llu", static_cast<unsigned long long>(m), static_cast<unsigned long long>(s));
     return std::string(buf);
 }
