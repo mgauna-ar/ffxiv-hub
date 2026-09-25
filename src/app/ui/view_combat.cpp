@@ -3,6 +3,7 @@
 #include "app/ui/combat_damage_taken.hpp"
 #include "app/ui/combat_deaths.hpp"
 #include "app/ui/combat_statuses.hpp"
+#include "app/ui/combat_timeline.hpp"
 #include "app/ui/combat_view_common.hpp"
 #include "app/ui/config_binding.hpp"
 #include "common/ui/icons.hpp"
@@ -406,10 +407,6 @@ void combatant_name_cell(const meter::CombatantStats& c, const char* id_prefix) 
     }
 }
 
-meter::DpsMetric selected_dps_metric() {
-    return meter::dps_metric_from(static_cast<uint32_t>(cfg_int(METER, "dps_metric", 0)));
-}
-
 /// Every damage rate for one row, and the buff damage that separates them.
 void dps_figures_tooltip(const meter::CombatantStats& c) {
     ImGui::BeginTooltip();
@@ -668,7 +665,7 @@ void render_display_section(AppState& app_state) {
         "cDPS: aDPS plus buffs given",
     };
     int dps_metric = cfg_int(METER, "dps_metric", 0);
-    begin_setting_row("DPS metric", "The damage rate both tables show and rank by.");
+    begin_setting_row("DPS metric", "The damage rate the tables rank by and the timeline draws.");
     if (ImGui::Combo("##dps_metric", &dps_metric, dps_modes, static_cast<int>(meter::DPS_METRIC_COUNT))) {
         cfg_store(METER, "dps_metric", dps_metric);
         app_state.send_combat_dps_metric(static_cast<uint32_t>(dps_metric));
@@ -940,7 +937,7 @@ void render_pull_view(AppState& app_state, const meter::EncounterSummary& summar
 void render_view_combat(AppState& app_state) {
 #ifdef HAVE_IMGUI
     render_plugin_header(app_state, PluginId::CombatMeter, ICON_SWORDS, "Combat Meter",
-                         "Per-pull damage, healing, deaths, buffs, debuffs and casts");
+                         "Per-pull damage, healing, deaths, buffs, casts and a timeline");
     if (render_plugin_disabled_gate(app_state, PluginId::CombatMeter, "Combat Meter")) {
         return;
     }
@@ -1013,6 +1010,16 @@ void render_view_combat(AppState& app_state) {
             ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
             render_pull_view(app_state, current_summary, pull_history, selected_index,
                              "##CastsPane", render_casts, Drilldown::None);
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem(ICON_TRENDING "  Timeline")) {
+            ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
+            // Fetched only while this tab is open.
+            const uint64_t shown_id = is_live ? 0 : s_selected_pull_id;
+            render_pull_view(app_state, current_summary, pull_history, selected_index, "##TimelinePane",
+                             [&app_state, shown_id](const meter::EncounterSummary& summary, float height) {
+                                 render_timeline(app_state, summary, shown_id, height);
+                             }, Drilldown::None);
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem(ICON_SLIDERS "  Settings")) {

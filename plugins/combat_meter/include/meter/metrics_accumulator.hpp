@@ -4,6 +4,7 @@
 #include "common/ipc/protocol.hpp"
 #include "meter/combatant_registry.hpp"
 #include "meter/gcd_uptime.hpp"
+#include "meter/timeline.hpp"
 #include <array>
 #include <cstdint>
 #include <vector>
@@ -119,10 +120,21 @@ public:
         return get_or_create_stats(entity_id, registry);
     }
 
+    /// Keeps each party member's pull second by second. Off unless turned on, and
+    /// kept across clear(): only the app's engine draws a timeline.
+    void set_timeline_enabled(bool enabled) noexcept { m_timeline_enabled = enabled; }
+
+    /// Each party member's bins so far, by entity id.
+    [[nodiscard]] std::vector<TimelineRow> timeline_rows() const;
+
+    /// timeline_rows() moved out and trimmed to size, for an archived pull.
+    [[nodiscard]] std::vector<TimelineRow> take_timeline_rows();
+
     /// Resets all metrics for a new encounter.
     void clear();
 
-    /// clear() for a pull starting at `start_us`, which GCD uptime is measured from.
+    /// clear() for a pull starting at `start_us`, which GCD uptime and the timeline
+    /// are measured from.
     void start(uint64_t start_us);
 
 private:
@@ -154,9 +166,17 @@ private:
     CombatantStats& get_or_create_stats(EntityId entity_id, const CombatantRegistry& registry);
 
     /// Books what other players' buffs added to a hit of `hit_damage` that `receiver`
-    /// landed. The credits never add up to more than the hit.
+    /// landed at `timestamp_us`. The credits never add up to more than the hit.
     void record_credits(CombatantStats& receiver, uint32_t hit_damage, const ipc::CombatBuffCredits& credits,
-                        const CombatantRegistry& registry);
+                        uint64_t timestamp_us, const CombatantRegistry& registry);
+
+    /// Whether `entity` gets a timeline: a party member, the local player, or a pet
+    /// not yet merged into its owner.
+    [[nodiscard]] static bool keeps_timeline(EntityId entity, const CombatantRegistry& registry);
+
+    /// `entity`'s bin for the second `timestamp_us` falls in, or null: the timeline is
+    /// off, `entity` keeps none, or the second is past TIMELINE_MAX_SECONDS.
+    TimelineBin* timeline_bin(EntityId entity, uint64_t timestamp_us, const CombatantRegistry& registry);
 
     /// Moves `from_id`'s credit rows, as receiver or giver, onto `to` after a merge.
     void rekey_credits(EntityId from_id, CombatantStats& to);
@@ -164,8 +184,10 @@ private:
     /// A player (or the local player) the recap and damage-taken rows follow.
     [[nodiscard]] static bool is_friendly_target(EntityId target_id, const CombatantRegistry& registry);
 
-    /// Books a hit on a friendly target into its damage-taken row and recap ring.
-    void record_taken(EntityId target_id, const RecapSample& sample, bool is_damage);
+    /// Books a hit on a friendly target into its damage-taken row, recap ring and
+    /// timeline.
+    void record_taken(EntityId target_id, const RecapSample& sample, bool is_damage,
+                      const CombatantRegistry& registry);
 
     /// Shared body for the effect types that carry a damage value: full hits, and the
     /// partially mitigated Blocked/Parried variants.
@@ -184,6 +206,8 @@ private:
     std::unordered_map<EntityId, RecapRing> m_recaps;
     /// Each player's GCD casts, oldest first.
     std::unordered_map<EntityId, std::vector<GcdCast>> m_gcds;
+    bool m_timeline_enabled{false};
+    std::unordered_map<EntityId, std::vector<TimelineBin>> m_timeline;
     uint64_t m_start_us{0};
     uint64_t m_total_damage{0};
     uint64_t m_total_healing{0};

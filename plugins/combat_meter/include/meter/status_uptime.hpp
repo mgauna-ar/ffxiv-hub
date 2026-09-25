@@ -2,6 +2,7 @@
 
 #include "meter/types.hpp"
 #include "meter/combatant_registry.hpp"
+#include "meter/timeline.hpp"
 #include <cstdint>
 #include <unordered_map>
 #include <vector>
@@ -22,6 +23,11 @@ public:
 
     /// Uptime measured to `now_us`, or to the end once stopped.
     [[nodiscard]] std::vector<StatusUptimeRow> rows(uint64_t now_us, const CombatantRegistry& registry) const;
+
+    /// When each party-wide raid buff (raid_buffs.hpp) was up, per source, merged over
+    /// the targets it was on: a buff on the party, a debuff on an enemy. Cards and
+    /// dance partner effects are left out. Measured to the same end as rows().
+    [[nodiscard]] std::vector<BuffWindow> windows(uint64_t now_us, const CombatantRegistry& registry) const;
 
     void clear();
 

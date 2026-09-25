@@ -263,6 +263,35 @@ TEST_CASE(PipeServer, RoutesCasts) {
     TEST_ASSERT_EQ(received.timestamp_us, 5'000'000u);
 }
 
+TEST_CASE(AppState, KeepsATimelineOfThePull) {
+    app::AppState state;
+    state.initialize();
+
+    ipc::CombatPartySyncPayload party{};
+    party.party_count = 1;
+    party.local_player_id = 1001;
+    party.entity_ids[0] = 1001;
+    party.job_ids[0] = static_cast<uint32_t>(meter::Job::WAR);
+    state.pipe_server().process_raw_packet(
+        ipc::serialize_typed_packet(PluginId::CombatMeter, MessageType::CombatPartySync, 1, party));
+
+    ipc::CombatActionPayload act{};
+    act.source_id = 1001;
+    act.target_id = 0x40000001;
+    act.action_id = 31;
+    act.damage = 25000;
+    act.effect_type = static_cast<uint16_t>(meter::EffectType::Damage);
+    act.timestamp_us = 10'000'000;
+    state.pipe_server().process_raw_packet(
+        ipc::serialize_typed_packet(PluginId::CombatMeter, MessageType::CombatAction, 2, act));
+
+    const meter::EncounterTimeline live = state.get_timeline(0);
+    TEST_ASSERT_EQ(live.rows.size(), 1u);
+    TEST_ASSERT_EQ(live.rows[0].entity, 1001u);
+    TEST_ASSERT_EQ(live.rows[0].bins[0].damage, 25000u);
+    state.shutdown();
+}
+
 TEST_CASE(AppState, CastsReachTheLiveSummary) {
     app::AppState state;
     state.initialize();

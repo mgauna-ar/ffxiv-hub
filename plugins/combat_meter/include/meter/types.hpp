@@ -355,6 +355,20 @@ constexpr uint32_t DPS_METRIC_COUNT = 5;
     }
 }
 
+/// Damage as `metric` counts it, from the raw damage and the buff damage it moves:
+/// what other players' buffs added to it (all of it, and the cards and dance partner
+/// part), and what this player's buffs added to theirs.
+[[nodiscard]] constexpr double metric_damage(DpsMetric metric, double damage, double received,
+                                             double received_single, double given) noexcept {
+    switch (metric) {
+        case DpsMetric::Rdps: return damage - received + given;
+        case DpsMetric::Adps: return damage - received_single;
+        case DpsMetric::Ndps: return damage - received;
+        case DpsMetric::Cdps: return damage - received_single + given;
+        default: return damage;
+    }
+}
+
 [[nodiscard]] constexpr double dps_figure(const CombatantTotals& totals, DpsMetric metric) noexcept {
     switch (metric) {
         case DpsMetric::Rdps: return totals.rdps;

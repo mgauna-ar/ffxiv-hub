@@ -94,7 +94,7 @@ flowchart TD
         PipeServer["Multiplexed IPC Server (\\.\\pipe\\ffxiv_hub_pipe)"]
         AppState["Central App State & Config Manager"]
         
-        subgraph DesktopUI["Dear ImGui Desktop + ImPlot"]
+        subgraph DesktopUI["Dear ImGui Desktop"]
             Sidebar["Navigation Sidebar"]
             ViewDashboard["Overview Dashboard"]
             ViewCombat["Combat Meter Inspector & Pull History"]
@@ -133,7 +133,7 @@ responsibility boundary and the constraint that goes with it.
 | `src/app/` | Desktop manager: application state machine, game supervisor, plugin config store, telemetry router, and the `wWinMain` entry point | - |
 | `src/app/ui/` | Desktop views, theme and widget kit, plus `plugin_page.*` | `plugin_page.*` is the **mandatory** frame for every plugin view; a plugin needing a different layout needs a change to the scaffold, not a private layout |
 | `plugins/latency_mitigator/` | RTT tracking (EMA + median spike filter), sequence matching, cast tracking, animation lock mitigation, and the in-game ping HUD | Algorithmic core is platform-independent. See its [`AGENTS.md`](plugins/latency_mitigator/AGENTS.md) |
-| `plugins/combat_meter/` | Action decoding, combatant registry and pet attribution, metrics accumulation, encounter state machine, and the in-game combat table | Algorithmic core is platform-independent. See its [`AGENTS.md`](plugins/combat_meter/AGENTS.md) |
+| `plugins/combat_meter/` | Action decoding, combatant registry and pet attribution, metrics accumulation and the desktop's per-second timeline, encounter state machine, and the in-game combat table | Algorithmic core is platform-independent. See its [`AGENTS.md`](plugins/combat_meter/AGENTS.md) |
 | `src/third_party/` | Vendored MinHook (detours) and Dear ImGui (UI, with Win32/DX11 backends) | Do not modify; warnings from these are silenced, not fixed |
 | `tests/` | Header-only cross-platform test runner, runnable on macOS, Linux and Windows | Must stay runnable without Windows |
 

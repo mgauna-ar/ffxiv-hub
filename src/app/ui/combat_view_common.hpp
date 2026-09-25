@@ -20,6 +20,9 @@ constexpr ImGuiTableFlags kCombatTableFlags = ImGuiTableFlags_RowBg | ImGuiTable
 /// Header row in the dim header colour every Combat table uses.
 void combat_table_headers_row();
 
+/// The damage rate the Damage tab and the Timeline follow (Settings, "DPS metric").
+[[nodiscard]] meter::DpsMetric selected_dps_metric();
+
 /// Names and jobs for the ids a summary's detail rows refer to: its combatants,
 /// plus the labels it carries for everyone else, enemies included.
 class SummaryNames {

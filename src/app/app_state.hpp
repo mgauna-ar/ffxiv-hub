@@ -115,6 +115,8 @@ public:
     [[nodiscard]] std::vector<meter::PullHistoryEntry> get_pull_history_index();
     [[nodiscard]] std::optional<meter::EncounterSummary> get_pull(size_t index);
     [[nodiscard]] std::vector<meter::EncounterSummary> get_pull_history();
+    /// Timeline of the archived pull `encounter_id`, or of the live pull for 0.
+    [[nodiscard]] meter::EncounterTimeline get_timeline(uint64_t encounter_id);
     void reset_encounter();
     void clear_pull_history();
 

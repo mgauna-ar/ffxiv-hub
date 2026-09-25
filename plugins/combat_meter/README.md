@@ -3,7 +3,8 @@
 Real-time damage and healing analytics: DPS, HPS with overheal separated out, crit and
 direct hit rates, per-action breakdowns, and a pull history. Each pull also records who
 died and to what, which debuffs the party picked up, how long buffs and DoTs stayed up,
-the damage every player took, by ability, and what every player pressed.
+the damage every player took, by ability, what every player pressed, and a timeline of
+the party's damage, healing and damage taken second by second.
 
 Part of [FFXIV Hub](../../README.md). Enable or disable it from its page in the desktop
 app, or from its card on the dashboard.
@@ -30,6 +31,8 @@ app, or from its card on the dashboard.
 - **Casts and GCD uptime.** What each player pressed, their casts per minute, the GCD they
   ran at, and how much of the pull they kept it rolling. A spell with a cast time counts
   from when its cast started, so casters and healers read true.
+- **The fight over time.** A timeline of each party member's damage, healing or damage
+  taken across the pull, with the raid buff windows and the deaths on it.
 
 ---
 
@@ -284,6 +287,35 @@ What lowers uptime besides a late press:
 
 ---
 
+## Timeline
+
+The desktop app keeps each party member's pull second by second: the damage they dealt,
+the buff damage in it, their effective healing, and the damage they took. The Timeline tab
+draws it as one line per player, in their job colour.
+
+- **Your party only.** The timeline follows your party, or you alone when solo. In an
+  alliance raid or the open world, other players keep their rows in the tables but get no
+  line. The Limit Break has none either.
+- **Any damage rate.** Damage lines follow the *DPS metric*, so rDPS moves the damage a
+  raid buff added to whoever gave it, second by second, as the tables do.
+- **Smoothing.** Each point averages the 5, 15 or 30 seconds around it, weighing the middle
+  most. At the start and end of a pull the window holds fewer seconds and averages those.
+- **Raid buffs.** Bands mark when a party-wide raid buff was up, or a debuff such as Chain
+  Stratagem on an enemy, one per buff and giver, and are darker where they overlap. Cards
+  and dance partner effects reach one player and get no band.
+- **Deaths.** A skull marks each death, with a bar for as long as the player stayed down.
+- **The first hour.** A pull longer than an hour keeps its first hour on the timeline. Its
+  totals count all of it.
+
+Hovering the chart shows each line's value at that moment, the raid buffs that were up and
+anyone who died then. Clicking a name under the chart hides or shows that player's line.
+
+The in-game meter keeps no timeline, so it costs the game nothing. The desktop app keeps
+24 bytes per party member per second: about 110 KB for a ten-minute pull of eight. With
+*Track deaths, buffs and debuffs* off, the chart has no buff bands and no deaths.
+
+---
+
 ## Views
 
 **In-game overlay.** A draggable, resizable table showing the current encounter.
@@ -297,16 +329,16 @@ What lowers uptime besides a late press:
 
 <!-- ![The Combat Meter's Damage tab with the pull list rail](../../docs/images/combat-damage-tab.png) -->
 
-**Desktop view.** Seven tabs: **Damage**, **Healing**, **Damage Taken**, **Deaths**,
-**Buffs & Debuffs**, **Casts**, and **Settings**. Every tab but Settings shows a pull list
-rail on the left. The live fight is at the top, then the pull history grouped by duty: each
-pull has an outcome dot (gold clear, red wipe, grey ended), its number and duration, then
-the boss's HP left, its death count and end time while the rail has room for them.
-Hovering a pull shows all of it, with the boss's name. The trash button in the history
-header clears the archive after asking. The rail is the only place a pull is chosen, and it
-narrows on a small window. Beside it, a header names the selected pull's duty and boss and
-sums it up: duration, raid DPS and HPS, combatants, deaths, the boss's HP and the outcome.
-Below it:
+**Desktop view.** Eight tabs: **Damage**, **Healing**, **Damage Taken**, **Deaths**,
+**Buffs & Debuffs**, **Casts**, **Timeline**, and **Settings**. Every tab but Settings
+shows a pull list rail on the left. The live fight is at the top, then the pull history
+grouped by duty: each pull has an outcome dot (gold clear, red wipe, grey ended), its
+number and duration, then the boss's HP left, its death count and end time while the rail
+has room for them. Hovering a pull shows all of it, with the boss's name. The trash button
+in the history header clears the archive after asking. The rail is the only place a pull
+is chosen, and it narrows on a small window. Beside it, a header names the selected pull's
+duty and boss and sums it up: duration, raid DPS and HPS, combatants, deaths, the boss's
+HP and the outcome. Below it:
 
 - **Damage** and **Healing**: the selected pull's rankings. Damage has share, crit, direct
   hit and crit-direct-hit rates, job-coloured bars and a Deaths column. Its rate column
@@ -324,6 +356,8 @@ Below it:
 - **Casts**: each player's casts, CPM, GCDs, GCD and uptime, with a bar for the uptime.
   Below it, the selected player's casts per action, each marked GCD, oGCD or Limit Break,
   with its own casts per minute. See [Casts and GCD uptime](#casts-and-gcd-uptime).
+- **Timeline**: each party member's damage, healing or damage taken across the pull, over
+  the raid buff windows, with deaths marked. See [Timeline](#timeline).
 
 The in-game overlay stays a damage or healing table; the other views are desktop only.
 
@@ -360,7 +394,7 @@ not the intended interface.
 | `show_col_dh` | bool | `true` | Show the direct hit column. |
 | `show_col_cdh` | bool | `true` | Show the crit-direct-hit column. |
 | `overlay_metric` | int | `0` | In-game overlay metric: `0` damage, `1` healing. |
-| `dps_metric` | int | `0` | Damage rate both tables show and rank by: `0` DPS, `1` rDPS, `2` aDPS, `3` nDPS, `4` cDPS. |
+| `dps_metric` | int | `0` | Damage rate the tables rank by and the timeline draws: `0` DPS, `1` rDPS, `2` aDPS, `3` nDPS, `4` cDPS. |
 | `track_vitals` | bool | `true` | Read HP and status lists four times a second for deaths, buffs, debuffs and the boss's HP. Off, nothing is read. |
 | `overlay_visible` | bool | `true` | Draw the in-game overlay. |
 | `overlay_x`, `overlay_y` | float | `-1.0` | Position. Negative means never placed — the overlay picks its own default. |
@@ -450,6 +484,17 @@ left. For fights with long downtime, raise *End encounter after idle* in Setting
 Downtime counts against it: time the boss spent untargetable or out of reach, and a Limit
 Break's animation. A GCD pressed late counts only its own recast and a tenth of a second
 more, so small delays add up. See [Casts and GCD uptime](#casts-and-gcd-uptime).
+
+</details>
+
+<details>
+<summary><b>Why does someone have no line on the timeline?</b></summary>
+
+<br>
+
+The timeline follows your party only, so players from other parties or passing by have
+none, and neither does the Limit Break. A player with nothing in the chosen measure, such
+as a DPS on HPS, is left off too. See [Timeline](#timeline).
 
 </details>
 

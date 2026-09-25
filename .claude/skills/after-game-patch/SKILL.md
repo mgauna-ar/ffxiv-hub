@@ -263,7 +263,9 @@ but carries no percentage. After a patch:
 - Read each buff action's ActionTransient text with `tools/xivdata` and compare its
   percentage with the table, including the dance finish strengths and Radiant Finale's
   per-coda value. Job changes land here without breaking anything.
-- A new raid buff needs an entry, sorted by status id, and a line in that test.
+- A new raid buff needs an entry, sorted by status id, and a line in that test. The
+  Timeline tab's buff bands come from the same table, so a buff missing from it has no
+  band either.
 
 The meter also depends on effect kinds 14 and 15 being status applications, as recorded
 in [How the client applies statuses](../../../plugins/combat_meter/AGENTS.md#how-the-client-applies-statuses).

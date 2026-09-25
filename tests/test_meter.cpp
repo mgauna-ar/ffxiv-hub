@@ -1049,6 +1049,12 @@ TEST_CASE(MeterEngine, ConcurrentProducersAndReaders) {
     // thread and the Present thread at once. Run under -fsanitize=thread to
     // catch an entry point that forgot to take the lock.
     EncounterEngine engine;
+    // As the app's engine runs, so the timeline is reached from every thread too.
+    engine.set_timeline_enabled(true);
+    engine.with_registry([](CombatantRegistry& reg) {
+        reg.register_actor(1000, "Local Player", Job::WAR, 0, ActorType::Player);
+        reg.set_local_player(1000);
+    });
     std::atomic<bool> stop{false};
 
     std::thread producer([&] {
@@ -1085,7 +1091,9 @@ TEST_CASE(MeterEngine, ConcurrentProducersAndReaders) {
             const auto summary = engine.current_summary();
             (void)summary.combatants.size();
             (void)engine.in_combat();
-            (void)engine.pull_history_index();
+            const auto history = engine.pull_history_index();
+            (void)engine.timeline(0).rows.size();
+            if (!history.empty()) (void)engine.timeline(history.back().encounter_id).buffs.size();
         }
     });
 

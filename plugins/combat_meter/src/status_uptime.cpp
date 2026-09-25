@@ -1,8 +1,19 @@
 #include "meter/status_uptime.hpp"
+#include "hub/game/raid_buffs.hpp"
 #include "hub/game/status.hpp"
 #include <algorithm>
+#include <map>
+#include <utility>
 
 namespace hub::meter {
+
+namespace {
+
+/// A gap this short between two runs of one buff is the same application seen at a
+/// different moment on each target, not a new one.
+constexpr uint64_t kWindowBridgeUs = 1'000'000;
+
+} // namespace
 
 void StatusUptime::start(uint64_t start_us, const CombatantRegistry& registry) {
     m_tracks.clear();
@@ -94,6 +105,48 @@ std::vector<StatusUptimeRow> StatusUptime::rows(uint64_t now_us, const Combatant
         return a.source < b.source;
     });
     return rows;
+}
+
+std::vector<BuffWindow> StatusUptime::windows(uint64_t now_us, const CombatantRegistry& registry) const {
+    std::vector<BuffWindow> windows;
+    const uint64_t end_us = m_running ? std::max(now_us, m_start_us) : m_end_us;
+
+    // Every target's intervals of one buff from one source, in one list.
+    std::map<std::pair<uint16_t, EntityId>, std::vector<Interval>> runs;
+    for (const auto& [key, intervals] : m_tracks) {
+        const game::RaidBuff* buff = game::find_raid_buff(key.status);
+        if (buff == nullptr || buff->single_target || buff->on_enemy == registry.is_friendly(key.target)) {
+            continue;
+        }
+        std::vector<Interval>& run = runs[{key.status, key.source}];
+        for (const Interval& interval : intervals) {
+            const uint64_t until = std::min(interval.end_us, end_us);
+            if (until > interval.begin_us) run.push_back(Interval{interval.begin_us, until});
+        }
+    }
+
+    const auto seconds = [this](uint64_t us) { return static_cast<double>(us - m_start_us) / 1e6; };
+    for (auto& [id, run] : runs) {
+        if (run.empty()) continue;
+        std::sort(run.begin(), run.end(), [](const Interval& a, const Interval& b) { return a.begin_us < b.begin_us; });
+        Interval merged = run.front();
+        const auto emit = [&] { windows.push_back(BuffWindow{id.first, id.second, seconds(merged.begin_us), seconds(merged.end_us)}); };
+        for (size_t i = 1; i < run.size(); ++i) {
+            if (run[i].begin_us <= merged.end_us + kWindowBridgeUs) {
+                merged.end_us = std::max(merged.end_us, run[i].end_us);
+            } else {
+                emit();
+                merged = run[i];
+            }
+        }
+        emit();
+    }
+    std::sort(windows.begin(), windows.end(), [](const BuffWindow& a, const BuffWindow& b) {
+        if (a.begin_s != b.begin_s) return a.begin_s < b.begin_s;
+        if (a.status != b.status) return a.status < b.status;
+        return a.source < b.source;
+    });
+    return windows;
 }
 
 void StatusUptime::clear() {

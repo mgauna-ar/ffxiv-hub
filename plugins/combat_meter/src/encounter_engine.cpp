@@ -138,7 +138,7 @@ void EncounterEngine::process_life_event(const ipc::LifeEventPacket& packet) {
     if (m_pull_history.empty()) {
         return;
     }
-    EncounterSummary& pull = m_pull_history.back();
+    EncounterSummary& pull = m_pull_history.back().summary;
     if (ts < pull.start_time_us || ts > pull.end_time_us + kLateLifeEventUs) {
         return;
     }
@@ -162,7 +162,7 @@ void EncounterEngine::process_enemy_hp(const ipc::EnemyHpPacket& packet) {
     if (m_pull_history.empty() || packet.current_hp != 0 || packet.max_hp == 0) {
         return;
     }
-    EncounterSummary& pull = m_pull_history.back();
+    EncounterSummary& pull = m_pull_history.back().summary;
     if (packet.entity_id != pull.boss.id || ts < pull.start_time_us || ts > pull.end_time_us + kLateLifeEventUs) {
         return;
     }
@@ -300,6 +300,12 @@ void EncounterEngine::end_encounter_locked(EncounterEndReason reason, TimePoint 
     m_uptime.stop(summary.end_time_us);
     add_detail_rows_locked(summary, summary.end_time_us);
 
+    ArchivedPull pull;
+    if (m_timeline_enabled) {
+        pull.timeline.rows = m_accumulator.take_timeline_rows();
+        pull.timeline.buffs = m_uptime.windows(summary.end_time_us, m_registry);
+    }
+
     // An enemy's list is never refreshed once it stops being tracked, so it must
     // not be carried into the next pull's uptime.
     m_status_changes.clear();
@@ -308,7 +314,8 @@ void EncounterEngine::end_encounter_locked(EncounterEndReason reason, TimePoint 
     while (m_pull_history.size() >= m_history_capacity && !m_pull_history.empty()) {
         m_pull_history.pop_front();
     }
-    m_pull_history.push_back(std::move(summary));
+    pull.summary = std::move(summary);
+    m_pull_history.push_back(std::move(pull));
     m_live_holds_latest_pull = true;
 
     m_state = (reason == EncounterEndReason::Wipe) ? EncounterState::Wipe : EncounterState::Complete;
@@ -379,14 +386,20 @@ double EncounterEngine::active_duration_seconds(TimePoint now) const {
 
 std::vector<EncounterSummary> EncounterEngine::pull_history() const {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
-    return std::vector<EncounterSummary>(m_pull_history.begin(), m_pull_history.end());
+    std::vector<EncounterSummary> pulls;
+    pulls.reserve(m_pull_history.size());
+    for (const ArchivedPull& archived : m_pull_history) {
+        pulls.push_back(archived.summary);
+    }
+    return pulls;
 }
 
 std::vector<PullHistoryEntry> EncounterEngine::pull_history_index() const {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
     std::vector<PullHistoryEntry> index;
     index.reserve(m_pull_history.size());
-    for (const auto& pull : m_pull_history) {
+    for (const ArchivedPull& archived : m_pull_history) {
+        const EncounterSummary& pull = archived.summary;
         index.push_back(PullHistoryEntry{
             .encounter_id = pull.encounter_id,
             .zone_id = pull.zone_id,
@@ -412,14 +425,14 @@ std::optional<EncounterSummary> EncounterEngine::pull_at(size_t index) const {
     if (index >= m_pull_history.size()) {
         return std::nullopt;
     }
-    return m_pull_history[index];
+    return m_pull_history[index].summary;
 }
 
 const EncounterSummary* EncounterEngine::latest_pull_locked() const noexcept {
     if (m_pull_history.empty()) {
         return nullptr;
     }
-    return &m_pull_history.back();
+    return &m_pull_history.back().summary;
 }
 
 std::optional<EncounterSummary> EncounterEngine::latest_pull() const {
@@ -427,7 +440,38 @@ std::optional<EncounterSummary> EncounterEngine::latest_pull() const {
     if (m_pull_history.empty()) {
         return std::nullopt;
     }
-    return m_pull_history.back();
+    return m_pull_history.back().summary;
+}
+
+void EncounterEngine::set_timeline_enabled(bool enabled) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    m_timeline_enabled = enabled;
+    m_accumulator.set_timeline_enabled(enabled);
+}
+
+EncounterTimeline EncounterEngine::timeline(uint64_t encounter_id, TimePoint now) const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (!m_timeline_enabled) {
+        return {};
+    }
+    if (encounter_id != 0) {
+        for (const ArchivedPull& pull : m_pull_history) {
+            if (pull.summary.encounter_id == encounter_id) return pull.timeline;
+        }
+        return {};
+    }
+    if (m_state == EncounterState::InCombat) {
+        const double dur = std::max(std::chrono::duration<double>(now - m_start_time).count(), 0.0);
+        EncounterTimeline live;
+        live.rows = m_accumulator.timeline_rows();
+        live.buffs = m_uptime.windows(m_start_time_us + static_cast<uint64_t>(dur * 1e6), m_registry);
+        return live;
+    }
+    // Out of combat the live view still shows the pull that just ended.
+    if (m_live_holds_latest_pull && !m_pull_history.empty()) {
+        return m_pull_history.back().timeline;
+    }
+    return {};
 }
 
 EncounterSummary EncounterEngine::current_summary(TimePoint now) {

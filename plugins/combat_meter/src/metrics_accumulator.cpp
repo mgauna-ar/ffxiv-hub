@@ -19,6 +19,23 @@ void add_hit_counts(HitCounts& to, const HitCounts& from) {
     to.tick_hits += from.tick_hits;
 }
 
+/// A bin stops at its limit rather than wrap round to a small number.
+void add_capped(uint32_t& to, uint64_t amount) {
+    to = static_cast<uint32_t>(std::min<uint64_t>(uint64_t{to} + amount, UINT32_MAX));
+}
+
+void add_bins(std::vector<TimelineBin>& to, const std::vector<TimelineBin>& from) {
+    if (to.size() < from.size()) to.resize(from.size());
+    for (size_t i = 0; i < from.size(); ++i) {
+        add_capped(to[i].damage, from[i].damage);
+        add_capped(to[i].healing, from[i].healing);
+        add_capped(to[i].taken, from[i].taken);
+        add_capped(to[i].buff_given, from[i].buff_given);
+        add_capped(to[i].buff_received, from[i].buff_received);
+        add_capped(to[i].buff_received_single, from[i].buff_received_single);
+    }
+}
+
 } // namespace
 
 CombatantStats& MetricsAccumulator::get_or_create_stats(EntityId entity_id, const CombatantRegistry& registry) {
@@ -80,7 +97,10 @@ void MetricsAccumulator::record_damage_hit(
     }
     if (source_friendly) {
         m_total_damage += packet.damage;
-        record_credits(stats, packet.damage, packet.credits, registry);
+        if (TimelineBin* bin = timeline_bin(stats.entity_id, packet.timestamp_us, registry)) {
+            add_capped(bin->damage, packet.damage);
+        }
+        record_credits(stats, packet.damage, packet.credits, packet.timestamp_us, registry);
     }
 
     stats.hits.total_hits++;
@@ -122,7 +142,7 @@ void MetricsAccumulator::record_damage_hit(
         if (packet.damage > 0 && is_friendly_target(target_id, registry)) {
             record_taken(target_id, RecapSample{
                 packet.timestamp_us, static_cast<EntityId>(packet.source_id), packet.action_id,
-                packet.damage, RecapKind::Damage, static_cast<uint8_t>(packet.hit_flags)}, true);
+                packet.damage, RecapKind::Damage, static_cast<uint8_t>(packet.hit_flags)}, true, registry);
         }
     }
 }
@@ -188,12 +208,15 @@ void MetricsAccumulator::record_action(const ipc::CombatActionPacket& packet, co
         stats.total_healing += raw_heal;
         stats.effective_healing += eff_heal;
         stats.overhealing += over_heal;
+        if (TimelineBin* bin = timeline_bin(stats.entity_id, packet.timestamp_us, registry)) {
+            add_capped(bin->healing, eff_heal);
+        }
 
         const EntityId target_id = static_cast<EntityId>(packet.target_id);
         if (eff_heal > 0 && is_friendly_target(target_id, registry)) {
             record_taken(target_id, RecapSample{
                 packet.timestamp_us, raw_source_id, packet.action_id,
-                eff_heal, RecapKind::Heal, static_cast<uint8_t>(packet.hit_flags)}, false);
+                eff_heal, RecapKind::Heal, static_cast<uint8_t>(packet.hit_flags)}, false, registry);
         }
 
         if (source_friendly) {
@@ -273,7 +296,10 @@ void MetricsAccumulator::record_status_tick(const ipc::StatusTickPacket& packet,
         }
         if (source_friendly) {
             m_total_damage += packet.damage_or_heal;
-            record_credits(stats, packet.damage_or_heal, packet.credits, registry);
+            if (TimelineBin* bin = timeline_bin(stats.entity_id, packet.timestamp_us, registry)) {
+                add_capped(bin->damage, packet.damage_or_heal);
+            }
+            record_credits(stats, packet.damage_or_heal, packet.credits, packet.timestamp_us, registry);
         }
 
         stats.hits.tick_hits++;
@@ -301,7 +327,7 @@ void MetricsAccumulator::record_status_tick(const ipc::StatusTickPacket& packet,
             if (is_friendly_target(packet.target_id, registry)) {
                 record_taken(packet.target_id, RecapSample{
                     packet.timestamp_us, raw_source_id, action_key,
-                    packet.damage_or_heal, RecapKind::DotTick, 0}, true);
+                    packet.damage_or_heal, RecapKind::DotTick, 0}, true, registry);
             }
         }
     } else if (effect == EffectType::Heal) {
@@ -312,6 +338,9 @@ void MetricsAccumulator::record_status_tick(const ipc::StatusTickPacket& packet,
         stats.total_healing += packet.damage_or_heal;
         stats.effective_healing += eff_heal;
         stats.overhealing += over_heal;
+        if (TimelineBin* bin = timeline_bin(stats.entity_id, packet.timestamp_us, registry)) {
+            add_capped(bin->healing, eff_heal);
+        }
         if (source_friendly) {
             m_total_healing += packet.damage_or_heal;
             m_total_effective_healing += eff_heal;
@@ -342,7 +371,7 @@ void MetricsAccumulator::record_status_tick(const ipc::StatusTickPacket& packet,
         if (eff_heal > 0 && is_friendly_target(packet.target_id, registry)) {
             record_taken(packet.target_id, RecapSample{
                 packet.timestamp_us, raw_source_id, action_key,
-                eff_heal, RecapKind::HotTick, 0}, false);
+                eff_heal, RecapKind::HotTick, 0}, false, registry);
         }
     }
 }
@@ -371,7 +400,7 @@ bool MetricsAccumulator::record_cast(const ipc::CastPacket& packet, const Combat
 
 void MetricsAccumulator::record_credits(
     CombatantStats& receiver, uint32_t hit_damage, const ipc::CombatBuffCredits& credits,
-    const CombatantRegistry& registry
+    uint64_t timestamp_us, const CombatantRegistry& registry
 ) {
     // The Limit Break is nobody's damage, so no buff made any of it.
     if (receiver.entity_id == hub::game::LIMIT_BREAK_COMBATANT_ID) {
@@ -391,6 +420,13 @@ void MetricsAccumulator::record_credits(
         if (single) receiver.buff_received_single += amount;
         get_or_create_stats(giver_id, registry).buff_given += amount;
         m_buff_credits[BuffCreditKey{receiver.entity_id, giver_id, single}] += amount;
+        if (TimelineBin* bin = timeline_bin(receiver.entity_id, timestamp_us, registry)) {
+            add_capped(bin->buff_received, amount);
+            if (single) add_capped(bin->buff_received_single, amount);
+        }
+        if (TimelineBin* bin = timeline_bin(giver_id, timestamp_us, registry)) {
+            add_capped(bin->buff_given, amount);
+        }
     }
 }
 
@@ -440,10 +476,14 @@ bool MetricsAccumulator::is_friendly_target(EntityId target_id, const CombatantR
         && !registry.is_pet(target_id);
 }
 
-void MetricsAccumulator::record_taken(EntityId target_id, const RecapSample& sample, bool is_damage) {
+void MetricsAccumulator::record_taken(EntityId target_id, const RecapSample& sample, bool is_damage,
+                                      const CombatantRegistry& registry) {
     m_recaps[target_id].push(sample);
     if (!is_damage) {
         return;
+    }
+    if (TimelineBin* bin = timeline_bin(target_id, sample.timestamp_us, registry)) {
+        add_capped(bin->taken, sample.amount);
     }
     DamageTakenRow& row = m_damage_taken[DamageTakenKey{target_id, sample.action_key, sample.source}];
     row.target = target_id;
@@ -452,6 +492,51 @@ void MetricsAccumulator::record_taken(EntityId target_id, const RecapSample& sam
     row.hits++;
     row.total += sample.amount;
     row.max = std::max<uint64_t>(row.max, sample.amount);
+}
+
+bool MetricsAccumulator::keeps_timeline(EntityId entity, const CombatantRegistry& registry) {
+    return registry.is_party_member(entity)
+        || (entity != 0 && entity == registry.local_player_id())
+        || registry.is_pet(entity);
+}
+
+TimelineBin* MetricsAccumulator::timeline_bin(EntityId entity, uint64_t timestamp_us,
+                                              const CombatantRegistry& registry) {
+    if (!m_timeline_enabled || !keeps_timeline(entity, registry)) {
+        return nullptr;
+    }
+    // A packet stamped before the pull began is counted in its first second.
+    const uint64_t since_start = timestamp_us > m_start_us ? timestamp_us - m_start_us : 0;
+    const size_t second = static_cast<size_t>(since_start / 1'000'000);
+    if (second >= TIMELINE_MAX_SECONDS) {
+        return nullptr;
+    }
+    std::vector<TimelineBin>& bins = m_timeline[entity];
+    if (bins.size() <= second) bins.resize(second + 1);
+    return &bins[second];
+}
+
+std::vector<TimelineRow> MetricsAccumulator::timeline_rows() const {
+    std::vector<TimelineRow> rows;
+    rows.reserve(m_timeline.size());
+    for (const auto& [id, bins] : m_timeline) {
+        rows.push_back(TimelineRow{id, bins});
+    }
+    std::sort(rows.begin(), rows.end(), [](const TimelineRow& a, const TimelineRow& b) { return a.entity < b.entity; });
+    return rows;
+}
+
+std::vector<TimelineRow> MetricsAccumulator::take_timeline_rows() {
+    std::vector<TimelineRow> rows;
+    rows.reserve(m_timeline.size());
+    for (auto& [id, bins] : m_timeline) {
+        // Grown by doubling, so up to half of it is spare.
+        bins.shrink_to_fit();
+        rows.push_back(TimelineRow{id, std::move(bins)});
+    }
+    m_timeline.clear();
+    std::sort(rows.begin(), rows.end(), [](const TimelineRow& a, const TimelineRow& b) { return a.entity < b.entity; });
+    return rows;
 }
 
 std::vector<DamageTakenRow> MetricsAccumulator::damage_taken_rows() const {
@@ -538,6 +623,12 @@ void MetricsAccumulator::merge_combatants(EntityId from_id, EntityId to_id, cons
     // Only ever a pet, whose actions follow its owner's presses: none of its casts,
     // should any predate the registry knowing it, are the owner's.
     m_gcds.erase(from_id);
+    // Its seconds join its owner's, as its totals just did.
+    if (auto it = m_timeline.find(from_id); it != m_timeline.end()) {
+        const std::vector<TimelineBin> from_bins = std::move(it->second);
+        m_timeline.erase(it);
+        if (keeps_timeline(to_id, registry)) add_bins(m_timeline[to_id], from_bins);
+    }
 
     for (const auto& [act_id, from_act] : from_stats.actions) {
         auto [it_act, inserted] = to.actions.try_emplace(act_id, from_act);
@@ -619,11 +710,14 @@ void MetricsAccumulator::recalculate(double duration_seconds, const CombatantReg
         const double received = static_cast<double>(stats.buff_received);
         const double received_single = static_cast<double>(stats.buff_received_single);
         const double given = static_cast<double>(stats.buff_given);
-        stats.dps = damage / safe_duration;
-        stats.rdps = (damage - received + given) / safe_duration;
-        stats.adps = (damage - received_single) / safe_duration;
-        stats.ndps = (damage - received) / safe_duration;
-        stats.cdps = (damage - received_single + given) / safe_duration;
+        const auto rate = [&](DpsMetric metric) {
+            return metric_damage(metric, damage, received, received_single, given) / safe_duration;
+        };
+        stats.dps = rate(DpsMetric::Dps);
+        stats.rdps = rate(DpsMetric::Rdps);
+        stats.adps = rate(DpsMetric::Adps);
+        stats.ndps = rate(DpsMetric::Ndps);
+        stats.cdps = rate(DpsMetric::Cdps);
         stats.hps = static_cast<double>(stats.effective_healing) / safe_duration;
         stats.cpm = static_cast<double>(stats.casts) * 60.0 / safe_duration;
         // m_total_damage counts friendly sources only, so an enemy row measured against
@@ -734,6 +828,7 @@ void MetricsAccumulator::clear() {
     m_buff_credits.clear();
     m_recaps.clear();
     m_gcds.clear();
+    m_timeline.clear();
     m_start_us = 0;
     m_total_damage = 0;
     m_total_healing = 0;

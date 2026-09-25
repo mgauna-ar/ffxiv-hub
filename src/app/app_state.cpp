@@ -38,6 +38,8 @@ AppState::AppState() {
         DesktopView::LatencyMitigator
     });
 
+    // Only the desktop draws a timeline, so only this engine keeps one.
+    m_engine.set_timeline_enabled(true);
     register_ipc_callbacks();
 }
 
@@ -490,6 +492,11 @@ std::optional<meter::EncounterSummary> AppState::get_pull(size_t index) {
 std::vector<meter::EncounterSummary> AppState::get_pull_history() {
     std::lock_guard<std::mutex> lock(m_combat_mutex);
     return m_engine.pull_history();
+}
+
+meter::EncounterTimeline AppState::get_timeline(uint64_t encounter_id) {
+    std::lock_guard<std::mutex> lock(m_combat_mutex);
+    return m_engine.timeline(encounter_id);
 }
 
 void AppState::reset_encounter() {

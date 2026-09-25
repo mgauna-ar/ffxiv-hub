@@ -1,4 +1,5 @@
 #include "app/ui/combat_view_common.hpp"
+#include "app/ui/config_binding.hpp"
 #include "app/ui/theme.hpp"
 #include "app/ui/widgets.hpp"
 #include <cstdio>
@@ -11,6 +12,10 @@ void combat_table_headers_row() {
     ImGui::PushStyleColor(ImGuiCol_Text, v4(colors::TextDim));
     ImGui::TableHeadersRow();
     ImGui::PopStyleColor();
+}
+
+meter::DpsMetric selected_dps_metric() {
+    return meter::dps_metric_from(static_cast<uint32_t>(cfg_int("combat_meter", "dps_metric", 0)));
 }
 
 SummaryNames::SummaryNames(const meter::EncounterSummary& summary) {

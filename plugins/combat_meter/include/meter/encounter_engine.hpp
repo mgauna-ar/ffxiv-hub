@@ -7,6 +7,7 @@
 #include "meter/status_uptime.hpp"
 #include "meter/death_log.hpp"
 #include "meter/boss_tracker.hpp"
+#include "meter/timeline.hpp"
 #include <chrono>
 #include <vector>
 #include <string>
@@ -176,6 +177,16 @@ public:
         m_history_capacity = capacity;
     }
 
+    /// Keeps every pull second by second for the Timeline tab. Off by default: the
+    /// in-game engine has no use for one.
+    void set_timeline_enabled(bool enabled);
+
+    /// The timeline of the archived pull `encounter_id`, or of the live pull for 0.
+    /// Empty when there is none. Never part of a summary, so copying a pull for a
+    /// table does not copy its timeline too.
+    [[nodiscard]] EncounterTimeline timeline(uint64_t encounter_id,
+                                             TimePoint now = std::chrono::steady_clock::now()) const;
+
     /// Current live encounter snapshot. Recomputes the derived rates first if
     /// packets have landed since the last recalculate, so it is not const.
     [[nodiscard]] EncounterSummary current_summary(TimePoint now = std::chrono::steady_clock::now());
@@ -199,9 +210,15 @@ private:
     [[nodiscard]] EncounterSummary summary_locked(TimePoint now, bool with_detail);
     void add_detail_rows_locked(EncounterSummary& summary, uint64_t end_us) const;
 
+    struct ArchivedPull {
+        EncounterSummary summary;
+        EncounterTimeline timeline;
+    };
+
     mutable std::recursive_mutex m_mutex;
     /// Packets recorded since the last recalculate().
     bool m_dirty{false};
+    bool m_timeline_enabled{false};
 
     double m_inactivity_timeout_seconds{constants::DEFAULT_INACTIVITY_TIMEOUT_SECONDS};
     size_t m_history_capacity{constants::DEFAULT_HISTORY_CAPACITY};
@@ -227,7 +244,7 @@ private:
     /// The live pull data still describes the latest archived pull.
     bool m_live_holds_latest_pull{false};
     std::vector<StatusChange> m_status_changes;
-    std::deque<EncounterSummary> m_pull_history;
+    std::deque<ArchivedPull> m_pull_history;
 };
 
 } // namespace hub::meter
