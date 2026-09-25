@@ -68,9 +68,9 @@ public:
     void set_connected(bool connected) noexcept;
 
     /// One vitals pass, from the payload's orchestration thread: each actor's death
-    /// or raise first, then its status list if it changed, both applied locally and
-    /// published. With track_vitals off nothing is read, and every list published
-    /// so far is cleared once.
+    /// or raise first, then an enemy's HP and the status list if they changed, all
+    /// applied locally and published. With track_vitals off nothing is read, and
+    /// every list published so far is cleared once.
     void on_vitals(std::span<const ActorVitals> actors, uint64_t now_us);
 
     /// Whether the payload should read vitals at all this pass.

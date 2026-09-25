@@ -418,6 +418,29 @@ struct ActorLabel {
     Job job{Job::None};
 };
 
+/// The enemy a pull was fought against, as the pull ended.
+struct BossSummary {
+    EntityId id{0};                       // 0 when no enemy took damage
+    std::string name;
+    double hp_pct{-1.0};                  // < 0 when its HP was never read
+    bool killed{false};                   // Its HP read 0
+
+    [[nodiscard]] bool hp_known() const noexcept { return hp_pct >= 0.0; }
+};
+
+/// How a finished pull ended, as the pull list shows it.
+enum class PullOutcome : uint8_t {
+    Clear,  // The boss's HP read 0, or no HP was read and the party lived
+    Wipe,   // The party died with the boss standing
+    Ended,  // Both sides lived: a reset, a timeout or leaving the zone
+};
+
+[[nodiscard]] inline PullOutcome pull_outcome(EncounterState state, const BossSummary& boss) noexcept {
+    if (boss.killed) return PullOutcome::Clear;
+    if (state == EncounterState::Wipe) return PullOutcome::Wipe;
+    return boss.hp_known() ? PullOutcome::Ended : PullOutcome::Clear;
+}
+
 struct EncounterSummary {
     uint64_t encounter_id{0};
     uint32_t zone_id{0};
@@ -435,6 +458,7 @@ struct EncounterSummary {
     double total_hps{0.0};
     EncounterState state{EncounterState::Idle};
     EncounterEndReason end_reason{EncounterEndReason::None};
+    BossSummary boss;
     std::vector<CombatantStats> combatants;
 
     /// Detail rows. Empty in a rankings-only snapshot.

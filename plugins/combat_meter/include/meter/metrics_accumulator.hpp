@@ -101,6 +101,9 @@ public:
     /// Non-friendly actors that took the most damage, most first.
     [[nodiscard]] std::vector<EntityId> top_enemies(size_t max, const CombatantRegistry& registry) const;
 
+    /// A real actor that is not friendly and not the Limit Break row.
+    [[nodiscard]] static bool is_enemy(EntityId entity_id, const CombatantRegistry& registry);
+
     /// Row for a combatant, created from the registry when missing.
     CombatantStats& stats_for(EntityId entity_id, const CombatantRegistry& registry) {
         return get_or_create_stats(entity_id, registry);

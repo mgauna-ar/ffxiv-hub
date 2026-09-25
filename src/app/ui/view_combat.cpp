@@ -74,24 +74,31 @@ struct Badge {
     uint32_t color;
 };
 
-/// Encounter state as a badge, so the live/wipe/clear distinction is visible at a
-/// glance instead of being one more grey word in a row of separators.
-Badge encounter_state_badge(meter::EncounterState state) {
-    switch (state) {
-        case meter::EncounterState::InCombat: return {"In combat", colors::SuccessLight};
-        case meter::EncounterState::Wipe:     return {"Wipe", colors::Danger};
-        case meter::EncounterState::Complete: return {"Clear", colors::WarningLight};
-        default:                              return {"Idle", colors::TextDim};
+/// How a finished pull ended. Ended is grey: the boss was still standing.
+Badge pull_outcome_badge(meter::EncounterState state, const meter::BossSummary& boss) {
+    switch (meter::pull_outcome(state, boss)) {
+        case meter::PullOutcome::Wipe:  return {"Wipe", colors::Danger};
+        case meter::PullOutcome::Ended: return {"Ended", colors::TextDim};
+        default:                        return {"Clear", colors::WarningLight};
     }
 }
 
-/// How an archived pull ended. Anything but a wipe or a clear timed out.
-Badge pull_outcome_badge(meter::EncounterState state) {
+/// Encounter state as a badge, so the live/wipe/clear distinction is visible at a
+/// glance instead of being one more grey word in a row of separators.
+Badge encounter_state_badge(meter::EncounterState state, const meter::BossSummary& boss) {
     switch (state) {
-        case meter::EncounterState::Wipe:     return {"Wipe", colors::Danger};
-        case meter::EncounterState::Complete: return {"Clear", colors::WarningLight};
-        default:                              return {"Timeout", colors::TextDim};
+        case meter::EncounterState::InCombat: return {"In combat", colors::SuccessLight};
+        case meter::EncounterState::Idle:     return {"Idle", colors::TextDim};
+        default:                              return pull_outcome_badge(state, boss);
     }
+}
+
+/// "Titan at 23.4%" or "Titan killed"; just the name when its HP was never read.
+std::string boss_line(const meter::BossSummary& boss) {
+    const std::string name = boss.name.empty() ? std::string("Boss") : boss.name;
+    if (boss.killed) return name + " killed";
+    if (boss.hp_known()) return name + " at " + format_percentage(boss.hp_pct);
+    return boss.name;
 }
 
 float rail_row_height() {
@@ -111,9 +118,9 @@ bool rail_row(const char* label, bool selected, Badge badge) {
     return clicked;
 }
 
-/// One archived pull: outcome dot, number and duration, then deaths and end time
-/// only while they fit, so a narrow rail drops detail instead of clipping it. The
-/// tooltip always carries all of it.
+/// One archived pull: outcome dot, number and duration, then the boss's HP left,
+/// deaths and end time only while they fit, so a narrow rail drops detail instead of
+/// clipping it. The tooltip always carries all of it.
 bool pull_row(const meter::PullHistoryEntry& pull, bool selected, float number_w) {
     const ImVec2 pos = ImGui::GetCursorScreenPos();
     const float right = pos.x + ImGui::GetContentRegionAvail().x;
@@ -122,21 +129,23 @@ bool pull_row(const meter::PullHistoryEntry& pull, bool selected, float number_w
     const bool clicked = ImGui::Selectable(id.c_str(), selected, ImGuiSelectableFlags_None,
                                            ImVec2(0.0f, row_h));
 
-    const Badge outcome = pull_outcome_badge(pull.state);
+    const Badge outcome = pull_outcome_badge(pull.state, pull.boss);
     const std::string number = "#" + std::to_string(pull.encounter_id);
     const std::string duration = format_duration(static_cast<uint64_t>(pull.duration_seconds));
     const bool has_clock = pull.ended_at_unix_s != 0;
     const std::string clock = format_clock_time(pull.ended_at_unix_s);
+    const std::string boss_hp = pull.boss.hp_known() && !pull.boss.killed
+        ? format_percentage(pull.boss.hp_pct) : std::string();
 
     if (ImGui::IsItemHovered()) {
         const char* plural = pull.death_count == 1 ? "" : "s";
-        if (has_clock) {
-            ImGui::SetTooltip("Pull %s - %s\nEnded %s - %s - %zu death%s", number.c_str(),
-                              outcome.label, clock.c_str(), duration.c_str(), pull.death_count, plural);
-        } else {
-            ImGui::SetTooltip("Pull %s - %s\n%s - %zu death%s", number.c_str(), outcome.label,
-                              duration.c_str(), pull.death_count, plural);
-        }
+        std::string tip = "Pull " + number + " - " + outcome.label;
+        const std::string boss = boss_line(pull.boss);
+        if (!boss.empty()) tip += "\n" + boss;
+        tip += "\n";
+        if (has_clock) tip += "Ended " + clock + " - ";
+        tip += duration + " - " + std::to_string(pull.death_count) + " death" + plural;
+        ImGui::SetTooltip("%s", tip.c_str());
     }
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -156,7 +165,13 @@ bool pull_row(const meter::PullHistoryEntry& pull, bool selected, float number_w
     dl->AddText(ImVec2(x, text_y), selected ? colors::TextPrimary : colors::TextBody, duration.c_str());
     x += duration_w + gap;
 
-    // Deaths outrank the end time, so the time only gets what the deaths leave.
+    // How far the boss got outranks the deaths, which outrank the end time.
+    if (!boss_hp.empty()) {
+        const float boss_w = ImGui::CalcTextSize(boss_hp.c_str()).x;
+        if (x + boss_w > right) return clicked;
+        dl->AddText(ImVec2(x, text_y), colors::TextMuted, boss_hp.c_str());
+        x += boss_w + gap;
+    }
     float room = right - x;
     if (pull.death_count > 0) {
         const std::string deaths = ICON_SKULL " " + std::to_string(pull.death_count);
@@ -292,11 +307,16 @@ void render_top_bar(AppState& app_state, const meter::EncounterSummary& summary,
     opts.auto_height = true;
     begin_card("##CombatTopBar", ImVec2(0.0f, 0.0f), opts);
 
+    // The archive listing is re-read every frame and a late kill can still change a
+    // pull after it was selected, so an archived pull's boss comes from there.
+    const meter::BossSummary& boss = archived != nullptr ? archived->boss : summary.boss;
+
     // What the tables below are showing, since the picker sits beside them.
     std::string title = "Live encounter";
     if (archived != nullptr) {
         std::string zone = meter::zone_label(archived->zone_id, archived->zone_name);
         if (zone.empty()) zone = "Unknown zone";
+        if (!boss.name.empty()) zone += " \xC2\xB7 " + boss.name;
         title = zone + "  -  Pull #" + std::to_string(archived->encounter_id);
     }
     ImGui::PushFont(bold_font());
@@ -334,8 +354,14 @@ void render_top_bar(AppState& app_state, const meter::EncounterSummary& summary,
     stat("COMBATANTS", std::to_string(summary.combatants.size()), colors::TextPrimary);
     stat("DEATHS", std::to_string(summary.deaths.size()),
          summary.deaths.empty() ? colors::TextPrimary : colors::DangerLight);
+    if (boss.killed) {
+        stat("BOSS HP", "Killed", colors::WarningLight);
+    } else if (boss.hp_known()) {
+        stat("BOSS HP", format_percentage(boss.hp_pct), colors::TextPrimary);
+    }
 
-    const Badge state = encounter_state_badge(summary.state);
+    const meter::EncounterState outcome_state = archived != nullptr ? archived->state : summary.state;
+    const Badge state = encounter_state_badge(outcome_state, boss);
     const char* reset_label = ICON_RESET "  Reset encounter";
     const float actions_w = pill_width(state.label) + m(10.0f) +
                             button_width(reset_label, ButtonSize::Medium);
@@ -567,8 +593,9 @@ void render_plugin_section(AppState& app_state) {
 
     bool track_vitals = cfg_bool(METER, "track_vitals", true);
     if (setting_toggle("Track deaths, buffs and debuffs",
-                       "Reads party HP and status lists 4 times a second. Off, the Deaths and "
-                       "Buffs & Debuffs tabs stay empty.", &track_vitals)) {
+                       "Reads party and enemy HP and status lists 4 times a second. Off, the "
+                       "Deaths and Buffs & Debuffs tabs stay empty and pulls show no boss HP.",
+                       &track_vitals)) {
         cfg_store(METER, "track_vitals", track_vitals);
         app_state.send_combat_track_vitals(track_vitals);
     }

@@ -54,6 +54,17 @@ bool VitalsTracker::status_list_changed(const ipc::StatusListPacket& list) {
     return changed;
 }
 
+bool VitalsTracker::enemy_hp_changed(const ipc::EnemyHpPacket& hp) {
+    Tracked& tracked = m_actors[hp.entity_id];
+    if (tracked.hp_sent && tracked.last_hp == hp.current_hp && tracked.last_max_hp == hp.max_hp) {
+        return false;
+    }
+    tracked.hp_sent = true;
+    tracked.last_hp = hp.current_hp;
+    tracked.last_max_hp = hp.max_hp;
+    return true;
+}
+
 std::vector<EntityId> VitalsTracker::retain(std::span<const EntityId> seen) {
     std::vector<EntityId> cleared;
     for (auto it = m_actors.begin(); it != m_actors.end();) {
@@ -73,6 +84,7 @@ std::vector<EntityId> VitalsTracker::retain(std::span<const EntityId> seen) {
 void VitalsTracker::invalidate() {
     for (auto& [id, tracked] : m_actors) {
         tracked.list_sent = false;
+        tracked.hp_sent = false;
     }
 }
 

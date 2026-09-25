@@ -25,7 +25,7 @@ packets. It must report zero data races.
 
 In-game, four threads reach one engine: the `ReceiveActionEffect`/`ProcessHotDot` detours
 on the game's main thread, the payload orchestration thread (`sync_party`, `set_zone`,
-`update`, and the vitals pass: status lists, life events, `tracked_enemies`), the DX11 `Present` thread rendering `CombatOverlay`, and the `PipeClient`
+`update`, and the vitals pass: status lists, life events, `tracked_enemies`, enemy HP), the DX11 `Present` thread rendering `CombatOverlay`, and the `PipeClient`
 reader thread dispatching commands.
 
 Every public entry point takes `EncounterEngine::m_mutex`, which is recursive because the

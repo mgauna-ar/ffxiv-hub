@@ -6,6 +6,7 @@
 #include "meter/metrics_accumulator.hpp"
 #include "meter/status_uptime.hpp"
 #include "meter/death_log.hpp"
+#include "meter/boss_tracker.hpp"
 #include <chrono>
 #include <vector>
 #include <string>
@@ -34,6 +35,7 @@ struct PullHistoryEntry {
     size_t death_count{0};
     EncounterState state{EncounterState::Idle};
     EncounterEndReason end_reason{EncounterEndReason::None};
+    BossSummary boss;
 };
 
 /**
@@ -67,6 +69,11 @@ public:
     /// its pull was archived joins that pull if it ended at most kLateLifeEventUs earlier.
     void process_life_event(const ipc::LifeEventPacket& packet);
 
+    /// A tracked enemy's HP, for the boss readout only. Never starts a pull and is not
+    /// activity. A 0 for the boss stamped after its pull was archived still marks
+    /// that pull killed, within kLateLifeEventUs of its end.
+    void process_enemy_hp(const ipc::EnemyHpPacket& packet);
+
     /// Death recap for `entity` from what the live pull saw land on it.
     [[nodiscard]] ipc::LifeEventPacket build_life_event(EntityId entity, LifeEventKind kind, uint64_t timestamp_us) const;
 
@@ -79,8 +86,8 @@ public:
         return m_pulls_started;
     }
 
-    /// How long after a pull's end a death still belongs to it: a wipe can be
-    /// detected from actor info before the last deaths arrive on their own lane.
+    /// How long after a pull's end a death or a boss's 0 HP still belongs to it: a
+    /// wipe can be detected from actor info before those arrive on their own lane.
     static constexpr uint64_t kLateLifeEventUs = 5'000'000;
 
     /// Periodic tick to check inactivity timeouts and party wipe conditions
@@ -175,6 +182,8 @@ public:
 private:
     void check_inactivity(TimePoint now);
     void check_wipe(TimePoint now);
+    /// Damage from the party's side landing on an enemy; a kill's clock stops at the last.
+    [[nodiscard]] bool hits_enemy_locked(EntityId source, EntityId target) const;
 
     // Callers already hold m_mutex.
     void start_encounter_locked(TimePoint now, uint64_t timestamp_us = 0);
@@ -203,12 +212,14 @@ private:
 
     TimePoint m_start_time{};
     TimePoint m_last_activity_time{};
+    TimePoint m_last_enemy_hit_time{};
     uint64_t m_start_time_us{0};
 
     MetricsAccumulator m_accumulator;
     CombatantRegistry m_registry;
     StatusUptime m_uptime;
     DeathLog m_death_log;
+    BossTracker m_bosses;
     /// The live pull data still describes the latest archived pull.
     bool m_live_holds_latest_pull{false};
     std::vector<StatusChange> m_status_changes;

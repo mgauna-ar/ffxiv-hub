@@ -35,6 +35,7 @@ enum class MessageType : uint16_t {
     CombatControl       = 0x0206,
     CombatStatusList    = 0x0207,
     CombatLifeEvent     = 0x0208,
+    CombatEnemyHp       = 0x0209,
 };
 
 /// Runtime command IDs sent from desktop manager to payload plugins

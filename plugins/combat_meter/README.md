@@ -25,7 +25,8 @@ app, or from its card on the dashboard.
   A status that expires between reads is closed at its own timer, so uptime isn't rounded
   to the polling interval.
 - **Every pull kept.** Pulls split on their own after inactivity, on a wipe, or on a zone
-  change, and are listed by duty with a clear or wipe badge.
+  change, and are listed by duty. Each shows whether the boss died, and if it didn't, how
+  much HP it had left.
 
 ---
 
@@ -62,7 +63,29 @@ It ends in one of four ways:
 Duration is measured to the *last combat action*, not to the moment the timeout fired, so
 a 7-second gap does not inflate the pull and deflate everyone's DPS. Wipes and zone
 changes are trimmed the same way, since both are also detected after the fact. Only a
-manual end takes the full elapsed time.
+manual end takes the full elapsed time. A kill stops the clock earlier still, whatever
+ended the pull; see [The boss and how a pull ended](#the-boss-and-how-a-pull-ended).
+
+### The boss and how a pull ended
+
+A pull's boss is the enemy the party damaged that has the most max HP; on a tie, the one
+that took more damage. Its HP is read along with deaths and statuses (see
+[Deaths, buffs and debuffs](#deaths-buffs-and-debuffs)), so every pull records how far it
+got:
+
+- **Clear**: the boss's HP read 0.
+- **Wipe**: the party died with the boss still standing.
+- **Ended**: both sides lived. The party reset or walked away, the fight had a downtime
+  longer than the idle timeout, or the zone changed.
+
+A wipe or an ended pull shows the boss's HP left. With `track_vitals` off no HP is read,
+so a pull the party survived is badged **Clear**, and the boss is still named.
+
+A kill stops the pull's clock at the party's last hit on an enemy. Heals and HoT ticks after
+it keep the pull open until the idle timeout, but they are not the fight and don't count
+toward its duration. A 0 read for the boss up to 5 seconds after the pull ended still
+marks it cleared, since a wipe can be noticed a moment before that read arrives. Any
+other read that late is ignored: by then the boss may already be resetting.
 
 ### Pet attribution
 
@@ -178,11 +201,11 @@ Balance, the Spear and the Wanderer's Minuet.
 ## Deaths, buffs and debuffs
 
 Action packets say what hit whom, but not who died or what statuses anyone had. The meter
-gets both by reading the game four times a second: HP for every party member (the local
-player when solo), and the status list of each party member and of the four enemies taking
-the most damage. The reads never start a pull and never keep one open: a buff ticking down
-is not combat. `track_vitals` switches the polling off entirely, and the Deaths and
-Buffs & Debuffs tabs then stay empty.
+gets both by reading the game four times a second: the HP and status list of every party
+member (the local player when solo) and of the four enemies taking the most damage. The
+reads never start a pull and never keep one open: a buff ticking down is not combat.
+`track_vitals` switches the polling off entirely. The Deaths and Buffs & Debuffs tabs then
+stay empty, and pulls show no boss HP.
 
 ### Deaths
 
@@ -235,10 +258,12 @@ and source: hits, total, average, largest hit, and deaths caused.
 **Desktop view.** Six tabs: **Damage**, **Healing**, **Damage Taken**, **Deaths**,
 **Buffs & Debuffs**, and **Settings**. Every tab but Settings shows a pull list rail on
 the left. The live fight is at the top, then the pull history grouped by duty: each pull
-has an outcome dot (gold clear, red wipe, grey timeout), its number and duration, then
-its death count and end time while the rail has room for them. Hovering a pull shows all
-of it. The trash button in the history header clears the archive after asking. The rail
-is the only place a pull is chosen, and it narrows on a small window. Beside it:
+has an outcome dot (gold clear, red wipe, grey ended), its number and duration, then the
+boss's HP left, its death count and end time while the rail has room for them. Hovering a
+pull shows all of it, with the boss's name. The trash button in the history header clears
+the archive after asking. The rail is the only place a pull is chosen, and it narrows on a
+small window. Beside it, a header names the selected pull's duty and boss and sums it up:
+duration, raid DPS and HPS, combatants, deaths, the boss's HP and the outcome. Below it:
 
 - **Damage** and **Healing**: the selected pull's rankings. Damage has share, crit, direct
   hit and crit-direct-hit rates, job-coloured bars and a Deaths column. Its rate column
@@ -290,7 +315,7 @@ not the intended interface.
 | `show_col_cdh` | bool | `true` | Show the crit-direct-hit column. |
 | `overlay_metric` | int | `0` | In-game overlay metric: `0` damage, `1` healing. |
 | `dps_metric` | int | `0` | Damage rate both tables show and rank by: `0` DPS, `1` rDPS, `2` aDPS, `3` nDPS, `4` cDPS. |
-| `track_vitals` | bool | `true` | Read HP and status lists four times a second for deaths, buffs and debuffs. Off, nothing is read. |
+| `track_vitals` | bool | `true` | Read HP and status lists four times a second for deaths, buffs, debuffs and the boss's HP. Off, nothing is read. |
 | `overlay_visible` | bool | `true` | Draw the in-game overlay. |
 | `overlay_x`, `overlay_y` | float | `-1.0` | Position. Negative means never placed — the overlay picks its own default. |
 | `overlay_width`, `overlay_height` | float | `800.0`, `480.0` | Size. |
@@ -356,6 +381,18 @@ DPS only. See [Limit Break](#limit-break).
 Seven seconds without combat ends a pull, and so do a wipe and a zone change. For fights
 with long downtime, raise *End encounter after idle* in Settings. See
 [Starting and ending a pull](#starting-and-ending-a-pull).
+
+</details>
+
+<details>
+<summary><b>Why does a pull say Ended instead of Clear?</b></summary>
+
+<br>
+
+The boss was still standing when the pull ended. The party reset, walked away, or sat
+through a downtime longer than the idle timeout; the rail shows how much HP the boss had
+left. For fights with long downtime, raise *End encounter after idle* in Settings. See
+[The boss and how a pull ended](#the-boss-and-how-a-pull-ended).
 
 </details>
 

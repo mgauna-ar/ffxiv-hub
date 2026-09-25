@@ -38,7 +38,7 @@ no installer.
   time until the raise.
 - Uptime for buffs, debuffs and DoTs, and damage taken per ability.
 - A pull history that splits on its own after 7 s without combat, on a wipe, or on a
-  zone change.
+  zone change. Each pull shows whether the boss died, or how much HP it had left.
 
 **⚡ [Latency Mitigator](plugins/latency_mitigator/README.md) lets you double-weave on a
 high-ping connection.**
@@ -165,7 +165,7 @@ telemetry and draws no overlay. Flip it from the plugin's page or its dashboard 
 
 | Plugin | What it does |
 |---|---|
-| [**Combat Meter**](plugins/combat_meter/README.md) | DPS and HPS with overheal separated, rDPS/aDPS/nDPS/cDPS from raid buff credit, crit/DH/CDH rates, automatic pet attribution, deaths with killing blow and recap, buff/debuff/DoT uptime, damage taken by ability, encounter tracking and pull history |
+| [**Combat Meter**](plugins/combat_meter/README.md) | DPS and HPS with overheal separated, rDPS/aDPS/nDPS/cDPS from raid buff credit, crit/DH/CDH rates, automatic pet attribution, deaths with killing blow and recap, buff/debuff/DoT uptime, damage taken by ability, encounter tracking and pull history with the boss's HP left |
 | [**Latency Mitigator**](plugins/latency_mitigator/README.md) | Animation lock compensation for clean double-weaving on high latency, with a live ping and RTT HUD |
 
 Each plugin's README covers how it works, its in-game overlay, its desktop view and its

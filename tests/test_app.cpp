@@ -192,6 +192,61 @@ TEST_CASE(PipeServer, CombatPacketsWithoutCreditsFromAnOlderPayload) {
     TEST_ASSERT_EQ(action_credits, 1u);
 }
 
+TEST_CASE(PipeServer, RoutesEnemyHp) {
+    ipc::PipeServer server;
+    ipc::CombatEnemyHpPayload received{};
+    server.set_combat_enemy_hp_callback([&](const ipc::CombatEnemyHpPayload& hp) { received = hp; });
+
+    ipc::CombatEnemyHpPayload hp{};
+    hp.entity_id = 0x40000001;
+    hp.current_hp = 23400;
+    hp.max_hp = 100000;
+    hp.timestamp_us = 5'000'000;
+    TEST_ASSERT(server.process_raw_packet(ipc::serialize_typed_packet(
+        PluginId::CombatMeter, MessageType::CombatEnemyHp, 1, hp)));
+    TEST_ASSERT_EQ(received.entity_id, 0x40000001u);
+    TEST_ASSERT_EQ(received.current_hp, 23400u);
+    TEST_ASSERT_EQ(received.max_hp, 100000u);
+    TEST_ASSERT_EQ(received.timestamp_us, 5'000'000u);
+}
+
+TEST_CASE(AppState, EnemyHpReachesTheBossReadout) {
+    app::AppState state;
+    state.initialize();
+
+    ipc::CombatActorInfoPayload actor{};
+    actor.entity_id = 1001;
+    actor.actor_type = static_cast<uint8_t>(meter::ActorType::Player);
+    actor.job_id = static_cast<uint32_t>(meter::Job::WAR);
+    actor.max_hp = 100000;
+    actor.current_hp = 100000;
+    state.pipe_server().process_raw_packet(
+        ipc::serialize_typed_packet(PluginId::CombatMeter, MessageType::CombatActorInfo, 1, actor));
+
+    ipc::CombatActionPayload act{};
+    act.source_id = 1001;
+    act.target_id = 0x40000001;
+    act.action_id = 31;
+    act.damage = 25000;
+    act.effect_type = static_cast<uint16_t>(meter::EffectType::Damage);
+    act.timestamp_us = 10'000'000;
+    state.pipe_server().process_raw_packet(
+        ipc::serialize_typed_packet(PluginId::CombatMeter, MessageType::CombatAction, 2, act));
+
+    ipc::CombatEnemyHpPayload hp{};
+    hp.entity_id = 0x40000001;
+    hp.current_hp = 42000;
+    hp.max_hp = 100000;
+    hp.timestamp_us = 10'500'000;
+    state.pipe_server().process_raw_packet(
+        ipc::serialize_typed_packet(PluginId::CombatMeter, MessageType::CombatEnemyHp, 3, hp));
+
+    const auto summary = state.get_live_summary();
+    TEST_ASSERT_EQ(summary.boss.id, 0x40000001u);
+    TEST_ASSERT_NEAR(summary.boss.hp_pct, 42.0, 1e-9);
+    state.shutdown();
+}
+
 TEST_CASE(AppState, InitializationAndRegisteredPlugins) {
     app::AppState state;
     TEST_ASSERT(state.initialize());

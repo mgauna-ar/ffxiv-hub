@@ -462,8 +462,7 @@ const RecapRing* MetricsAccumulator::recap_for(EntityId target) const {
 std::vector<EntityId> MetricsAccumulator::top_enemies(size_t max, const CombatantRegistry& registry) const {
     std::vector<std::pair<uint64_t, EntityId>> enemies;
     for (const auto& [id, stats] : m_combatants) {
-        if (stats.damage_taken == 0 || !hub::game::is_real_entity_id(id)) continue;
-        if (id == hub::game::LIMIT_BREAK_COMBATANT_ID || registry.is_friendly(id)) continue;
+        if (stats.damage_taken == 0 || !is_enemy(id, registry)) continue;
         enemies.emplace_back(stats.damage_taken, id);
     }
     std::sort(enemies.begin(), enemies.end(), [](const auto& a, const auto& b) {
@@ -474,6 +473,11 @@ std::vector<EntityId> MetricsAccumulator::top_enemies(size_t max, const Combatan
         ids.push_back(enemies[i].second);
     }
     return ids;
+}
+
+bool MetricsAccumulator::is_enemy(EntityId entity_id, const CombatantRegistry& registry) {
+    return hub::game::is_real_entity_id(entity_id) && entity_id != hub::game::LIMIT_BREAK_COMBATANT_ID
+        && !registry.is_friendly(entity_id);
 }
 
 void MetricsAccumulator::merge_combatants(EntityId from_id, EntityId to_id, const CombatantRegistry& registry) {

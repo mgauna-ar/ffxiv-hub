@@ -207,6 +207,18 @@ void CombatPlugin::on_vitals(std::span<const ActorVitals> actors, uint64_t now_u
                         publish(MessageType::CombatLifeEvent, event);
                     }
                 }
+                // For the boss readout only; an enemy's HP never goes to update_hp.
+                if (vitals.is_enemy && vitals.max_hp > 0) {
+                    ipc::EnemyHpPacket hp{};
+                    hp.entity_id = vitals.entity;
+                    hp.current_hp = vitals.hp;
+                    hp.max_hp = vitals.max_hp;
+                    hp.timestamp_us = now_us;
+                    if (m_vitals.enemy_hp_changed(hp)) {
+                        m_engine.process_enemy_hp(hp);
+                        publish(MessageType::CombatEnemyHp, hp);
+                    }
+                }
                 if (!vitals.statuses_read) continue;
                 const ipc::StatusListPacket list = make_status_list(vitals, registry, now_us);
                 if (m_vitals.status_list_changed(list)) {

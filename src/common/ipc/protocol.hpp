@@ -260,6 +260,16 @@ struct CombatLifeEventPayload {
 };
 static_assert(sizeof(CombatLifeEventPayload) == 216, "CombatLifeEventPayload must be 216 bytes");
 
+/// 0x0209: A tracked enemy's HP, sent when it changes. Only the boss readout uses it.
+struct CombatEnemyHpPayload {
+    uint32_t entity_id{0};
+    uint32_t current_hp{0};
+    uint32_t max_hp{0};
+    uint8_t  pad[4]{0};
+    uint64_t timestamp_us{0};
+};
+static_assert(sizeof(CombatEnemyHpPayload) == 24, "CombatEnemyHpPayload must be 24 bytes");
+
 #pragma pack(pop)
 
 // Friendly type aliases for combat meter components
@@ -270,6 +280,7 @@ using PartySyncPacket = CombatPartySyncPayload;
 using EncounterControlPacket = CombatControlPayload;
 using StatusListPacket = CombatStatusListPayload;
 using LifeEventPacket = CombatLifeEventPayload;
+using EnemyHpPacket = CombatEnemyHpPayload;
 
 /// Serialize any typed payload into a byte vector with PacketHeader
 std::vector<uint8_t> serialize_packet(

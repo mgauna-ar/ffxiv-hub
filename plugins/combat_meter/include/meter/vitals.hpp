@@ -43,6 +43,10 @@ public:
     /// records `list` as sent.
     [[nodiscard]] bool status_list_changed(const ipc::StatusListPacket& list);
 
+    /// True when an enemy's HP differs from what was last sent for it. A true result
+    /// records it as sent.
+    [[nodiscard]] bool enemy_hp_changed(const ipc::EnemyHpPacket& hp);
+
     /// Forgets every actor not in `seen`. Returns those that still had statuses
     /// published, each needing one empty list so the listener clears them.
     [[nodiscard]] std::vector<EntityId> retain(std::span<const EntityId> seen);
@@ -58,6 +62,9 @@ private:
         bool alive{true};
         bool list_sent{false};
         ipc::StatusListPacket last_list{};
+        bool hp_sent{false};
+        uint32_t last_hp{0};
+        uint32_t last_max_hp{0};
     };
     std::unordered_map<EntityId, Tracked> m_actors;
 };

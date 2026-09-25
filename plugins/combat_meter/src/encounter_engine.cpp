@@ -1,4 +1,5 @@
 #include "meter/encounter_engine.hpp"
+#include "hub/game/entity.hpp"
 #include <algorithm>
 #include <unordered_set>
 
@@ -44,6 +45,11 @@ void EncounterEngine::process_action(const ipc::CombatActionPacket& packet, Time
     if (m_state == EncounterState::InCombat) {
         m_accumulator.record_action(packet, m_registry);
         m_last_activity_time = now;
+        // The same "damage that landed" test that opens a pull.
+        if (starts_encounter(packet)
+            && hits_enemy_locked(static_cast<EntityId>(packet.source_id), static_cast<EntityId>(packet.target_id))) {
+            m_last_enemy_hit_time = now;
+        }
         // Derived rates are recomputed by update() or lazily by current_summary();
         // doing it per packet walks every combatant on the game's detour thread.
         m_dirty = true;
@@ -62,8 +68,17 @@ void EncounterEngine::process_status_tick(const ipc::StatusTickPacket& packet, T
     if (m_state == EncounterState::InCombat) {
         m_accumulator.record_status_tick(packet, m_registry);
         m_last_activity_time = now;
+        if (static_cast<EffectType>(packet.effect_type) == EffectType::Damage && packet.damage_or_heal > 0
+            && hits_enemy_locked(packet.source_id, packet.target_id)) {
+            m_last_enemy_hit_time = now;
+        }
         m_dirty = true;
     }
+}
+
+bool EncounterEngine::hits_enemy_locked(EntityId source, EntityId target) const {
+    return hub::game::is_real_entity_id(source) && m_registry.is_friendly(m_registry.resolve_owner(source))
+        && MetricsAccumulator::is_enemy(target, m_registry);
 }
 
 void EncounterEngine::process_actor_info(const ipc::ActorInfoPacket& packet, TimePoint now) {
@@ -133,6 +148,31 @@ void EncounterEngine::process_life_event(const ipc::LifeEventPacket& packet) {
     }
 }
 
+void EncounterEngine::process_enemy_hp(const ipc::EnemyHpPacket& packet) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (!hub::game::is_real_entity_id(packet.entity_id)) {
+        return;
+    }
+    const uint64_t ts = packet.timestamp_us;
+    if (m_state == EncounterState::InCombat && ts >= m_start_time_us) {
+        m_bosses.observe_hp(packet.entity_id, packet.current_hp, packet.max_hp);
+        return;
+    }
+    // Only a kill is taken late. Any other read may already be the boss resetting.
+    if (m_pull_history.empty() || packet.current_hp != 0 || packet.max_hp == 0) {
+        return;
+    }
+    EncounterSummary& pull = m_pull_history.back();
+    if (packet.entity_id != pull.boss.id || ts < pull.start_time_us || ts > pull.end_time_us + kLateLifeEventUs) {
+        return;
+    }
+    pull.boss.hp_pct = 0.0;
+    pull.boss.killed = true;
+    if (m_live_holds_latest_pull) {
+        m_bosses.observe_hp(packet.entity_id, packet.current_hp, packet.max_hp);
+    }
+}
+
 ipc::LifeEventPacket EncounterEngine::build_life_event(EntityId entity, LifeEventKind kind, uint64_t timestamp_us) const {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
     return DeathLog::build_event(entity, kind, timestamp_us, m_accumulator);
@@ -185,6 +225,8 @@ void EncounterEngine::start_encounter_locked(TimePoint now, uint64_t timestamp_u
     ++m_pulls_started;
     m_death_log.clear();
     m_uptime.start(m_start_time_us, m_registry);
+    m_bosses.clear();
+    m_last_enemy_hit_time = TimePoint{};
     m_live_holds_latest_pull = false;
 }
 
@@ -198,14 +240,22 @@ void EncounterEngine::end_encounter_locked(EncounterEndReason reason, TimePoint 
         return;
     }
 
+    // A kill ends the fight at the party's last hit on an enemy, whatever ended the
+    // pull: the heals and HoT ticks after it would otherwise hold the clock open.
+    BossSummary boss = m_bosses.boss(m_accumulator, m_registry);
+    const bool trim_to_kill = boss.killed && m_last_enemy_hit_time >= m_start_time;
     // Everything but an explicit Manual end is detected some time after the fight
     // actually stopped, so the clock runs to the last combat activity rather than to
     // detection. A Manual end means "stop now" and takes the full elapsed time.
     const bool trim_dead_tail = (reason != EncounterEndReason::Manual)
         && (m_last_activity_time >= m_start_time);
-    const double dur = trim_dead_tail
-        ? std::chrono::duration<double>(m_last_activity_time - m_start_time).count()
-        : std::chrono::duration<double>(now - m_start_time).count();
+    TimePoint fight_end = now;
+    if (trim_to_kill) {
+        fight_end = m_last_enemy_hit_time;
+    } else if (trim_dead_tail) {
+        fight_end = m_last_activity_time;
+    }
+    const double dur = std::chrono::duration<double>(fight_end - m_start_time).count();
 
     m_accumulator.recalculate(dur, &m_registry);
     m_dirty = false;
@@ -215,7 +265,9 @@ void EncounterEngine::end_encounter_locked(EncounterEndReason reason, TimePoint 
     summary.zone_id = m_current_zone_id;
     summary.zone_name = m_current_zone_name;
     summary.start_time_us = m_start_time_us;
-    summary.end_time_us = (timestamp_us > 0) ? timestamp_us : m_start_time_us + static_cast<uint64_t>(dur * 1e6);
+    summary.end_time_us = (timestamp_us > 0 && !trim_to_kill)
+        ? timestamp_us
+        : m_start_time_us + static_cast<uint64_t>(dur * 1e6);
     summary.ended_at_unix_s = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::system_clock::now().time_since_epoch()).count());
@@ -228,6 +280,7 @@ void EncounterEngine::end_encounter_locked(EncounterEndReason reason, TimePoint 
     summary.total_hps = m_accumulator.total_hps();
     summary.state = (reason == EncounterEndReason::Wipe) ? EncounterState::Wipe : EncounterState::Complete;
     summary.end_reason = reason;
+    summary.boss = std::move(boss);
     summary.combatants = m_accumulator.sorted_by_dps();
     m_uptime.stop(summary.end_time_us);
     add_detail_rows_locked(summary, summary.end_time_us);
@@ -272,6 +325,7 @@ void EncounterEngine::reset_current_locked() {
     m_accumulator.clear();
     m_death_log.clear();
     m_uptime.clear();
+    m_bosses.clear();
     m_live_holds_latest_pull = false;
     m_state = EncounterState::Idle;
     m_dirty = false;
@@ -331,7 +385,8 @@ std::vector<PullHistoryEntry> EncounterEngine::pull_history_index() const {
             .combatant_count = pull.combatants.size(),
             .death_count = pull.deaths.size(),
             .state = pull.state,
-            .end_reason = pull.end_reason
+            .end_reason = pull.end_reason,
+            .boss = pull.boss
         });
     }
     return index;
@@ -404,6 +459,7 @@ void EncounterEngine::add_detail_rows_locked(EncounterSummary& summary, uint64_t
 
 EncounterSummary EncounterEngine::summary_locked(TimePoint now, bool with_detail) {
     double dur = 0.0;
+    const EncounterSummary* shown_pull = nullptr;
     if (m_state == EncounterState::InCombat) {
         dur = std::chrono::duration<double>(now - m_start_time).count();
         if (m_dirty) {
@@ -412,6 +468,7 @@ EncounterSummary EncounterEngine::summary_locked(TimePoint now, bool with_detail
         }
     } else if (const auto* pull = latest_pull_locked()) {
         dur = pull->duration_seconds;
+        if (m_live_holds_latest_pull) shown_pull = pull;
     }
 
     EncounterSummary summary;
@@ -430,6 +487,8 @@ EncounterSummary EncounterEngine::summary_locked(TimePoint now, bool with_detail
     summary.total_hps = m_accumulator.total_hps();
     summary.state = m_state;
     summary.end_reason = EncounterEndReason::None;
+    // An ended pull keeps the boss it was archived with, late kill included.
+    summary.boss = shown_pull ? shown_pull->boss : m_bosses.boss(m_accumulator, m_registry);
     summary.combatants = m_accumulator.sorted_by_dps(true, with_detail);
     if (with_detail) {
         add_detail_rows_locked(summary, summary.end_time_us);
