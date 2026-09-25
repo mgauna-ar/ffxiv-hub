@@ -231,28 +231,28 @@ void CombatPlugin::shutdown() {
 }
 
 void CombatPlugin::serialize_config(config::JsonValue& out) const {
+    // The app's commands change the overlay and engine, not m_config (the load-time
+    // copy), so read the live state or the autosave reverts them.
+    const CombatOverlay* overlay = m_overlay;
+    const uint32_t overlay_metric = overlay
+        ? (overlay->metric() == MeterMetric::Healing ? 1u : 0u)
+        : m_config.overlay_metric;
+
     out["plugin_enabled"] = config::JsonValue(is_enabled());
-    out["inactivity_timeout_seconds"] = config::JsonValue(m_config.inactivity_timeout_seconds);
-    out["party_only"] = config::JsonValue(m_config.party_only);
-    out["show_bars"] = config::JsonValue(m_config.show_bars);
-    out["hide_inactive"] = config::JsonValue(m_config.hide_inactive);
-    out["refresh_interval_ms"] = config::JsonValue(static_cast<uint32_t>(m_config.refresh_interval_ms));
-    out["show_col_share"] = config::JsonValue(m_config.show_col_share);
-    out["show_col_crit"] = config::JsonValue(m_config.show_col_crit);
-    out["show_col_dh"] = config::JsonValue(m_config.show_col_dh);
-    out["show_col_cdh"] = config::JsonValue(m_config.show_col_cdh);
-    out["overlay_metric"] = config::JsonValue(m_config.overlay_metric);
+    out["inactivity_timeout_seconds"] = config::JsonValue(m_engine.inactivity_timeout());
+    out["party_only"] = config::JsonValue(overlay ? overlay->party_only() : m_config.party_only);
+    out["show_bars"] = config::JsonValue(overlay ? overlay->show_progress_bars() : m_config.show_bars);
+    out["hide_inactive"] = config::JsonValue(overlay ? overlay->hide_inactive() : m_config.hide_inactive);
+    out["refresh_interval_ms"] = config::JsonValue(
+        overlay ? overlay->refresh_interval_ms() : m_config.refresh_interval_ms);
+    out["show_col_share"] = config::JsonValue(overlay ? overlay->show_col_share() : m_config.show_col_share);
+    out["show_col_crit"] = config::JsonValue(overlay ? overlay->show_col_crit() : m_config.show_col_crit);
+    out["show_col_dh"] = config::JsonValue(overlay ? overlay->show_col_dh() : m_config.show_col_dh);
+    out["show_col_cdh"] = config::JsonValue(overlay ? overlay->show_col_cdh() : m_config.show_col_cdh);
+    out["overlay_metric"] = config::JsonValue(overlay_metric);
     out["dps_metric"] = config::JsonValue(m_dps_metric.load(std::memory_order_relaxed));
     out["track_vitals"] = config::JsonValue(m_track_vitals.load(std::memory_order_relaxed));
-
-    // The overlay is the source of truth for anything that can change live
-    // (dragging/resizing the window, opacity/scale commands from the desktop
-    // app) - m_config only holds the last-loaded values for these until they're
-    // synced here, so read the live state back out.
-    if (m_overlay) {
-        out["party_only"] = config::JsonValue(m_overlay->party_only());
-    }
-    ui::serialize_overlay(m_overlay ? m_overlay->capture_config() : m_config.overlay, out);
+    ui::serialize_overlay(overlay ? overlay->capture_config() : m_config.overlay, out);
 }
 
 void CombatPlugin::deserialize_config(const config::JsonValue& in) {

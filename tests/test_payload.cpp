@@ -539,6 +539,99 @@ TEST_CASE(Payload, DispatchesMeterColumnAndBehaviourCommands) {
     TEST_ASSERT_EQ(overlay.refresh_interval_ms(), 250u);
 }
 
+TEST_CASE(Payload, MeterSettingsFromTheAppSurviveTheAutosave) {
+    // The autosave used to write the load-time values back over these.
+    meter::CombatPlugin combat;
+    combat.initialize();
+    meter::CombatOverlay overlay(&combat.engine());
+    combat.set_overlay(&overlay);
+    payload::CommandDispatchTargets targets;
+    targets.combat_plugin = &combat;
+    targets.combat_overlay = &overlay;
+
+    ipc::CommandPayload cmd{};
+    cmd.target_plugin_id = static_cast<uint32_t>(PluginId::CombatMeter);
+    const auto send = [&](CommandId id, uint32_t value, float value_float = 0.0f) {
+        cmd.command_id = static_cast<uint32_t>(id);
+        cmd.param_uint = value;
+        cmd.param_float = value_float;
+        payload::dispatch_command(targets, cmd);
+    };
+    send(CommandId::SetShowBars, 0);
+    send(CommandId::SetHideInactive, 1);
+    send(CommandId::SetRefreshInterval, 250);
+    send(CommandId::SetInactivityTimeout, 0, 20.0f);
+    send(CommandId::SetColumnShare, 0);
+    send(CommandId::SetColumnCrit, 0);
+    send(CommandId::SetColumnDh, 0);
+    send(CommandId::SetColumnCdh, 0);
+    send(CommandId::SetMeterMetric, 1);
+    send(CommandId::FilterPartyOnly, 1);
+
+    config::JsonValue saved(config::JsonValue::ObjectType{});
+    combat.serialize_config(saved);
+    TEST_ASSERT_FALSE(saved["show_bars"].as_bool(true));
+    TEST_ASSERT_TRUE(saved["hide_inactive"].as_bool(false));
+    TEST_ASSERT_EQ(saved["refresh_interval_ms"].as_int(0), 250);
+    TEST_ASSERT_NEAR(saved["inactivity_timeout_seconds"].as_double(0.0), 20.0, 1e-6);
+    TEST_ASSERT_FALSE(saved["show_col_share"].as_bool(true));
+    TEST_ASSERT_FALSE(saved["show_col_crit"].as_bool(true));
+    TEST_ASSERT_FALSE(saved["show_col_dh"].as_bool(true));
+    TEST_ASSERT_FALSE(saved["show_col_cdh"].as_bool(true));
+    TEST_ASSERT_EQ(saved["overlay_metric"].as_int(0), 1);
+    TEST_ASSERT_TRUE(saved["party_only"].as_bool(false));
+
+    // What was saved is what the next injection loads.
+    meter::CombatPlugin reloaded;
+    meter::CombatOverlay reloaded_overlay(&reloaded.engine());
+    reloaded.set_overlay(&reloaded_overlay);
+    reloaded.deserialize_config(saved);
+    TEST_ASSERT_FALSE(reloaded_overlay.show_progress_bars());
+    TEST_ASSERT_TRUE(reloaded_overlay.hide_inactive());
+    TEST_ASSERT_EQ(reloaded_overlay.refresh_interval_ms(), 250u);
+    TEST_ASSERT_NEAR(reloaded.engine().inactivity_timeout(), 20.0, 1e-6);
+    TEST_ASSERT_EQ(reloaded_overlay.metric(), meter::MeterMetric::Healing);
+
+    reloaded.set_overlay(nullptr);
+    combat.set_overlay(nullptr);
+}
+
+TEST_CASE(Payload, MitigatorSettingsFromTheAppSurviveTheAutosave) {
+    // The mitigator's save already reads live state; this keeps it that way.
+    mitigator::LatencyPlugin plugin;
+    mitigator::LatencyOverlay overlay;
+    plugin.set_overlay(&overlay);
+    payload::CommandDispatchTargets targets;
+    targets.latency_plugin = &plugin;
+    targets.latency_overlay = &overlay;
+
+    ipc::CommandPayload cmd{};
+    cmd.target_plugin_id = static_cast<uint32_t>(PluginId::LatencyMitigator);
+    const auto send = [&](CommandId id, uint32_t value, float value_float = 0.0f) {
+        cmd.command_id = static_cast<uint32_t>(id);
+        cmd.param_uint = value;
+        cmd.param_float = value_float;
+        payload::dispatch_command(targets, cmd);
+    };
+    send(CommandId::SetTargetPing, 0, 25.0f);
+    send(CommandId::SetMinLock, 0, 40.0f);
+    send(CommandId::SetSpikeMultiplier, 0, 3.0f);
+    send(CommandId::SetDryRun, 1);
+    send(CommandId::SetMitigationEnabled, 0);
+    send(CommandId::SetOverlayMode, static_cast<uint32_t>(mitigator::OverlayDisplayMode::PingOnly));
+
+    config::JsonValue saved(config::JsonValue::ObjectType{});
+    plugin.serialize_config(saved);
+    TEST_ASSERT_NEAR(saved["target_ping_ms"].as_double(0.0), 25.0, 1e-6);
+    TEST_ASSERT_NEAR(saved["min_animation_lock_ms"].as_double(0.0), 40.0, 1e-6);
+    TEST_ASSERT_NEAR(saved["spike_multiplier"].as_double(0.0), 3.0, 1e-6);
+    TEST_ASSERT_TRUE(saved["dry_run"].as_bool(false));
+    TEST_ASSERT_FALSE(saved["enabled"].as_bool(true));
+    TEST_ASSERT_EQ(saved["overlay_mode"].as_int(-1), static_cast<int>(mitigator::OverlayDisplayMode::PingOnly));
+
+    plugin.set_overlay(nullptr);
+}
+
 TEST_CASE(Payload, ResetOverlayGeometryRearmsRestoreLatch) {
     // Recovery path for an overlay saved on a monitor that is no longer attached.
     meter::CombatOverlay overlay;
