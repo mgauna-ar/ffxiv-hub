@@ -3,6 +3,7 @@
 #include "meter/types.hpp"
 #include "common/ipc/protocol.hpp"
 #include "meter/combatant_registry.hpp"
+#include "meter/gcd_uptime.hpp"
 #include <array>
 #include <cstdint>
 #include <vector>
@@ -54,9 +55,18 @@ public:
     /// Records a periodic status tick (DoT damage or HoT heal).
     void record_status_tick(const ipc::StatusTickPacket& packet, const CombatantRegistry& registry);
 
+    /// Records a button press, and for a GCD when it landed. Only a friendly player's
+    /// own casts count: a pet acts on its owner's press, which counted already.
+    /// Returns whether it was recorded.
+    bool record_cast(const ipc::CastPacket& packet, const CombatantRegistry& registry);
+
     /// Recalculates DPS, HPS, and damage share percentages based on elapsed active seconds.
     /// If registry is provided, automatically consolidates pet stats into owners.
     void recalculate(double duration_seconds, const CombatantRegistry* registry = nullptr);
+
+    /// Works out each player's GCD estimate and uptime over the pull so far. It walks
+    /// every GCD cast of the pull, so unlike recalculate() it is not for the tick.
+    void update_gcd_uptime(double duration_seconds);
 
     /// Merges all metrics from one combatant into another (e.g. late pet attribution).
     /// A missing destination row is created from the registry's entry for it.
@@ -111,6 +121,9 @@ public:
 
     /// Resets all metrics for a new encounter.
     void clear();
+
+    /// clear() for a pull starting at `start_us`, which GCD uptime is measured from.
+    void start(uint64_t start_us);
 
 private:
     struct DamageTakenKey {
@@ -169,6 +182,9 @@ private:
     std::unordered_map<DamageTakenKey, DamageTakenRow, DamageTakenKeyHash> m_damage_taken;
     std::unordered_map<BuffCreditKey, uint64_t, BuffCreditKeyHash> m_buff_credits;
     std::unordered_map<EntityId, RecapRing> m_recaps;
+    /// Each player's GCD casts, oldest first.
+    std::unordered_map<EntityId, std::vector<GcdCast>> m_gcds;
+    uint64_t m_start_us{0};
     uint64_t m_total_damage{0};
     uint64_t m_total_healing{0};
     uint64_t m_total_effective_healing{0};

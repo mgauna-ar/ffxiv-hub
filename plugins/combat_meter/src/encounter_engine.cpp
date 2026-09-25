@@ -173,6 +173,20 @@ void EncounterEngine::process_enemy_hp(const ipc::EnemyHpPacket& packet) {
     }
 }
 
+void EncounterEngine::process_cast(const ipc::CastPacket& packet, TimePoint now) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (m_state == EncounterState::InCombat) {
+        check_inactivity(now);
+    }
+    if (m_state != EncounterState::InCombat || packet.timestamp_us < m_start_time_us) {
+        return;
+    }
+    if (m_accumulator.record_cast(packet, m_registry)) {
+        m_last_activity_time = now;
+        m_dirty = true;
+    }
+}
+
 ipc::LifeEventPacket EncounterEngine::build_life_event(EntityId entity, LifeEventKind kind, uint64_t timestamp_us) const {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
     return DeathLog::build_event(entity, kind, timestamp_us, m_accumulator);
@@ -214,12 +228,12 @@ void EncounterEngine::start_encounter(TimePoint now, uint64_t timestamp_us) {
 }
 
 void EncounterEngine::start_encounter_locked(TimePoint now, uint64_t timestamp_us) {
-    m_accumulator.clear();
     m_start_time = now;
     m_last_activity_time = now;
     m_start_time_us = (timestamp_us > 0)
         ? timestamp_us
         : static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count());
+    m_accumulator.start(m_start_time_us);
     m_state = EncounterState::InCombat;
     m_dirty = false;
     ++m_pulls_started;
@@ -258,6 +272,7 @@ void EncounterEngine::end_encounter_locked(EncounterEndReason reason, TimePoint 
     const double dur = std::chrono::duration<double>(fight_end - m_start_time).count();
 
     m_accumulator.recalculate(dur, &m_registry);
+    m_accumulator.update_gcd_uptime(dur);
     m_dirty = false;
 
     EncounterSummary summary;
@@ -465,6 +480,9 @@ EncounterSummary EncounterEngine::summary_locked(TimePoint now, bool with_detail
         if (m_dirty) {
             m_accumulator.recalculate(dur, &m_registry);
             m_dirty = false;
+        }
+        if (with_detail) {
+            m_accumulator.update_gcd_uptime(dur);
         }
     } else if (const auto* pull = latest_pull_locked()) {
         dur = pull->duration_seconds;

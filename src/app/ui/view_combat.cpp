@@ -1,4 +1,5 @@
 #include "app/ui/view_combat.hpp"
+#include "app/ui/combat_casts.hpp"
 #include "app/ui/combat_damage_taken.hpp"
 #include "app/ui/combat_deaths.hpp"
 #include "app/ui/combat_statuses.hpp"
@@ -939,7 +940,7 @@ void render_pull_view(AppState& app_state, const meter::EncounterSummary& summar
 void render_view_combat(AppState& app_state) {
 #ifdef HAVE_IMGUI
     render_plugin_header(app_state, PluginId::CombatMeter, ICON_SWORDS, "Combat Meter",
-                         "Per-pull damage, healing, deaths, buffs and debuffs");
+                         "Per-pull damage, healing, deaths, buffs, debuffs and casts");
     if (render_plugin_disabled_gate(app_state, PluginId::CombatMeter, "Combat Meter")) {
         return;
     }
@@ -1006,6 +1007,12 @@ void render_view_combat(AppState& app_state) {
                              [tracking_on](const meter::EncounterSummary& summary, float height) {
                                  render_statuses(summary, height, tracking_on);
                              }, Drilldown::None);
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem(ICON_BOLT "  Casts")) {
+            ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
+            render_pull_view(app_state, current_summary, pull_history, selected_index,
+                             "##CastsPane", render_casts, Drilldown::None);
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem(ICON_SLIDERS "  Settings")) {

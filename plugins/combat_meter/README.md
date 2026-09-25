@@ -3,7 +3,7 @@
 Real-time damage and healing analytics: DPS, HPS with overheal separated out, crit and
 direct hit rates, per-action breakdowns, and a pull history. Each pull also records who
 died and to what, which debuffs the party picked up, how long buffs and DoTs stayed up,
-and the damage every player took, by ability.
+the damage every player took, by ability, and what every player pressed.
 
 Part of [FFXIV Hub](../../README.md). Enable or disable it from its page in the desktop
 app, or from its card on the dashboard.
@@ -27,6 +27,9 @@ app, or from its card on the dashboard.
 - **Every pull kept.** Pulls split on their own after inactivity, on a wipe, or on a zone
   change, and are listed by duty. Each shows whether the boss died, and if it didn't, how
   much HP it had left.
+- **Casts and GCD uptime.** What each player pressed, their casts per minute, the GCD they
+  ran at, and how much of the pull they kept it rolling. A spell with a cast time counts
+  from when its cast started, so casters and healers read true.
 
 ---
 
@@ -44,7 +47,8 @@ Damage-over-time and heal-over-time ticks never start one either, or a lingering
 mob you walked away from would open a pull on its own.
 
 Once the pull is underway, healing counts as normal, both toward HPS and as activity that
-holds off the inactivity timeout.
+holds off the inactivity timeout. So does every action a player presses, so a stretch
+where the party only buffs, heals or dances doesn't split the pull.
 
 It ends in one of four ways:
 
@@ -242,6 +246,44 @@ and source: hits, total, average, largest hit, and deaths caused.
 
 ---
 
+## Casts and GCD uptime
+
+Every action a player presses is a cast, counted once however many targets it hit. The
+meter reads them from the same action packets as damage, so they need no polling.
+
+- Auto-attacks are not casts, and neither is anything a pet does or the game fires by
+  itself, such as a Kardia heal: none of those is on a button.
+- A Limit Break counts for the player who pressed it.
+- Items, such as a tincture, are not counted.
+- Casts count from the pull's first hit. A cast before it, such as a prepull buff, is not
+  counted, but the precast whose hit opened the pull is.
+
+For each player the meter keeps:
+
+- **Casts** and **CPM**, casts per minute of the pull.
+- **GCDs**: the casts on the global cooldown.
+- **GCD**: the GCD their casts suggest, given for an action with a 2.5 s recast, such as
+  2.40 s. It comes from the gaps between their GCDs, taken low in the spread, since a late
+  press only ever lengthens a gap. With fewer than eight gaps to go on, it reads 2.50 s.
+- **Uptime**: the share of the pull their GCD was rolling. Each GCD counts until the next
+  one is pressed, or for its own recast and a tenth of a second more when the next one came
+  late. A GCD with a longer recast, such as a motif, counts for all of it.
+
+A spell with a cast time reaches the game when its cast ends, not when it was pressed. The
+meter works back from the spell's cast time to when the cast started. When there was no
+time for a hardcast since the previous GCD, the spell was cast instantly (Swiftcast,
+Dualcast, a proc) and counts from when it landed.
+
+What lowers uptime besides a late press:
+
+- Downtime. Time the boss is untargetable or out of reach counts against it, whether or
+  not anyone could have pressed anything.
+- A Limit Break's animation, which is not a GCD.
+- Haste that comes and goes, such as Ley Lines. The meter works at one speed per player
+  for the whole pull, so a hasted stretch is only roughly accounted for.
+
+---
+
 ## Views
 
 **In-game overlay.** A draggable, resizable table showing the current encounter.
@@ -255,15 +297,16 @@ and source: hits, total, average, largest hit, and deaths caused.
 
 <!-- ![The Combat Meter's Damage tab with the pull list rail](../../docs/images/combat-damage-tab.png) -->
 
-**Desktop view.** Six tabs: **Damage**, **Healing**, **Damage Taken**, **Deaths**,
-**Buffs & Debuffs**, and **Settings**. Every tab but Settings shows a pull list rail on
-the left. The live fight is at the top, then the pull history grouped by duty: each pull
-has an outcome dot (gold clear, red wipe, grey ended), its number and duration, then the
-boss's HP left, its death count and end time while the rail has room for them. Hovering a
-pull shows all of it, with the boss's name. The trash button in the history header clears
-the archive after asking. The rail is the only place a pull is chosen, and it narrows on a
-small window. Beside it, a header names the selected pull's duty and boss and sums it up:
-duration, raid DPS and HPS, combatants, deaths, the boss's HP and the outcome. Below it:
+**Desktop view.** Seven tabs: **Damage**, **Healing**, **Damage Taken**, **Deaths**,
+**Buffs & Debuffs**, **Casts**, and **Settings**. Every tab but Settings shows a pull list
+rail on the left. The live fight is at the top, then the pull history grouped by duty: each
+pull has an outcome dot (gold clear, red wipe, grey ended), its number and duration, then
+the boss's HP left, its death count and end time while the rail has room for them.
+Hovering a pull shows all of it, with the boss's name. The trash button in the history
+header clears the archive after asking. The rail is the only place a pull is chosen, and it
+narrows on a small window. Beside it, a header names the selected pull's duty and boss and
+sums it up: duration, raid DPS and HPS, combatants, deaths, the boss's HP and the outcome.
+Below it:
 
 - **Damage** and **Healing**: the selected pull's rankings. Damage has share, crit, direct
   hit and crit-direct-hit rates, job-coloured bars and a Deaths column. Its rate column
@@ -278,6 +321,9 @@ duration, raid DPS and HPS, combatants, deaths, the boss's HP and the outcome. B
 - **Buffs & Debuffs**: debuffs on the party, buffs on the party, and statuses on the
   enemies. Each status has its applications, time and uptime, and expands into each
   player or source.
+- **Casts**: each player's casts, CPM, GCDs, GCD and uptime, with a bar for the uptime.
+  Below it, the selected player's casts per action, each marked GCD, oGCD or Limit Break,
+  with its own casts per minute. See [Casts and GCD uptime](#casts-and-gcd-uptime).
 
 The in-game overlay stays a damage or healing table; the other views are desktop only.
 
@@ -393,6 +439,17 @@ The boss was still standing when the pull ended. The party reset, walked away, o
 through a downtime longer than the idle timeout; the rail shows how much HP the boss had
 left. For fights with long downtime, raise *End encounter after idle* in Settings. See
 [The boss and how a pull ended](#the-boss-and-how-a-pull-ended).
+
+</details>
+
+<details>
+<summary><b>Why is my uptime under 100% when I never stopped?</b></summary>
+
+<br>
+
+Downtime counts against it: time the boss spent untargetable or out of reach, and a Limit
+Break's animation. A GCD pressed late counts only its own recast and a tenth of a second
+more, so small delays add up. See [Casts and GCD uptime](#casts-and-gcd-uptime).
 
 </details>
 

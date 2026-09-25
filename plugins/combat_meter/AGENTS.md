@@ -63,6 +63,15 @@ Whether a boss's object stands, at 0 HP, long enough for a vitals pass (every 25
 - **Guaranteed Hits Turn Rates Into Damage**: A hit in `GUARANTEED_HIT_ACTIONS`, a GCD under a `GUARANTEED_HIT_STATUSES` status, or a form-bonus action under its form treats each rate buff as a damage multiplier of `1 + rate x bonus`. Both tables are generated from the sentence the game adds to such hits; do not hand-edit them.
 - **Raid Buff Values Are Hand-Maintained**: `include/hub/game/raid_buffs.hpp` holds the status ids and strengths. The Status sheet names the statuses but carries no percentages; each value comes from its action's ActionTransient text. `MeterGameData.RaidBuffTableMatchesTheStatusSheet` pins every id to its sheet name. Strengths the applying action decides, Technical and Standard Finish by the finish used and Radiant Finale by the songs sung since the last one, are tracked by `BuffStrengths` from every action a player uses.
 
+## Cast And GCD Uptime Invariants
+
+- **A Cast Is A Button Press**: `decoder::decode_cast` makes one `CombatCast` per ActionEffect, however many targets it hit, when the header's `action_type` is `ACTION_TYPE_ACTION` and the action has a cooldown group (`game::is_pressed_action`) or is a Limit Break. Auto-attacks, pet actions and the effects the game fires by itself have no cooldown group; see "How the Action sheet marks a button". An item (a tincture) is another action type and never counts.
+- **Only A Player's Own Casts Count**: `MetricsAccumulator::record_cast` drops a pet's cast, since the pet acts on its owner's press and that press counted already, and drops enemies and the Limit Break row. A pet merged into its owner late brings no casts and no GCDs with it.
+- **Casts Never Start A Pull**: `process_cast` drops a cast outside a pull or stamped before the pull's start. `CombatPlugin` sends it after the same effect's `CombatAction` packets on the main-thread lane, so the press behind the hit that opened a pull counts in both engines. In a pull, a recorded cast is activity, like a heal: a phase where the party only buffs or dances holds the pull open.
+- **GCD Uptime Is Not Worked Out On The Tick**: `gcd_uptime` walks every GCD cast of the pull, so `recalculate` only derives CPM. `update_gcd_uptime` runs for a summary with detail and when a pull is archived. The in-game overlay reads rankings, so the payload computes uptime once per pull. Computing it on the tick put a growing stall under the engine lock, which the game's main thread waits on. `GcdCast` keeps each cast's sheet timing so the pass does no table lookups.
+- **A Hardcast Is Counted From Its Press**: A spell reaches the client when its cast ends (a cancelled cast sends no effect at all, see the Latency Mitigator's `AGENTS.md`). `gcd_uptime` moves a GCD with a sheet cast time back by that time, scaled to the estimated speed, when a hardcast fits: the previous GCD had come back (allowing 25% haste) and its own cast was over. Otherwise the spell was instant (Swiftcast, Dualcast, a proc) and counts where it landed. Counted where they landed, a Red Mage's hardcast and Dualcast pairs land 0.5 s and 4.5 s apart and read as about 62% uptime.
+- **The GCD Estimate Only Uses Gaps That Cancel Out**: `estimate_gcd` takes gaps between two GCDs with the same sheet cast time, rescaled by the first one's recast to a 2.5 s GCD, keeps those between 1.5 and 3.6 s, and uses the 25th percentile. It stays at 2.5 s with fewer than 8 such gaps. A GCD's length is its own recast at that speed, so a 4 s motif holds its full recast.
+
 ## How the client keeps status lists
 
 Read from `ffxiv_dx11.exe` on 2026-09-23 with `tools/inspect_exe.py`. Addresses are for
@@ -208,3 +217,31 @@ What the client cannot say, and live play has to:
 - That pets fight under their owner's buffs, that a DoT keeps the attacker's buffs from
   its application, and that enemy debuffs apply to each tick as it lands. The meter is
   built on all three.
+
+## How the Action sheet marks a button
+
+Read from the Action sheet with `tools/xivdata` on 2026-09-25. Column indices are pinned in
+`tools/gen_game_tables.py` against known rows.
+
+- **The GCD is cooldown group 58, as an action's own group (column 41) or its additional
+  one (column 42).** An action with its own charges or cooldown keeps them in its own
+  group and shares the GCD through the additional one: Drill, Air Anchor, Chain Saw,
+  Gnashing Fang, Double Down, Standard and Technical Step, the first mudra of a Ninjutsu,
+  Phlegma, Pneuma, Soul Slice and Vicewinder. `is_gcd_action` covers both, which also puts
+  a Reassembled Drill among the guaranteed hits.
+- **Recast and cast time are columns 40 and 38**, in 100 ms. Most GCDs recast in 2.5 s;
+  some run 1.5 s (Ninjutsu, Emerald Rite, the enchanted Riposte), 0.5 s (a mudra after the
+  first) or longer (Ruby Rite 3.0 s, a motif 4.0 s, Rainbow Drip 6.0 s). An action whose
+  own group is not the GCD gets 2.5 s in `gcd_timing`, which the sheet does not record.
+- **Every button has a cooldown group; nothing else does.** Auto-attacks (7 and 8), pet
+  actions (Wyrmwave, Pile Bunker), and the rows for effects the game fires by itself have
+  group 0 and no recast: Kardia's heal (28119), Eudaimonia (37036), Liturgy of the Bell's
+  triggers (25863, 25864) and Stellar Explosion (7441). So do the party's Limit Breaks,
+  which is why `decode_cast` names them apart.
+
+What the sheet cannot say, and live play has to:
+
+- That the server sends those rows' ids for the effects they describe. If it sent Kardia's
+  heal under Kardia's own id (24285), each heal would count as a cast.
+- Whether an effect the game fires later arrives under the pressed action's own id, such
+  as Wildfire's detonation or Excogitation's heal. If it does, it counts as a second cast.

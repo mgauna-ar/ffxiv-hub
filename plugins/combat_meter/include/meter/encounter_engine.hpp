@@ -74,6 +74,10 @@ public:
     /// that pull killed, within kLateLifeEventUs of its end.
     void process_enemy_hp(const ipc::EnemyHpPacket& packet);
 
+    /// A button press. Never starts a pull: one stamped before the pull began is
+    /// dropped. In a pull, a friendly player's cast is activity, like a heal.
+    void process_cast(const ipc::CastPacket& packet, TimePoint now = std::chrono::steady_clock::now());
+
     /// Death recap for `entity` from what the live pull saw land on it.
     [[nodiscard]] ipc::LifeEventPacket build_life_event(EntityId entity, LifeEventKind kind, uint64_t timestamp_us) const;
 

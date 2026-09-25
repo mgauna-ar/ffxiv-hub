@@ -29,9 +29,6 @@ ActorType actor_type_from_object_kind(uint8_t object_kind, uint32_t owner_id) {
     return ActorType::Monster;
 }
 
-/// ActionEffectHeader::action_type of an Action row; items and others use other values.
-constexpr uint8_t kActionTypeAction = 1;
-
 /// The game writes 0xE0000000 rather than 0 when an actor has no owner.
 uint32_t normalize_owner_id(uint32_t owner_id) {
     return (owner_id != 0xE0000000) ? owner_id : 0;
@@ -377,7 +374,7 @@ void CombatPlugin::on_receive_action_effect(
 
     m_engine.with_registry([&](CombatantRegistry& registry) {
         // Items share the id space, so only an action can dance a finish or sing a song.
-        if (header->action_type == kActionTypeAction) {
+        if (header->action_type == decoder::ACTION_TYPE_ACTION) {
             m_strengths.on_action(source_entity_id, header->action_id);
         }
         const EntityId owner = registry.resolve_owner(source_entity_id);
@@ -447,6 +444,15 @@ void CombatPlugin::on_receive_action_effect(
             }
         }
     );
+
+    // After the hits, so a pull this effect opened counts the press that opened it.
+    if (const auto cast = decoder::decode_cast(source_entity_id, *header, now_us)) {
+        m_engine.process_cast(*cast);
+        if (streaming()) {
+            m_ring_buffer->push(ipc::serialize_typed_packet(
+                PluginId::CombatMeter, MessageType::CombatCast, ++m_sequence, *cast));
+        }
+    }
 }
 
 CombatPlugin::StatusSnapshot CombatPlugin::read_statuses(uint32_t entity_id, const void* character) const {

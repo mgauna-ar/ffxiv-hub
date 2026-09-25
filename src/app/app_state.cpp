@@ -188,6 +188,11 @@ void AppState::register_ipc_callbacks() {
         m_engine.process_enemy_hp(hp);
     });
 
+    m_pipe_server.set_combat_cast_callback([this](const ipc::CombatCastPayload& cast) {
+        std::lock_guard<std::mutex> lock(m_combat_mutex);
+        m_engine.process_cast(cast);
+    });
+
     m_pipe_server.set_status_callback([this](const ipc::StatusPayload& status) {
         m_hooks_installed.store(std::string_view(status.status_message).find("NOT installed") == std::string_view::npos);
         std::lock_guard<std::mutex> lock(m_status_mutex);

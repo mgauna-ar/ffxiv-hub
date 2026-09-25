@@ -5,10 +5,14 @@
 #include "meter/types.hpp"
 #include <vector>
 #include <functional>
+#include <optional>
 #include <cstdint>
 #include <cstddef>
 
 namespace hub::meter::decoder {
+
+/// ActionEffectHeader::action_type of an Action row; items and others use other values.
+inline constexpr uint8_t ACTION_TYPE_ACTION = 1;
 
 using ActionPacketCallback = std::function<void(const ipc::CombatActionPacket&)>;
 
@@ -63,6 +67,17 @@ size_t decode_status_applications(
     const void* targets,
     StatusApplicationCallback callback
 );
+
+/**
+ * @brief The button press behind an ActionEffect, one per effect however many targets it
+ * hit. Nothing for an item, an auto-attack, or an effect the game fired by itself (a
+ * Kardia heal); a Limit Break counts.
+ */
+[[nodiscard]] std::optional<ipc::CastPacket> decode_cast(
+    uint32_t source_id,
+    const game::ActionEffectHeader& header,
+    uint64_t timestamp_us
+) noexcept;
 
 /**
  * @brief Splits a decoded heal into what landed and what overhealed.

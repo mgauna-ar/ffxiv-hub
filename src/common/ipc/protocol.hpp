@@ -270,6 +270,15 @@ struct CombatEnemyHpPayload {
 };
 static_assert(sizeof(CombatEnemyHpPayload) == 24, "CombatEnemyHpPayload must be 24 bytes");
 
+/// 0x020A: An action someone pressed, one per ActionEffect however many it hit. Sent
+/// after that effect's CombatAction packets, on the same lane.
+struct CombatCastPayload {
+    uint32_t source_id{0};
+    uint32_t action_id{0};
+    uint64_t timestamp_us{0};
+};
+static_assert(sizeof(CombatCastPayload) == 16, "CombatCastPayload must be 16 bytes");
+
 #pragma pack(pop)
 
 // Friendly type aliases for combat meter components
@@ -281,6 +290,7 @@ using EncounterControlPacket = CombatControlPayload;
 using StatusListPacket = CombatStatusListPayload;
 using LifeEventPacket = CombatLifeEventPayload;
 using EnemyHpPacket = CombatEnemyHpPayload;
+using CastPacket = CombatCastPayload;
 
 /// Serialize any typed payload into a byte vector with PacketHeader
 std::vector<uint8_t> serialize_packet(

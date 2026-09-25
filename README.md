@@ -37,6 +37,8 @@ no installer.
 - Every death, with the killing blow, a recap of the hits and heals before it, and the
   time until the raise.
 - Uptime for buffs, debuffs and DoTs, and damage taken per ability.
+- What each player pressed: casts per minute, the GCD they ran at, and how much of the
+  pull they kept it rolling.
 - A pull history that splits on its own after 7 s without combat, on a wipe, or on a
   zone change. Each pull shows whether the boss died, or how much HP it had left.
 
@@ -142,7 +144,7 @@ always be found and dragged back. Each overlay can:
 | Page | What's on it |
 |---|---|
 | Dashboard | Whether the game was found and the payload hooked, network ping, IPC traffic, and a card per plugin with its master switch |
-| Combat Meter | Damage, Healing, Damage Taken, Deaths, and Buffs & Debuffs for the live pull and every archived one, plus Settings |
+| Combat Meter | Damage, Healing, Damage Taken, Deaths, Buffs & Debuffs, and Casts for the live pull and every archived one, plus Settings |
 | Latency Mitigator | Live latency stats, the round-trip graph and a feed of every action, plus Settings |
 | Hub Settings | Start with Windows, close to tray, notifications, the config file, reset, unload, and the diagnostic log |
 
@@ -165,7 +167,7 @@ telemetry and draws no overlay. Flip it from the plugin's page or its dashboard 
 
 | Plugin | What it does |
 |---|---|
-| [**Combat Meter**](plugins/combat_meter/README.md) | DPS and HPS with overheal separated, rDPS/aDPS/nDPS/cDPS from raid buff credit, crit/DH/CDH rates, automatic pet attribution, deaths with killing blow and recap, buff/debuff/DoT uptime, damage taken by ability, encounter tracking and pull history with the boss's HP left |
+| [**Combat Meter**](plugins/combat_meter/README.md) | DPS and HPS with overheal separated, rDPS/aDPS/nDPS/cDPS from raid buff credit, crit/DH/CDH rates, automatic pet attribution, deaths with killing blow and recap, buff/debuff/DoT uptime, damage taken by ability, casts and GCD uptime, encounter tracking and pull history with the boss's HP left |
 | [**Latency Mitigator**](plugins/latency_mitigator/README.md) | Animation lock compensation for clean double-weaving on high latency, with a live ping and RTT HUD |
 
 Each plugin's README covers how it works, its in-game overlay, its desktop view and its
@@ -455,7 +457,7 @@ with its SHA256 checksum, as a release.
 
 | Document | What it covers |
 |---|---|
-| [Combat Meter README](plugins/combat_meter/README.md) | How pulls, pets, deaths and uptime are tracked; its views and settings |
+| [Combat Meter README](plugins/combat_meter/README.md) | How pulls, pets, deaths, casts and uptime are tracked; its views and settings |
 | [Latency Mitigator README](plugins/latency_mitigator/README.md) | How the lock is adjusted and what is left alone; its HUD, view and settings |
 | [AGENTS.md](AGENTS.md) | Architecture, runtime topology, and the invariants every change must keep |
 | [Combat Meter AGENTS.md](plugins/combat_meter/AGENTS.md) · [Latency Mitigator AGENTS.md](plugins/latency_mitigator/AGENTS.md) | Plugin-specific rules, and what was verified about the game client |

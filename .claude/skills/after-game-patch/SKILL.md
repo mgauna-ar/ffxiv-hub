@@ -40,10 +40,19 @@ and `src/common/game_tables.cpp`. Review `git diff` on those: it shows exactly w
 actions, statuses, duties and jobs the patch added or renamed. Regeneration is
 deterministic - an unchanged install must produce byte-identical files.
 
-`game_tables.cpp` also holds the player GCD set behind `is_gcd_action`: Action rows with a
-job level (column 12, 0 on NPC actions) in cooldown group 58 (column 41). Both columns are
-pinned against Heavy Swing (31: level 1, group 58), Fell Cleave (3549: level 54) and
-Berserk (38: group 11).
+`game_tables.cpp` also holds the player GCD table behind `is_gcd_action` and `gcd_timing`:
+Action rows with a job level (column 12, 0 on NPC actions) in cooldown group 58, as their
+own group (column 41) or their additional one (column 42), each with its recast (column 40)
+and cast time (column 38) in 100 ms. The level and group columns are pinned against Heavy
+Swing (31: level 1, group 58), Fell Cleave (3549: level 54) and Berserk (38: group 11);
+the other three against Glare III (25859: 1.5 s cast), Jolt III (37004: 2.0 s) and Drill
+(16498: 20 s recast in group 5, additional group 58). Check Drill and Standard Step (15997)
+are still in the table.
+
+It also holds the set behind `is_pressed_action`, the Action rows with any cooldown group.
+That is what tells a button press from an auto-attack, a pet action or an effect the game
+fires by itself; check Kardia's heal (28119) and the auto-attacks (7 and 8) stay out of it.
+`MeterGameData.GcdAndPressTablesComeFromTheSheet` pins those ids by name.
 
 `guaranteed_hits.hpp` comes from the sentence the game adds to every guaranteed crit or
 direct hit ("...increased when under an effect that raises critical hit rate [or direct

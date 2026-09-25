@@ -19,8 +19,23 @@ namespace hub::game {
     return name.empty() ? "Action " + std::to_string(id) : std::string(name);
 }
 
-/// True for a player action on the global cooldown (cooldown group 58).
-/// Defined in src/common/game_tables.cpp.
+/// The GCD a player action starts and its cast time, both in 100 ms and unadjusted for
+/// speed. All zero for an action off the global cooldown.
+struct GcdTiming {
+    uint16_t recast_100ms{0};
+    uint16_t cast_100ms{0};
+};
+
+/// Defined in src/common/game_tables.cpp, like the two below.
+[[nodiscard]] GcdTiming gcd_timing(uint32_t id) noexcept;
+
+/// True for a player action on the global cooldown (cooldown group 58, as its
+/// own group or its additional one).
 [[nodiscard]] bool is_gcd_action(uint32_t id) noexcept;
+
+/// True for an action someone presses: every button has a cooldown group. Auto-attacks,
+/// pet actions and the effects the game fires by itself have none, and neither does a
+/// Limit Break.
+[[nodiscard]] bool is_pressed_action(uint32_t id) noexcept;
 
 } // namespace hub::game

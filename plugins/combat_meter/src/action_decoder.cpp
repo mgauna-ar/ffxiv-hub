@@ -205,6 +205,24 @@ size_t decode_status_applications(
     return count;
 }
 
+std::optional<ipc::CastPacket> decode_cast(
+    uint32_t source_id,
+    const game::ActionEffectHeader& header,
+    uint64_t timestamp_us
+) noexcept {
+    if (header.action_type != ACTION_TYPE_ACTION) {
+        return std::nullopt;
+    }
+    if (!game::is_pressed_action(header.action_id) && !game::is_limit_break_action(header.action_id)) {
+        return std::nullopt;
+    }
+    ipc::CastPacket cast{};
+    cast.source_id = source_id;
+    cast.action_id = header.action_id;
+    cast.timestamp_us = timestamp_us;
+    return cast;
+}
+
 void apply_overheal(ipc::CombatActionPacket& packet, uint32_t current_hp, uint32_t max_hp) noexcept {
     if (static_cast<EffectType>(packet.effect_type) != EffectType::Heal) {
         return;

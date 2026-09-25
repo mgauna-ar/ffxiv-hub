@@ -222,6 +222,13 @@ bool PipeServer::process_raw_packet(std::span<const uint8_t> data) {
                     m_on_enemy_hp(payload);
                 }
                 break;
+            case MessageType::CombatCast:
+                if (payload_span.size() >= sizeof(CombatCastPayload) && m_on_cast) {
+                    CombatCastPayload payload{};
+                    std::memcpy(&payload, payload_span.data(), sizeof(payload));
+                    m_on_cast(payload);
+                }
+                break;
             default:
                 break;
         }

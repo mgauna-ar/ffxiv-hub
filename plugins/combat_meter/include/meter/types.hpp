@@ -230,6 +230,8 @@ struct ActionSummary {
     uint64_t overhealing{0};
     uint64_t min_heal{0};
     uint64_t max_heal{0};
+    /// Times it was pressed; hit_count counts every target and tick instead.
+    uint64_t casts{0};
     HitCounts hits;
     /// Heal hits are counted apart from `hits` so they cannot dilute the crit rates.
     HitCounts heal_hit_counts;
@@ -292,6 +294,17 @@ struct CombatantTotals {
     double cdps{0.0};
     double hps{0.0};
     double damage_share_pct{0.0};
+    /// Buttons pressed: no auto-attacks, and nothing a pet or the game fired.
+    uint32_t casts{0};
+    /// The casts on the global cooldown.
+    uint32_t gcd_casts{0};
+    double cpm{0.0};
+    /// The GCD these casts suggest for a 2.5 s action, and the share of the pull
+    /// (0-100) it kept rolling. Both 0 without a GCD cast. Worked out for a snapshot
+    /// with detail and for an archived pull, not on the tick, so a rankings-only
+    /// snapshot of a live pull does not carry them.
+    double gcd_estimate_s{0.0};
+    double gcd_uptime_pct{0.0};
     HitCounts hits;
     /// Heal hits are counted apart from `hits` so they cannot dilute the crit rates.
     HitCounts heal_hit_counts;

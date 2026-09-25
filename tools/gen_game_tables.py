@@ -28,7 +28,13 @@ ACTION_NAME, ACTION_CATEGORY = 0, 3
 # Pinned against Heavy Swing/31 (level 1, group 58), Fell Cleave/3549 (level 54) and
 # Berserk/38 (group 11). NPC actions carry level 0.
 ACTION_CLASSJOB_LEVEL, ACTION_COOLDOWN_GROUP = 12, 41
+# Pinned against Glare III/25859 (1.5 s cast), Jolt III/37004 (2.0 s), Heavy Swing/31
+# (instant, 2.5 s recast) and Drill/16498 (20 s recast in group 5, with the GCD as its
+# additional group). Both times are in 100 ms.
+ACTION_CAST_TIME, ACTION_RECAST, ACTION_ADDITIONAL_COOLDOWN_GROUP = 38, 40, 42
 GCD_COOLDOWN_GROUP = 58
+# What an action whose own group is not the GCD starts on it (Drill, Standard Step).
+GCD_BASE_RECAST = 25
 TERRITORY_CFC = 10
 CFC_NAME = 43
 CLASSJOB_NAME, CLASSJOB_ABBR, CLASSJOB_PARENT, CLASSJOB_ROLE = 0, 1, 29, 47
@@ -80,14 +86,20 @@ def load(game_dir):
     pack = SqPack(os.path.join(game_dir, "sqpack", "ffxiv"))
     sheets = {}
     actions = [
-        (r, row[ACTION_NAME], row[ACTION_CATEGORY], row[ACTION_CLASSJOB_LEVEL], row[ACTION_COOLDOWN_GROUP])
+        (r, row[ACTION_NAME], row[ACTION_CATEGORY], row[ACTION_CLASSJOB_LEVEL], row[ACTION_COOLDOWN_GROUP],
+         row[ACTION_ADDITIONAL_COOLDOWN_GROUP], row[ACTION_RECAST], row[ACTION_CAST_TIME])
         for r, row in Sheet(pack, "Action").rows()
     ]
     sheets["action"] = sorted((r, n) for r, n, *_ in actions if n)
     sheets["limit_break"] = sorted((r, n) for r, n, c, *_ in actions if c == LIMIT_BREAK_CATEGORY and n)
-    player_actions = {r: n for r, n, _, level, _ in actions if n and level > 0}
+    player_actions = {r: n for r, n, _, level, *_ in actions if n and level > 0}
     sheets["gcd"] = sorted(
-        r for r, n, _, level, group in actions if n and level > 0 and group == GCD_COOLDOWN_GROUP)
+        (r, recast if group == GCD_COOLDOWN_GROUP and recast > 0 else GCD_BASE_RECAST, cast)
+        for r, n, _, level, group, extra, recast, cast in actions
+        if n and level > 0 and GCD_COOLDOWN_GROUP in (group, extra))
+    # Every action on a button has a cooldown group. Auto-attacks, pet actions and the
+    # effects the game fires by itself (Kardia's heals, Liturgy of the Bell's) have none.
+    sheets["pressed"] = sorted(r for r, n, _, _, group, *_ in actions if n and group != 0)
     statuses = [
         (r, row[0], row[STATUS_CATEGORY], plain(row[STATUS_DESCRIPTION]))
         for r, row in Sheet(pack, "Status").rows()
@@ -220,7 +232,7 @@ def gen_id_set(ids, per_line=12):
     return "\n".join(lines)
 
 
-def gen_tables_cpp(tables, detrimental, gcd):
+def gen_tables_cpp(tables, detrimental, gcd, pressed):
     blocks, functions = [], []
     for fn, rows in tables:
         entries = "\n".join(
@@ -244,14 +256,32 @@ def gen_tables_cpp(tables, detrimental, gcd):
         "    return id <= 0xFFFF && std::binary_search(\n"
         "        DETRIMENTAL_STATUS.begin(), DETRIMENTAL_STATUS.end(), static_cast<uint16_t>(id));\n}"
     )
+    gcd_entries = "\n".join(f"    {{{r:>6}u, {recast:>3}, {cast:>3}}}," for r, recast, cast in gcd)
     blocks.append(
-        f"// Player actions on the global cooldown (Action sheet cooldown group {GCD_COOLDOWN_GROUP}).\n"
-        f"constexpr std::array<uint32_t, {len(gcd)}> GCD_ACTION{{{{\n"
-        f"{gen_id_set(gcd)}\n}}}};"
+        f"// Player actions on the global cooldown (Action sheet cooldown group {GCD_COOLDOWN_GROUP}, as\n"
+        f"// their own group or their additional one): the GCD each starts and its cast time.\n"
+        f"constexpr std::array<GcdEntry, {len(gcd)}> GCD_ACTION{{{{\n{gcd_entries}\n}}}};"
+    )
+    functions.append(
+        "GcdTiming gcd_timing(uint32_t id) noexcept {\n"
+        "    const auto it = std::lower_bound(\n"
+        "        GCD_ACTION.begin(), GCD_ACTION.end(), id,\n"
+        "        [](const GcdEntry& entry, uint32_t value) { return entry.id < value; });\n"
+        "    if (it == GCD_ACTION.end() || it->id != id) return {};\n"
+        "    return GcdTiming{it->recast, it->cast};\n}"
     )
     functions.append(
         "bool is_gcd_action(uint32_t id) noexcept {\n"
-        "    return std::binary_search(GCD_ACTION.begin(), GCD_ACTION.end(), id);\n}"
+        "    return gcd_timing(id).recast_100ms != 0;\n}"
+    )
+    blocks.append(
+        f"// Actions with a cooldown group (Action sheet column {ACTION_COOLDOWN_GROUP}), i.e. every button.\n"
+        f"constexpr std::array<uint32_t, {len(pressed)}> PRESSED_ACTION{{{{\n"
+        f"{gen_id_set(pressed)}\n}}}};"
+    )
+    functions.append(
+        "bool is_pressed_action(uint32_t id) noexcept {\n"
+        "    return std::binary_search(PRESSED_ACTION.begin(), PRESSED_ACTION.end(), id);\n}"
     )
     body = "\n\n".join(blocks)
     fns = "\n\n".join(functions)
@@ -269,6 +299,12 @@ namespace {{
 struct Entry {{
     uint32_t id;
     std::string_view name;
+}};
+
+struct GcdEntry {{
+    uint32_t id;
+    uint16_t recast;
+    uint16_t cast;
 }};
 
 {body}
@@ -506,9 +542,24 @@ def main():
 
     write("include/hub/game/actions.hpp", gen_lookup_header(
         "action", "Action", "Name from the game's Action sheet.", extra=f"""
-/// True for a player action on the global cooldown (cooldown group {GCD_COOLDOWN_GROUP}).
-/// Defined in src/common/game_tables.cpp.
+/// The GCD a player action starts and its cast time, both in 100 ms and unadjusted for
+/// speed. All zero for an action off the global cooldown.
+struct GcdTiming {{
+    uint16_t recast_100ms{{0}};
+    uint16_t cast_100ms{{0}};
+}};
+
+/// Defined in src/common/game_tables.cpp, like the two below.
+[[nodiscard]] GcdTiming gcd_timing(uint32_t id) noexcept;
+
+/// True for a player action on the global cooldown (cooldown group {GCD_COOLDOWN_GROUP}, as its
+/// own group or its additional one).
 [[nodiscard]] bool is_gcd_action(uint32_t id) noexcept;
+
+/// True for an action someone presses: every button has a cooldown group. Auto-attacks,
+/// pet actions and the effects the game fires by itself have none, and neither does a
+/// Limit Break.
+[[nodiscard]] bool is_pressed_action(uint32_t id) noexcept;
 """))
     write("include/hub/game/status.hpp", gen_lookup_header(
         "status", "Status", "Name from the game's Status sheet.", extra="""
@@ -518,7 +569,7 @@ def main():
 """))
     write("src/common/game_tables.cpp", gen_tables_cpp(
         [("action", sheets["action"]), ("status", sheets["status"])],
-        sheets["status_detrimental"], sheets["gcd"]))
+        sheets["status_detrimental"], sheets["gcd"], sheets["pressed"]))
     write("include/hub/game/limit_break.hpp", gen_limit_break_header(sheets["limit_break"]))
     write("include/hub/game/guaranteed_hits.hpp", gen_guaranteed_hits_header(
         sheets["guaranteed_actions"], sheets["guaranteed_statuses"],

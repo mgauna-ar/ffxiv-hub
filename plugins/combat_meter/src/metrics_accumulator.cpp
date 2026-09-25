@@ -347,6 +347,28 @@ void MetricsAccumulator::record_status_tick(const ipc::StatusTickPacket& packet,
     }
 }
 
+bool MetricsAccumulator::record_cast(const ipc::CastPacket& packet, const CombatantRegistry& registry) {
+    const EntityId source = packet.source_id;
+    if (!hub::game::is_real_entity_id(source) || source == hub::game::LIMIT_BREAK_COMBATANT_ID
+        || registry.is_pet(source) || registry.resolve_owner(source) != source || !registry.is_friendly(source)) {
+        return false;
+    }
+    CombatantStats& stats = get_or_create_stats(source, registry);
+    ++stats.casts;
+    ActionSummary& act = stats.actions[packet.action_id];
+    act.action_id = packet.action_id;
+    if (act.name.empty()) {
+        act.name = action_id_to_name(packet.action_id);
+    }
+    ++act.casts;
+    const hub::game::GcdTiming timing = hub::game::gcd_timing(packet.action_id);
+    if (timing.recast_100ms != 0) {
+        ++stats.gcd_casts;
+        m_gcds[source].push_back(GcdCast{packet.timestamp_us, timing.recast_100ms, timing.cast_100ms});
+    }
+    return true;
+}
+
 void MetricsAccumulator::record_credits(
     CombatantStats& receiver, uint32_t hit_damage, const ipc::CombatBuffCredits& credits,
     const CombatantRegistry& registry
@@ -513,10 +535,15 @@ void MetricsAccumulator::merge_combatants(EntityId from_id, EntityId to_id, cons
 
     add_hit_counts(to.hits, from_stats.hits);
     add_hit_counts(to.heal_hit_counts, from_stats.heal_hit_counts);
+    // Only ever a pet, whose actions follow its owner's presses: none of its casts,
+    // should any predate the registry knowing it, are the owner's.
+    m_gcds.erase(from_id);
 
     for (const auto& [act_id, from_act] : from_stats.actions) {
         auto [it_act, inserted] = to.actions.try_emplace(act_id, from_act);
-        if (!inserted) {
+        if (inserted) {
+            it_act->second.casts = 0;
+        } else {
             ActionSummary& to_act = it_act->second;
             to_act.hit_count += from_act.hit_count;
             to_act.damage_hits += from_act.damage_hits;
@@ -598,11 +625,23 @@ void MetricsAccumulator::recalculate(double duration_seconds, const CombatantReg
         stats.ndps = (damage - received) / safe_duration;
         stats.cdps = (damage - received_single + given) / safe_duration;
         stats.hps = static_cast<double>(stats.effective_healing) / safe_duration;
+        stats.cpm = static_cast<double>(stats.casts) * 60.0 / safe_duration;
         // m_total_damage counts friendly sources only, so an enemy row measured against
         // it would report a share of a total it never contributed to.
         stats.damage_share_pct = (m_total_damage > 0 && stats.is_friendly())
             ? (static_cast<double>(stats.total_damage) * 100.0 / static_cast<double>(m_total_damage))
             : 0.0;
+    }
+}
+
+void MetricsAccumulator::update_gcd_uptime(double duration_seconds) {
+    const uint64_t end_us = m_start_us + static_cast<uint64_t>(std::max(duration_seconds, 0.0) * 1e6);
+    for (const auto& [id, gcds] : m_gcds) {
+        auto it = m_combatants.find(id);
+        if (it == m_combatants.end()) continue;
+        const GcdUptime gcd = gcd_uptime(gcds, m_start_us, end_us);
+        it->second.gcd_estimate_s = gcd.estimate_s;
+        it->second.gcd_uptime_pct = gcd.uptime_pct;
     }
 }
 
@@ -684,11 +723,18 @@ double MetricsAccumulator::overheal_pct() const noexcept {
         : 0.0;
 }
 
+void MetricsAccumulator::start(uint64_t start_us) {
+    clear();
+    m_start_us = start_us;
+}
+
 void MetricsAccumulator::clear() {
     m_combatants.clear();
     m_damage_taken.clear();
     m_buff_credits.clear();
     m_recaps.clear();
+    m_gcds.clear();
+    m_start_us = 0;
     m_total_damage = 0;
     m_total_healing = 0;
     m_total_effective_healing = 0;

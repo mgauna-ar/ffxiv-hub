@@ -247,6 +247,65 @@ TEST_CASE(AppState, EnemyHpReachesTheBossReadout) {
     state.shutdown();
 }
 
+TEST_CASE(PipeServer, RoutesCasts) {
+    ipc::PipeServer server;
+    ipc::CombatCastPayload received{};
+    server.set_combat_cast_callback([&](const ipc::CombatCastPayload& cast) { received = cast; });
+
+    ipc::CombatCastPayload cast{};
+    cast.source_id = 1001;
+    cast.action_id = 31;
+    cast.timestamp_us = 5'000'000;
+    TEST_ASSERT(server.process_raw_packet(ipc::serialize_typed_packet(
+        PluginId::CombatMeter, MessageType::CombatCast, 1, cast)));
+    TEST_ASSERT_EQ(received.source_id, 1001u);
+    TEST_ASSERT_EQ(received.action_id, 31u);
+    TEST_ASSERT_EQ(received.timestamp_us, 5'000'000u);
+}
+
+TEST_CASE(AppState, CastsReachTheLiveSummary) {
+    app::AppState state;
+    state.initialize();
+
+    ipc::CombatActorInfoPayload actor{};
+    actor.entity_id = 1001;
+    actor.actor_type = static_cast<uint8_t>(meter::ActorType::Player);
+    actor.job_id = static_cast<uint32_t>(meter::Job::WAR);
+    actor.max_hp = 100000;
+    actor.current_hp = 100000;
+    state.pipe_server().process_raw_packet(
+        ipc::serialize_typed_packet(PluginId::CombatMeter, MessageType::CombatActorInfo, 1, actor));
+
+    ipc::CombatActionPayload act{};
+    act.source_id = 1001;
+    act.target_id = 0x40000001;
+    act.action_id = 31;
+    act.damage = 25000;
+    act.effect_type = static_cast<uint16_t>(meter::EffectType::Damage);
+    act.timestamp_us = 10'000'000;
+    state.pipe_server().process_raw_packet(
+        ipc::serialize_typed_packet(PluginId::CombatMeter, MessageType::CombatAction, 2, act));
+
+    ipc::CombatCastPayload cast{};
+    cast.source_id = 1001;
+    cast.action_id = 31;
+    cast.timestamp_us = 10'000'000;
+    state.pipe_server().process_raw_packet(
+        ipc::serialize_typed_packet(PluginId::CombatMeter, MessageType::CombatCast, 3, cast));
+
+    const auto summary = state.get_live_summary();
+    const meter::CombatantStats* warrior = nullptr;
+    for (const auto& c : summary.combatants) {
+        if (c.entity_id == 1001) warrior = &c;
+    }
+    TEST_ASSERT(warrior != nullptr);
+    TEST_ASSERT_EQ(warrior->casts, 1u);
+    TEST_ASSERT_EQ(warrior->gcd_casts, 1u);
+    // A snapshot with detail works the uptime out.
+    TEST_ASSERT(warrior->gcd_uptime_pct > 0.0);
+    state.shutdown();
+}
+
 TEST_CASE(AppState, InitializationAndRegisteredPlugins) {
     app::AppState state;
     TEST_ASSERT(state.initialize());

@@ -14,6 +14,7 @@
 #include <array>
 #include <vector>
 #include <atomic>
+#include <chrono>
 #include <thread>
 #include <cstring>
 
@@ -1059,6 +1060,14 @@ TEST_CASE(MeterEngine, ConcurrentProducersAndReaders) {
             pkt.damage = 100;
             pkt.effect_type = static_cast<uint16_t>(EffectType::Damage);
             engine.process_action(pkt);
+
+            // The press behind it, from the same detour.
+            hub::ipc::CastPacket cast{};
+            cast.source_id = 1000 + (i % 8);
+            cast.action_id = 31;
+            cast.timestamp_us = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count());
+            engine.process_cast(cast);
         }
         stop.store(true);
     });
