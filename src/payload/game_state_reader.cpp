@@ -2,7 +2,7 @@
 
 #include "common/pe_scanner.hpp"
 #include "common/sigscan.hpp"
-#include <cstring>
+#include "common/os/safe_memory.hpp"
 
 namespace hub::payload {
 
@@ -60,16 +60,9 @@ namespace hub::payload {
 
 namespace {
 
-/// One memcpy under a single guard: a torn read costs a frame, not 112 faults.
+/// One copy under a single guard: a torn read costs a frame, not 112 faults.
 static bool SafeReadConditions(uintptr_t addr, uint8_t* out, size_t count) {
-    __try {
-        if (addr == 0) return false;
-        std::memcpy(out, reinterpret_cast<const void*>(addr), count);
-        return true;
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
+    return hub::os::safe_copy(out, reinterpret_cast<const void*>(addr), count);
 }
 
 } // namespace

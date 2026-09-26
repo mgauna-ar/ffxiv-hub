@@ -30,8 +30,10 @@ void for_each_consumer(Fn&& fn) {
 #endif
 #include <windows.h>
 #include "MinHook.h"
+#include "payload/minhook_init.hpp"
 #include "common/sigscan.hpp"
 #include "common/pe_scanner.hpp"
+#include "common/os/safe_memory.hpp"
 
 #define FFXIV_FASTCALL __fastcall
 
@@ -155,15 +157,10 @@ static bool SafeCallOriginalProcessHotDot(
 }
 
 static uint32_t SafeReadEntityId(void* entity) {
-    __try {
-        if (entity != nullptr) {
-            return static_cast<game::CharacterObject*>(entity)->entity_id;
-        }
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER) {
-        return 0;
-    }
-    return 0;
+    uint32_t id = 0;
+    if (entity == nullptr) return 0;
+    const auto* obj = static_cast<const game::CharacterObject*>(entity);
+    return hub::os::safe_read(&obj->entity_id, id) ? id : 0;
 }
 
 // Detour 1: UseActionLocation
@@ -263,15 +260,10 @@ static void FFXIV_FASTCALL hooked_process_hot_dot(
 
 } // namespace
 
-HookManager& HookManager::instance() noexcept {
-    static HookManager s_instance;
-    return s_instance;
-}
-
 bool HookManager::install() {
     if (m_installed.load()) return true;
 
-    if (MH_Initialize() != MH_OK && MH_Initialize() != MH_ERROR_ALREADY_INITIALIZED) {
+    if (!initialize_minhook()) {
         m_last_error = "MinHook initialization failed";
         return false;
     }
@@ -422,34 +414,11 @@ void HookManager::uninstall() {
     m_active_hooks.store(0);
 }
 
-void HookManager::dispatch_use_action_location_test(
-    void* action_mgr, uint32_t action_type, uint32_t action_id,
-    uint64_t target_id, const void* loc, uint32_t extra, uint64_t res
-) {
-    for_each_consumer([&](IHookConsumer* c) {
-        c->on_use_action_location(action_mgr, action_type, action_id, target_id, loc, extra, res);
-    });
-}
-
-void HookManager::dispatch_receive_action_effect_test(
-    uint32_t source_id, const void* source_char,
-    const void* effect_header, const void* effect_data, const uint64_t* targets
-) {
-    for_each_consumer([&](IHookConsumer* c) {
-        c->on_receive_action_effect(source_id, source_char, effect_header, effect_data, targets);
-    });
-}
-
 } // namespace hub::payload
 
 #else // !_WIN32 - Cross-platform mock implementation
 
 namespace hub::payload {
-
-HookManager& HookManager::instance() noexcept {
-    static HookManager s_instance;
-    return s_instance;
-}
 
 bool HookManager::install() {
     m_installed.store(true);
@@ -462,32 +431,19 @@ void HookManager::uninstall() {
     m_active_hooks.store(0);
 }
 
-void HookManager::dispatch_use_action_location_test(
-    void* action_mgr, uint32_t action_type, uint32_t action_id,
-    uint64_t target_id, const void* loc, uint32_t extra, uint64_t res
-) {
-    for_each_consumer([&](IHookConsumer* c) {
-        c->on_use_action_location(action_mgr, action_type, action_id, target_id, loc, extra, res);
-    });
-}
-
-void HookManager::dispatch_receive_action_effect_test(
-    uint32_t source_id, const void* source_char,
-    const void* effect_header, const void* effect_data, const uint64_t* targets
-) {
-    for_each_consumer([&](IHookConsumer* c) {
-        c->on_receive_action_effect(source_id, source_char, effect_header, effect_data, targets);
-    });
-}
-
 } // namespace hub::payload
 
 #endif
 
-// The tick kind check and the consumer registry. Platform independent, so they live
-// outside the branch above rather than being duplicated into the Win32 and mock
-// implementations.
+// The singleton, the tick kind check, the consumer registry and the test dispatchers.
+// Platform independent, so they live outside the branch above rather than being
+// duplicated into the Win32 and mock implementations.
 namespace hub::payload {
+
+HookManager& HookManager::instance() noexcept {
+    static HookManager s_instance;
+    return s_instance;
+}
 
 std::optional<bool> hot_dot_is_heal(uint32_t kind) noexcept {
     if (kind == game::definitions::HOT_DOT_KIND_HEAL) return true;
@@ -512,6 +468,24 @@ bool HookManager::register_consumer(IHookConsumer* consumer) noexcept {
 
 void HookManager::clear_consumers() noexcept {
     m_consumers.clear();
+}
+
+void HookManager::dispatch_use_action_location_test(
+    void* action_mgr, uint32_t action_type, uint32_t action_id,
+    uint64_t target_id, const void* loc, uint32_t extra, uint64_t res
+) {
+    for_each_consumer([&](IHookConsumer* c) {
+        c->on_use_action_location(action_mgr, action_type, action_id, target_id, loc, extra, res);
+    });
+}
+
+void HookManager::dispatch_receive_action_effect_test(
+    uint32_t source_id, const void* source_char,
+    const void* effect_header, const void* effect_data, const uint64_t* targets
+) {
+    for_each_consumer([&](IHookConsumer* c) {
+        c->on_receive_action_effect(source_id, source_char, effect_header, effect_data, targets);
+    });
 }
 
 } // namespace hub::payload

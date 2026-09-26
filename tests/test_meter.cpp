@@ -8,6 +8,7 @@
 #include "meter/encounter_engine.hpp"
 #include "meter/pull_grouping.hpp"
 #include "meter/combat_plugin.hpp"
+#include "meter/actor_info.hpp"
 #include "hub/game_state.hpp"
 #include "common/config/json.hpp"
 #include "payload/object_reader.hpp"
@@ -1403,6 +1404,40 @@ TEST_CASE(MeterPlugin, MapsGameObjectKindToActorType) {
     TEST_ASSERT_EQ(pet_actor->actor_type, ActorType::Pet);
     TEST_ASSERT_EQ(pet_actor->owner_id, 777u);
 
+}
+
+TEST_CASE(MeterPlugin, ActorInfoExtractionIsShared) {
+    // The one Character read both the object reader and the plugin go through.
+    hub::game::CharacterObject chr{};
+    chr.entity_id = 0x10000001;
+    chr.owner_id = hub::game::NO_ENTITY_ID;
+    chr.object_kind = hub::game::ObjectKind::Player;
+    chr.class_job = 21;
+    chr.current_hp = 50;
+    chr.max_hp = 100;
+    std::memset(chr.name, 'A', sizeof(chr.name) - 1);
+
+    hub::ipc::ActorInfoPacket info{};
+    TEST_ASSERT_TRUE(hub::meter::read_actor_info(&chr, info));
+    TEST_ASSERT_EQ(info.entity_id, 0x10000001u);
+    TEST_ASSERT_EQ(info.owner_id, 0u);  // NO_ENTITY_ID means no owner
+    TEST_ASSERT_EQ(info.job_id, 21u);
+    TEST_ASSERT_EQ(info.current_hp, 50u);
+    TEST_ASSERT_EQ(info.max_hp, 100u);
+    TEST_ASSERT_EQ(info.actor_type, static_cast<uint8_t>(ActorType::Player));
+    // Capped to what the packet carries, and terminated.
+    TEST_ASSERT_EQ(std::strlen(info.name), sizeof(info.name) - 1);
+
+    // An owner makes any kind a pet.
+    chr.owner_id = 0x10000002;
+    TEST_ASSERT_TRUE(hub::meter::extract_actor_info(chr, info));
+    TEST_ASSERT_EQ(info.owner_id, 0x10000002u);
+    TEST_ASSERT_EQ(info.actor_type, static_cast<uint8_t>(ActorType::Pet));
+
+    // A placeholder id is no actor, and there is nothing to read behind null.
+    chr.entity_id = hub::game::NO_ENTITY_ID;
+    TEST_ASSERT_FALSE(hub::meter::extract_actor_info(chr, info));
+    TEST_ASSERT_FALSE(hub::meter::read_actor_info(nullptr, info));
 }
 
 TEST_CASE(MeterPlugin, EmitsCombatActionOverIpc) {

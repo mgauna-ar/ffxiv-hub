@@ -3,23 +3,16 @@
 #include "hub/game_definitions.hpp"
 #include "common/config/json.hpp"
 #include "common/ipc/protocol.hpp"
-#include <cstring>
+#include "common/os/safe_memory.hpp"
 #include <cmath>
 #include <chrono>
 #include <utility>
-
-#ifdef _WIN32
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-#endif
 
 namespace hub::mitigator {
 
 namespace {
 
-/// What UseActionLocation left in the ActionManager, read in one guarded pass.
+/// What UseActionLocation left in the ActionManager.
 struct UseActionState {
     uint16_t sequence{0};
     uint8_t is_casting{0};
@@ -27,72 +20,29 @@ struct UseActionState {
     float elapsed_cast_time{0.0f};
 };
 
-void extract_use_action_state(const uint8_t* mgr, UseActionState& out) {
-    std::memcpy(&out.sequence, mgr + game::offsets::ACTION_MANAGER_CURRENT_SEQUENCE, sizeof(out.sequence));
-    std::memcpy(&out.is_casting, mgr + game::offsets::ACTION_MANAGER_IS_CASTING, sizeof(out.is_casting));
-    std::memcpy(&out.cast_time, mgr + game::offsets::ACTION_MANAGER_CAST_TIME, sizeof(out.cast_time));
-    std::memcpy(&out.elapsed_cast_time, mgr + game::offsets::ACTION_MANAGER_ELAPSED_CAST_TIME, sizeof(out.elapsed_cast_time));
+// ActionManager memory is the game's, so every access goes through the SEH-guarded
+// hub::os::safe_copy; each returns false (or 0) for a null or faulting manager.
+uintptr_t field(void* mgr, uintptr_t offset) {
+    return mgr != nullptr ? reinterpret_cast<uintptr_t>(mgr) + offset : 0;
 }
 
-// SEH-protected leaf functions for touching ActionManager memory. Kept free of
-// C++ objects requiring unwinding, matching this codebase's SafeCallOriginal*/
-// SafeRead* convention (src/payload/hook_manager.cpp, object_reader.cpp).
-#ifdef _WIN32
 bool SafeReadUseActionState(void* mgr, UseActionState& out) {
-    __try {
-        if (mgr != nullptr) {
-            extract_use_action_state(static_cast<const uint8_t*>(mgr), out);
-            return true;
-        }
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
-    return false;
+    return hub::os::safe_read(field(mgr, game::offsets::ACTION_MANAGER_CURRENT_SEQUENCE), out.sequence) &&
+           hub::os::safe_read(field(mgr, game::offsets::ACTION_MANAGER_IS_CASTING), out.is_casting) &&
+           hub::os::safe_read(field(mgr, game::offsets::ACTION_MANAGER_CAST_TIME), out.cast_time) &&
+           hub::os::safe_read(field(mgr, game::offsets::ACTION_MANAGER_ELAPSED_CAST_TIME), out.elapsed_cast_time);
 }
 
 float SafeReadAnimationLock(void* mgr) {
-    __try {
-        if (mgr != nullptr) {
-            return *reinterpret_cast<float*>(static_cast<uint8_t*>(mgr) + game::offsets::ACTION_MANAGER_ANIMATION_LOCK);
-        }
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER) {
-        return 0.0f;
-    }
-    return 0.0f;
+    float lock = 0.0f;
+    return hub::os::safe_read(field(mgr, game::offsets::ACTION_MANAGER_ANIMATION_LOCK), lock) ? lock : 0.0f;
 }
 
 bool SafeWriteAnimationLock(void* mgr, float desired_lock) {
-    __try {
-        if (mgr != nullptr && std::isfinite(desired_lock) && desired_lock >= 0.0f) {
-            *reinterpret_cast<float*>(static_cast<uint8_t*>(mgr) + game::offsets::ACTION_MANAGER_ANIMATION_LOCK) = desired_lock;
-            return true;
-        }
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
-    return false;
+    if (!std::isfinite(desired_lock) || desired_lock < 0.0f) return false;
+    const uintptr_t addr = field(mgr, game::offsets::ACTION_MANAGER_ANIMATION_LOCK);
+    return hub::os::safe_copy(reinterpret_cast<void*>(addr), &desired_lock, sizeof(desired_lock));
 }
-#else
-bool SafeReadUseActionState(void* mgr, UseActionState& out) {
-    if (mgr == nullptr) return false;
-    extract_use_action_state(static_cast<const uint8_t*>(mgr), out);
-    return true;
-}
-
-float SafeReadAnimationLock(void* mgr) {
-    if (mgr == nullptr) return 0.0f;
-    return *reinterpret_cast<float*>(static_cast<uint8_t*>(mgr) + game::offsets::ACTION_MANAGER_ANIMATION_LOCK);
-}
-
-bool SafeWriteAnimationLock(void* mgr, float desired_lock) {
-    if (mgr == nullptr || !std::isfinite(desired_lock) || desired_lock < 0.0f) return false;
-    *reinterpret_cast<float*>(static_cast<uint8_t*>(mgr) + game::offsets::ACTION_MANAGER_ANIMATION_LOCK) = desired_lock;
-    return true;
-}
-#endif
 
 } // namespace
 

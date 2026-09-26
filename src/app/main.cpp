@@ -21,11 +21,10 @@
 #include <dxgi.h>
 #include <dwmapi.h>
 
-#if __has_include("third_party/imgui/imgui.h")
-#include "third_party/imgui/imgui.h"
+#include "common/ui/imgui_guard.hpp"
+#ifdef HAVE_IMGUI
 #include "third_party/imgui/backends/imgui_impl_win32.h"
 #include "third_party/imgui/backends/imgui_impl_dx11.h"
-#define HAVE_IMGUI 1
 #endif
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);

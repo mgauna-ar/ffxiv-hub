@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <type_traits>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -13,6 +14,28 @@
 #endif
 
 namespace hub::ipc {
+
+namespace {
+
+/// Hands the payload to `callback` as a `T` when one is set and the bytes hold at
+/// least `min_size`. Bytes past sizeof(T) are ignored, and a payload shorter than
+/// sizeof(T), sent by an older payload DLL, reads its missing fields as zero.
+template <typename T, typename Callback>
+void deliver_versioned(std::span<const uint8_t> bytes, size_t min_size, const Callback& callback) {
+    static_assert(std::is_trivially_copyable_v<T>, "IPC payloads are copied as raw bytes");
+    if (!callback || bytes.size() < min_size) return;
+    T payload{};
+    std::memcpy(&payload, bytes.data(), std::min(bytes.size(), sizeof(T)));
+    callback(payload);
+}
+
+/// deliver_versioned for a payload that has only ever had one size.
+template <typename T, typename Callback>
+void deliver(std::span<const uint8_t> bytes, const Callback& callback) {
+    deliver_versioned<T>(bytes, sizeof(T), callback);
+}
+
+} // namespace
 
 PipeServer::PipeServer(const char* pipe_name)
     : m_pipe_name(pipe_name ? pipe_name : DEFAULT_PIPE_NAME) {
@@ -165,123 +188,40 @@ bool PipeServer::process_raw_packet(std::span<const uint8_t> data) {
 
     const auto plugin = static_cast<PluginId>(hdr.plugin_id);
     const auto msg_type = static_cast<MessageType>(hdr.message_type);
+    const auto& p = payload_span;
 
     if (plugin == PluginId::CombatMeter) {
         switch (msg_type) {
-            case MessageType::CombatAction:
-                // A payload loaded before this app may send the action without its
-                // credits; they read as none.
-                if (payload_span.size() >= COMBAT_ACTION_V1_SIZE && m_on_combat_action) {
-                    CombatActionPayload payload{};
-                    std::memcpy(&payload, payload_span.data(), std::min(payload_span.size(), sizeof(payload)));
-                    m_on_combat_action(payload);
-                }
-                break;
-            case MessageType::CombatStatusTick:
-                // A payload loaded before this app may send the shorter tick; its
-                // missing overheal reads as 0.
-                if (payload_span.size() >= COMBAT_STATUS_TICK_V1_SIZE && m_on_combat_tick) {
-                    CombatStatusTickPayload payload{};
-                    std::memcpy(&payload, payload_span.data(), std::min(payload_span.size(), sizeof(payload)));
-                    m_on_combat_tick(payload);
-                }
-                break;
-            case MessageType::CombatActorInfo:
-                if (payload_span.size() >= sizeof(CombatActorInfoPayload) && m_on_actor_info) {
-                    CombatActorInfoPayload payload{};
-                    std::memcpy(&payload, payload_span.data(), sizeof(payload));
-                    m_on_actor_info(payload);
-                }
-                break;
-            case MessageType::CombatPartySync:
-                if (payload_span.size() >= sizeof(CombatPartySyncPayload) && m_on_party_sync) {
-                    CombatPartySyncPayload payload{};
-                    std::memcpy(&payload, payload_span.data(), sizeof(payload));
-                    m_on_party_sync(payload);
-                }
-                break;
-            case MessageType::CombatControl:
-                if (payload_span.size() >= sizeof(CombatControlPayload) && m_on_combat_control) {
-                    CombatControlPayload payload{};
-                    std::memcpy(&payload, payload_span.data(), sizeof(payload));
-                    m_on_combat_control(payload);
-                }
-                break;
-            case MessageType::CombatStatusList:
-                if (payload_span.size() >= sizeof(CombatStatusListPayload) && m_on_status_list) {
-                    CombatStatusListPayload payload{};
-                    std::memcpy(&payload, payload_span.data(), sizeof(payload));
-                    m_on_status_list(payload);
-                }
-                break;
-            case MessageType::CombatLifeEvent:
-                if (payload_span.size() >= sizeof(CombatLifeEventPayload) && m_on_life_event) {
-                    CombatLifeEventPayload payload{};
-                    std::memcpy(&payload, payload_span.data(), sizeof(payload));
-                    m_on_life_event(payload);
-                }
-                break;
-            case MessageType::CombatEnemyHp:
-                if (payload_span.size() >= sizeof(CombatEnemyHpPayload) && m_on_enemy_hp) {
-                    CombatEnemyHpPayload payload{};
-                    std::memcpy(&payload, payload_span.data(), sizeof(payload));
-                    m_on_enemy_hp(payload);
-                }
-                break;
-            case MessageType::CombatCast:
-                if (payload_span.size() >= sizeof(CombatCastPayload) && m_on_cast) {
-                    CombatCastPayload payload{};
-                    std::memcpy(&payload, payload_span.data(), sizeof(payload));
-                    m_on_cast(payload);
-                }
-                break;
-            default:
-                break;
+            // A payload loaded before this app may send the action without its
+            // credits; they read as none.
+            case MessageType::CombatAction:     deliver_versioned<CombatActionPayload>(p, COMBAT_ACTION_V1_SIZE, m_on_combat_action); break;
+            // A payload loaded before this app may send the shorter tick; its
+            // missing overheal reads as 0.
+            case MessageType::CombatStatusTick: deliver_versioned<CombatStatusTickPayload>(p, COMBAT_STATUS_TICK_V1_SIZE, m_on_combat_tick); break;
+            case MessageType::CombatActorInfo:  deliver<CombatActorInfoPayload>(p, m_on_actor_info); break;
+            case MessageType::CombatPartySync:  deliver<CombatPartySyncPayload>(p, m_on_party_sync); break;
+            case MessageType::CombatControl:    deliver<CombatControlPayload>(p, m_on_combat_control); break;
+            case MessageType::CombatStatusList: deliver<CombatStatusListPayload>(p, m_on_status_list); break;
+            case MessageType::CombatLifeEvent:  deliver<CombatLifeEventPayload>(p, m_on_life_event); break;
+            case MessageType::CombatEnemyHp:    deliver<CombatEnemyHpPayload>(p, m_on_enemy_hp); break;
+            case MessageType::CombatCast:       deliver<CombatCastPayload>(p, m_on_cast); break;
+            default: break;
         }
     } else if (plugin == PluginId::LatencyMitigator) {
         if (msg_type == MessageType::MitigatorTelemetry) {
-            if (payload_span.size() >= sizeof(MitigatorTelemetryPayload) && m_on_mitigator_telemetry) {
-                MitigatorTelemetryPayload payload{};
-                std::memcpy(&payload, payload_span.data(), sizeof(payload));
-                m_on_mitigator_telemetry(payload);
-            }
+            deliver<MitigatorTelemetryPayload>(p, m_on_mitigator_telemetry);
         }
     }
 
     // Common messages
     switch (msg_type) {
-        case MessageType::Heartbeat:
-            if (payload_span.size() >= sizeof(HeartbeatPayload) && m_on_heartbeat) {
-                HeartbeatPayload payload{};
-                std::memcpy(&payload, payload_span.data(), sizeof(payload));
-                m_on_heartbeat(payload);
-            }
-            break;
-        case MessageType::Status:
-            if (payload_span.size() >= sizeof(StatusPayload) && m_on_status) {
-                StatusPayload payload{};
-                std::memcpy(&payload, payload_span.data(), sizeof(payload));
-                m_on_status(payload);
-            }
-            break;
-        case MessageType::OverlayGeometry:
-            if (payload_span.size() >= sizeof(OverlayGeometryPayload) && m_on_overlay_geometry) {
-                OverlayGeometryPayload payload{};
-                std::memcpy(&payload, payload_span.data(), sizeof(payload));
-                m_on_overlay_geometry(payload);
-            }
-            break;
-        case MessageType::GameState:
-            // A payload loaded before this app may send flags alone; its client_flags
-            // read as 0, which the meter takes as "unknown".
-            if (payload_span.size() >= GAME_STATE_V1_SIZE && m_on_game_state) {
-                GameStatePayload payload{};
-                std::memcpy(&payload, payload_span.data(), std::min(payload_span.size(), sizeof(payload)));
-                m_on_game_state(payload);
-            }
-            break;
-        default:
-            break;
+        case MessageType::Heartbeat:       deliver<HeartbeatPayload>(p, m_on_heartbeat); break;
+        case MessageType::Status:          deliver<StatusPayload>(p, m_on_status); break;
+        case MessageType::OverlayGeometry: deliver<OverlayGeometryPayload>(p, m_on_overlay_geometry); break;
+        // A payload loaded before this app may send flags alone; its client_flags
+        // read as 0, which the meter takes as "unknown".
+        case MessageType::GameState:       deliver_versioned<GameStatePayload>(p, GAME_STATE_V1_SIZE, m_on_game_state); break;
+        default: break;
     }
 
     m_packets_received.fetch_add(1, std::memory_order_relaxed);
