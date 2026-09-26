@@ -217,7 +217,7 @@ void EncounterEngine::update(TimePoint now) {
 
         // Unconditional: the duration keeps growing between packets, so the
         // derived rates go stale even when nothing new arrived.
-        const double dur = std::chrono::duration<double>(now - m_start_time).count();
+        const double dur = elapsed_since_start_locked(now);
         m_accumulator.recalculate(dur, &m_registry);
         m_dirty = false;
     }
@@ -251,6 +251,10 @@ std::optional<bool> EncounterEngine::game_combat(TimePoint now) const {
 
 bool EncounterEngine::game_state_fresh_locked(TimePoint now) const noexcept {
     return m_has_game_state && now - m_game_state_time < kGameStateTtl;
+}
+
+double EncounterEngine::elapsed_since_start_locked(TimePoint t) const noexcept {
+    return std::max(std::chrono::duration<double>(t - m_start_time).count(), 0.0);
 }
 
 void EncounterEngine::start_encounter(TimePoint now, uint64_t timestamp_us) {
@@ -301,7 +305,7 @@ void EncounterEngine::end_encounter_locked(EncounterEndReason reason, TimePoint 
     } else if (trim_dead_tail) {
         fight_end = m_last_activity_time;
     }
-    const double dur = std::chrono::duration<double>(fight_end - m_start_time).count();
+    const double dur = elapsed_since_start_locked(fight_end);
 
     m_accumulator.recalculate(dur, &m_registry);
     m_accumulator.update_gcd_uptime(dur);
@@ -426,7 +430,7 @@ double EncounterEngine::active_duration_seconds(TimePoint now) const {
     if (m_state != EncounterState::InCombat) {
         return 0.0;
     }
-    return std::chrono::duration<double>(now - m_start_time).count();
+    return elapsed_since_start_locked(now);
 }
 
 std::vector<EncounterSummary> EncounterEngine::pull_history() const {
@@ -508,7 +512,7 @@ EncounterTimeline EncounterEngine::timeline(uint64_t encounter_id, TimePoint now
         return {};
     }
     if (m_state == EncounterState::InCombat) {
-        const double dur = std::max(std::chrono::duration<double>(now - m_start_time).count(), 0.0);
+        const double dur = elapsed_since_start_locked(now);
         EncounterTimeline live;
         live.rows = m_accumulator.timeline_rows();
         live.buffs = m_uptime.windows(m_start_time_us + static_cast<uint64_t>(dur * 1e6), m_registry);
@@ -567,7 +571,7 @@ EncounterSummary EncounterEngine::summary_locked(TimePoint now, bool with_detail
     double dur = 0.0;
     const EncounterSummary* shown_pull = nullptr;
     if (m_state == EncounterState::InCombat) {
-        dur = std::chrono::duration<double>(now - m_start_time).count();
+        dur = elapsed_since_start_locked(now);
         if (m_dirty) {
             m_accumulator.recalculate(dur, &m_registry);
             m_dirty = false;
