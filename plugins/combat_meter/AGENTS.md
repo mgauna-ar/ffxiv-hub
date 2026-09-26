@@ -5,7 +5,7 @@ phase ordering, IPC and ring buffer safety, hook lifecycle and teardown, tray an
 dashboard decoupling - live in the root [`AGENTS.md`](../../AGENTS.md) and apply here too.
 
 Two meter invariants deliberately stay in the root as well, because code outside this
-directory can violate them: `EncounterEngine` is shared state reached from four threads,
+directory can violate them: `EncounterEngine` is shared state reached from three threads,
 and derived rates are recomputed on the tick rather than per packet.
 
 ## Combat Analytics Invariants

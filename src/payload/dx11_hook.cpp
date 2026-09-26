@@ -2,6 +2,9 @@
 #include "payload/overlay_host.hpp"
 #include "payload/wndproc_hook.hpp"
 #include "common/os/process_exit.hpp"
+#include "common/os/logger.hpp"
+#include "hub/game_definitions.hpp"
+#include <thread>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -116,17 +119,9 @@ static HRESULT SafeCallResizeBuffers(
     }
 }
 
-HRESULT WINAPI hooked_present(IDXGISwapChain* swap_chain, UINT sync_interval, UINT flags) {
-    // Polled here rather than trusting a flag another thread sets: at process
-    // exit that thread is killed without warning, and one more rendered frame
-    // touches a device the game is already releasing.
-    if (Dx11Hook::is_shutting_down() || !swap_chain) {
-        if (fp_original_present && swap_chain) {
-            return SafeCallPresent(fp_original_present, swap_chain, sync_interval, flags);
-        }
-        return S_OK;
-    }
-
+// Rebinds to a new swap chain or window, then draws the overlays. Runs inside
+// the caller's CallScope, so uninstall() cannot free what it touches.
+void bind_and_render(IDXGISwapChain* swap_chain) {
     DXGI_SWAP_CHAIN_DESC desc{};
     const bool got_desc = SUCCEEDED(swap_chain->GetDesc(&desc));
     const HWND target_hwnd = got_desc ? desc.OutputWindow : nullptr;
@@ -165,8 +160,22 @@ HRESULT WINAPI hooked_present(IDXGISwapChain* swap_chain, UINT sync_interval, UI
         }
     }
 
-    if (g_initialized && !g_shutting_down.load() && !g_game_exiting.load()) {
+    if (g_initialized) {
         render_overlay_frame();
+    }
+}
+
+HRESULT WINAPI hooked_present(IDXGISwapChain* swap_chain, UINT sync_interval, UINT flags) {
+    if (swap_chain) {
+        // Counted only around our own work: the original Present can block on
+        // vsync, and it touches nothing uninstall() frees.
+        Dx11Hook::CallScope scope;
+        // Polled here rather than trusting a flag another thread sets: at process
+        // exit that thread is killed without warning, and one more rendered frame
+        // touches a device the game is already releasing.
+        if (!Dx11Hook::is_shutting_down()) {
+            bind_and_render(swap_chain);
+        }
     }
 
     if (fp_original_present && swap_chain) {
@@ -183,14 +192,12 @@ HRESULT WINAPI hooked_resize_buffers(
     DXGI_FORMAT new_format,
     UINT swap_chain_flags
 ) {
-    if (Dx11Hook::is_shutting_down()) {
-        if (fp_original_resize_buffers && swap_chain) {
-            return SafeCallResizeBuffers(fp_original_resize_buffers, swap_chain, buffer_count, width, height, new_format, swap_chain_flags);
+    {
+        Dx11Hook::CallScope scope;
+        if (!Dx11Hook::is_shutting_down()) {
+            cleanup_render_target();
         }
-        return S_OK;
     }
-
-    cleanup_render_target();
 
     HRESULT hr = S_OK;
     if (fp_original_resize_buffers && swap_chain) {
@@ -198,7 +205,11 @@ HRESULT WINAPI hooked_resize_buffers(
     }
 
     if (SUCCEEDED(hr) && swap_chain) {
-        create_render_target(swap_chain);
+        // Checked again: uninstall() may have released the device meanwhile.
+        Dx11Hook::CallScope scope;
+        if (!Dx11Hook::is_shutting_down()) {
+            create_render_target(swap_chain);
+        }
     }
 
     return hr;
@@ -220,6 +231,10 @@ bool Dx11Hook::is_shutting_down() noexcept {
         return true;
     }
     return false;
+}
+
+void Dx11Hook::mark_game_exiting() noexcept {
+    g_game_exiting.store(true);
 }
 
 bool Dx11Hook::install() {
@@ -324,7 +339,22 @@ bool Dx11Hook::install() {
 void Dx11Hook::uninstall() {
     if (!m_installed.load()) return;
 
+    // Non-destructive passthrough: never call MH_DisableHook or MH_RemoveHook
+    // on DXGI targets to preserve chained hook coexistence. The flag alone
+    // turns every later call into a passthrough.
     g_shutting_down.store(true);
+    m_installed.store(false);
+
+    // A frame may be mid-render on the game's render thread, or a message inside
+    // ImGui on its window thread. Freeing under either faults the game.
+    if (!drain_in_flight(std::chrono::milliseconds(game::definitions::HOOK_DRAIN_TIMEOUT_MS))) {
+        hub::os::Logger::warn(
+            "Dx11Hook: " + std::to_string(in_flight_calls()) +
+            " Present/ResizeBuffers/WndProc call(s) still running after the drain timeout; "
+            "leaving the D3D objects and the ImGui context in place");
+        return;
+    }
+
     cleanup_render_target();
 
     OverlayHost::instance().shutdown();
@@ -332,10 +362,6 @@ void Dx11Hook::uninstall() {
     if (g_context) { g_context->Release(); g_context = nullptr; }
     if (g_device)  { g_device->Release();  g_device = nullptr; }
     g_initialized = false;
-
-    // Non-destructive passthrough: never call MH_DisableHook or MH_RemoveHook
-    // on DXGI targets to preserve chained hook coexistence.
-    m_installed.store(false);
 }
 
 } // namespace hub::payload
@@ -353,6 +379,8 @@ bool Dx11Hook::is_shutting_down() noexcept {
     return false;
 }
 
+void Dx11Hook::mark_game_exiting() noexcept {}
+
 bool Dx11Hook::install() {
     m_installed.store(true);
     return true;
@@ -365,3 +393,16 @@ void Dx11Hook::uninstall() {
 } // namespace hub::payload
 
 #endif
+
+namespace hub::payload {
+
+bool Dx11Hook::drain_in_flight(std::chrono::milliseconds timeout) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (s_in_flight.load() > 0) {
+        if (std::chrono::steady_clock::now() >= deadline) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(game::definitions::HOOK_DRAIN_POLL_INTERVAL_MS));
+    }
+    return true;
+}
+
+} // namespace hub::payload

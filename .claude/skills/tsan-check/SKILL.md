@@ -5,8 +5,8 @@ description: Build and run the test suite under ThreadSanitizer to prove Encount
 
 # Checking `EncounterEngine` Locking
 
-`MeterEngine.ConcurrentProducersAndReaders` drives the engine from four threads at once,
-mirroring the in-game topology. A missing lock does not fail an ordinary run - the test
+`MeterEngine.ConcurrentProducersAndReaders` drives the engine from more threads at once
+than the game does, covering the in-game topology. A missing lock does not fail an ordinary run - the test
 passes and the race stays silent. It only reports under ThreadSanitizer:
 
 ```bash
@@ -28,17 +28,28 @@ runs; `sudo sysctl -w vm.mmap_rnd_bits=28` works around it, as CI does.
 
 ## What it is protecting
 
-In-game, four threads reach one engine: the `ReceiveActionEffect`/`ProcessHotDot` detours
-on the game's main thread, the payload orchestration thread (`sync_party`, `set_zone`,
-`update`, and the vitals pass: status lists, life events, `tracked_enemies`, enemy HP), the DX11 `Present` thread rendering `CombatOverlay`, and the `PipeClient`
-reader thread dispatching commands.
+In-game, three threads reach one engine: the `ReceiveActionEffect`/`ProcessHotDot`
+detours on the game's main thread, the payload orchestration thread (`sync_party`,
+`set_zone`, `update`, the vitals pass: status lists, life events, `tracked_enemies`, enemy
+HP, and every command from the app), and the DX11 `Present` thread rendering
+`CombatOverlay`. The `PipeClient` reader thread only pushes commands into `CommandQueue`;
+the orchestration loop drains and dispatches them.
 
 Every public entry point takes `EncounterEngine::m_mutex`, which is recursive because the
 lifecycle calls re-enter each other. The registry must be reached through
 `with_registry()`; the raw `registry()`/`accumulator()` accessors do not lock and are for
 single-threaded use only. Adding an entry point that skips the mutex, or reaching the
-registry through a raw accessor from one of those four threads, is exactly what this run
+registry through a raw accessor from one of those threads, is exactly what this run
 catches.
+
+## The command queue and overlay geometry
+
+`Payload.CommandQueueCarriesReaderCommandsToTheLoopInOrder` pushes commands from one
+thread, as the pipe reader does, while another drains and dispatches them onto a real
+overlay. `Payload.OverlayGeometryIsAConsistentSnapshotAcrossThreads` writes an overlay's
+geometry from one thread, as `render()` does every frame, while another reads it, as the
+geometry push and the autosave do. Dispatching from the reader again, or dropping the
+lock around `OverlayBase`'s geometry, reports here.
 
 ## The outbound packet queue
 

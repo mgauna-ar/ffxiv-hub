@@ -5,6 +5,7 @@
 #include "payload/game_state_reader.hpp"
 #include "payload/object_reader.hpp"
 #include "payload/command_dispatcher.hpp"
+#include "payload/command_queue.hpp"
 #include "common/ipc/ring_buffer.hpp"
 #include "common/ipc/pipe_client.hpp"
 #include "common/config/config_manager.hpp"
@@ -97,6 +98,10 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
 
     // 4. Connect to the desktop app's pipe before touching any game memory below,
     //    so a hook/sigscan failure still leaves the app able to report it.
+    //    The reader thread only queues commands; the loop below dispatches them,
+    //    so it is not a fourth thread reaching config, overlays and the engine.
+    //    Declared before the client, whose reader pushes into it until joined.
+    hub::payload::CommandQueue command_queue;
     auto pipe_client = std::make_unique<hub::ipc::PipeClient>();
     combat_plugin->set_ring_buffer(&pipe_client->ring_buffer());
     latency_plugin->set_ring_buffer(&pipe_client->ring_buffer());
@@ -105,8 +110,14 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
         combat_plugin.get(), combat_overlay.get(), latency_plugin.get(), latency_overlay.get(),
         &g_shutdown_requested
     };
-    pipe_client->set_command_handler([&dispatch_targets](const hub::ipc::CommandPayload& cmd) {
-        hub::payload::dispatch_command(dispatch_targets, cmd);
+    pipe_client->set_command_handler([&command_queue](const hub::ipc::CommandPayload& cmd) {
+        if (command_queue.push(cmd)) return;
+        // An unload must not be lost to a full queue. The flag is atomic, so
+        // setting it here reaches nothing the loop owns.
+        if (static_cast<hub::PluginId>(cmd.target_plugin_id) == hub::PluginId::Core &&
+            static_cast<hub::CommandId>(cmd.command_id) == hub::CommandId::UnhookAndExit) {
+            g_shutdown_requested.store(true);
+        }
     });
 
     hub::os::Logger::info("Connecting to desktop app pipe (" + std::string(hub::ipc::DEFAULT_PIPE_NAME) + ")...");
@@ -216,6 +227,7 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
     const auto payload_start = std::chrono::steady_clock::now();
     uint32_t heartbeat_sequence = 0;
     size_t last_combatant_count = 0;
+    uint64_t last_dropped_commands = 0;
     bool prev_connected = pipe_client->is_connected();
     latency_plugin->set_connected(prev_connected);
     combat_plugin->set_connected(prev_connected);
@@ -242,6 +254,16 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
                 combat_plugin->invalidate_published_vitals();
             }
             prev_connected = connected;
+        }
+
+        // Commands the app sent since the last tick, in the order it sent them.
+        command_queue.drain([&dispatch_targets](const hub::ipc::CommandPayload& cmd) {
+            hub::payload::dispatch_command(dispatch_targets, cmd);
+        });
+        if (const uint64_t dropped = command_queue.dropped(); dropped != last_dropped_commands) {
+            hub::os::Logger::warn("Command queue full: " + std::to_string(dropped - last_dropped_commands) +
+                                  " command(s) from the app dropped");
+            last_dropped_commands = dropped;
         }
 
         if (!connected &&
@@ -421,9 +443,14 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
     }
 
     // Game process exiting (not just an explicit unload) - don't touch DirectX,
-    // MinHook, threads, or disk from here. The OS reclaims everything.
+    // MinHook, threads, or disk from here. The OS reclaims everything. The
+    // window may be gone while the game thread still runs its shutdown, and the
+    // detours and overlays still point at the plugins below, so park instead of
+    // returning and destroying them; ExitProcess ends this thread.
     if (hub::payload::Dx11Hook::is_shutting_down()) {
-        return 0;
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
     }
 
     // Graceful teardown when explicit unload is requested while the game keeps running
@@ -438,6 +465,17 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
     hub::payload::Dx11Hook::instance().uninstall();
     pipe_client->disconnect();
 
+    // The host outlives this thread and would keep both overlays, the combat
+    // one holding a raw pointer into combat_plugin's engine. Unregistering takes
+    // the host's mutex, which a frame still drawing holds, so this also waits out
+    // a frame the Present drain above gave up on.
+    auto& overlay_host = hub::payload::OverlayHost::instance();
+    overlay_host.unregister_overlay(combat_overlay->overlay_id());
+    overlay_host.unregister_overlay(latency_overlay->overlay_id());
+    overlay_host.set_game_state(nullptr);
+    latency_plugin->set_overlay(nullptr);
+    combat_plugin->set_overlay(nullptr);
+
     return 0;
 }
 
@@ -448,7 +486,9 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
         case DLL_PROCESS_ATTACH:
             g_dll_module = hModule;
             DisableThreadLibraryCalls(hModule);
-            CreateThread(nullptr, 0, PayloadMainThread, hModule, 0, nullptr);
+            if (HANDLE thread = CreateThread(nullptr, 0, PayloadMainThread, hModule, 0, nullptr)) {
+                CloseHandle(thread);
+            }
             break;
 
         case DLL_PROCESS_DETACH:

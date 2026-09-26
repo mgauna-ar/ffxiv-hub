@@ -1,5 +1,6 @@
 #include "payload/wndproc_hook.hpp"
 #include "payload/overlay_host.hpp"
+#include "payload/dx11_hook.hpp"
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -16,66 +17,64 @@ namespace hub::payload {
 namespace {
 
 WNDPROC g_original_wndproc = nullptr;
-std::atomic<bool> g_game_exiting{false};
+
+// Hands the message to ImGui and returns true when an overlay consumed it. Takes
+// a Dx11Hook::CallScope first, so uninstall() cannot destroy the ImGui context
+// while this thread is inside it.
+bool overlay_consumes(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
+    Dx11Hook::CallScope scope;
+    if (Dx11Hook::is_shutting_down() || ImGui::GetCurrentContext() == nullptr) {
+        return false;
+    }
+
+    // Forward message to ImGui Win32 backend
+    ImGui_ImplWin32_WndProcHandler(hwnd, msg, wparam, lparam);
+
+    // Right Mouse Button is reserved for FFXIV camera rotation and targeting; never intercept
+    if ((GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0) {
+        return false;
+    }
+
+    const ImGuiIO& io = ImGui::GetIO();
+    const bool want_capture = io.WantCaptureMouse;
+
+    // Swallow mouse clicks and scrolling directed at active overlay windows
+    switch (msg) {
+        case WM_LBUTTONDOWN:
+        case WM_LBUTTONDBLCLK:
+        case WM_MBUTTONDOWN:
+        case WM_MBUTTONDBLCLK:
+        case WM_XBUTTONDOWN:
+        case WM_XBUTTONDBLCLK:
+        case WM_MOUSEWHEEL:
+        case WM_MOUSEHWHEEL:
+        case WM_LBUTTONUP:
+        case WM_MBUTTONUP:
+        case WM_XBUTTONUP:
+            return want_capture;
+        default:
+            return false;
+    }
+}
 
 LRESULT CALLBACK hooked_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     const WNDPROC orig = g_original_wndproc;
 
-    // 1. Detect game window close / destruction / quit / session end:
-    // Mark shutdown immediately so no further DX11 overlay rendering occurs.
-    // Forward directly to the original WndProc via CallWindowProcW so FFXIV can execute
-    // its graceful shutdown sequence. Never call DefWindowProcW for WM_CLOSE!
-    if (msg == WM_CLOSE || msg == WM_DESTROY || msg == WM_QUIT || msg == WM_ENDSESSION) {
-        g_game_exiting.store(true);
-        if (orig) {
-            return CallWindowProcW(orig, hwnd, msg, wparam, lparam);
-        }
+    // The window going away, or the Windows session ending, is final: raise the
+    // exit signal Present, ResizeBuffers and the payload thread share, so no
+    // further overlay frame is drawn. WM_CLOSE is not final - the game may ask
+    // and the player cancel - so it changes nothing. Every message still reaches
+    // the original WndProc, so FFXIV runs its own shutdown sequence.
+    if (msg == WM_DESTROY || (msg == WM_ENDSESSION && wparam != FALSE)) {
+        Dx11Hook::mark_game_exiting();
+    }
+
+    if (!orig) {
         return DefWindowProcW(hwnd, msg, wparam, lparam);
     }
 
-    if (g_game_exiting.load() || !orig) {
-        if (orig) {
-            return CallWindowProcW(orig, hwnd, msg, wparam, lparam);
-        }
-        return DefWindowProcW(hwnd, msg, wparam, lparam);
-    }
-
-    if (ImGui::GetCurrentContext() != nullptr) {
-        // Forward message to ImGui Win32 backend
-        ImGui_ImplWin32_WndProcHandler(hwnd, msg, wparam, lparam);
-
-        // Right Mouse Button is reserved for FFXIV camera rotation and targeting; never intercept
-        if ((GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0) {
-            return CallWindowProcW(orig, hwnd, msg, wparam, lparam);
-        }
-
-        const ImGuiIO& io = ImGui::GetIO();
-        const bool want_capture = io.WantCaptureMouse;
-
-        // Swallow mouse clicks and scrolling directed at active overlay windows
-        switch (msg) {
-            case WM_LBUTTONDOWN:
-            case WM_LBUTTONDBLCLK:
-            case WM_MBUTTONDOWN:
-            case WM_MBUTTONDBLCLK:
-            case WM_XBUTTONDOWN:
-            case WM_XBUTTONDBLCLK:
-            case WM_MOUSEWHEEL:
-            case WM_MOUSEHWHEEL:
-                if (want_capture) {
-                    return 0;
-                }
-                break;
-            case WM_LBUTTONUP:
-            case WM_MBUTTONUP:
-            case WM_XBUTTONUP:
-                if (want_capture) {
-                    return 0;
-                }
-                break;
-            default:
-                break;
-        }
+    if (overlay_consumes(hwnd, msg, wparam, lparam)) {
+        return 0;
     }
 
     return CallWindowProcW(orig, hwnd, msg, wparam, lparam);

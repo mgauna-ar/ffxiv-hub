@@ -71,9 +71,10 @@ void LatencyOverlay::render() {
 
     const ImGuiIO& restore_io = ImGui::GetIO();
     if (consume_geometry_restore()) {
-        if (has_saved_position()) {
-            float target_x = m_pos_x;
-            float target_y = m_pos_y;
+        const Rect geom = get_geometry();
+        if (is_saved_position(geom)) {
+            float target_x = geom.x;
+            float target_y = geom.y;
             if (restore_io.DisplaySize.x > 100.0f && restore_io.DisplaySize.y > 100.0f) {
                 target_x = std::clamp(target_x, 10.0f, std::max(10.0f, restore_io.DisplaySize.x - 60.0f));
                 target_y = std::clamp(target_y, 10.0f, std::max(10.0f, restore_io.DisplaySize.y - 30.0f));
@@ -141,10 +142,7 @@ void LatencyOverlay::render() {
             }
         }
 
-        m_pos_x = cur_pos.x;
-        m_pos_y = cur_pos.y;
-        m_width = cur_size.x;
-        m_height = cur_size.y;
+        store_window_geometry(Rect{cur_pos.x, cur_pos.y, cur_size.x, cur_size.y});
 
         // Status indicator dot, centred on the text baseline so it tracks the
         // font tier instead of drifting at larger scales.

@@ -45,10 +45,10 @@ struct PullHistoryEntry {
 /**
  * @brief Encounter state machine and owner of the live metrics.
  *
- * In-game, four threads reach this object: the ReceiveActionEffect detour on the
- * game's main thread, the payload orchestration thread, the DX11 Present thread
- * rendering the overlay, and the pipe reader thread dispatching commands. Every
- * public entry point therefore takes m_mutex, which is recursive because the
+ * In-game, three threads reach this object: the ReceiveActionEffect detour on the
+ * game's main thread, the payload orchestration thread (which also runs every
+ * command from the app; the pipe reader only queues them), and the DX11 Present
+ * thread rendering the overlay. Every public entry point therefore takes m_mutex, which is recursive because the
  * lifecycle calls re-enter each other (set_zone -> end_encounter -> recalculate).
  */
 class EncounterEngine {

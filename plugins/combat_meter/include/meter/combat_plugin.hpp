@@ -182,7 +182,7 @@ private:
     EncounterEngine m_engine;
     CombatConfig m_config;
     bool m_initialized{false};
-    /// m_config.enabled as the other threads read it; set from the pipe reader thread.
+    /// m_config.enabled as the other threads read it; set by commands on the orchestration thread.
     std::atomic<bool> m_enabled{true};
     /// True until the payload says otherwise, so a plugin with a sink streams to it.
     std::atomic<bool> m_connected{true};
@@ -200,9 +200,9 @@ private:
     GameStateProvider* m_game_state{nullptr};
     uint32_t m_sequence{0};
 
-    /// Read off the orchestration thread; set from the pipe reader thread.
+    /// Read and set on the orchestration thread; atomic for the detour thread.
     std::atomic<bool> m_track_vitals{true};
-    /// Set from the pipe reader thread, saved from the orchestration thread.
+    /// Set by a command and saved by the autosave, both on the orchestration thread.
     std::atomic<uint32_t> m_dps_metric{0};
     // Orchestration thread only, under the engine lock.
     VitalsTracker m_vitals;
