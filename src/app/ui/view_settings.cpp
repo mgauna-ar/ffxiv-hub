@@ -57,13 +57,13 @@ void render_integration_card() {
         cfg_store(HUB, "start_with_windows", auto_start);
     }
 
-    bool minimize_to_tray = cfg_bool(HUB, "minimize_to_tray", true);
+    bool minimize_to_tray = cfg_get(HUB, "minimize_to_tray", true);
     if (setting_toggle("Close to system tray",
                        "Closing the window hides it instead of quitting.", &minimize_to_tray)) {
         cfg_store(HUB, "minimize_to_tray", minimize_to_tray);
     }
 
-    bool balloon_notifs = cfg_bool(HUB, "show_notifications", true);
+    bool balloon_notifs = cfg_get(HUB, "show_notifications", true);
     if (setting_toggle("Notification area alerts",
                        "Balloon tips when the hub attaches to or loses the game.", &balloon_notifs)) {
         cfg_store(HUB, "show_notifications", balloon_notifs);

@@ -71,25 +71,25 @@ void render_overlay_settings(AppState& app_state, const OverlaySettingsOptions& 
 
     section_header(ICON_MONITOR, "IN-GAME OVERLAY");
 
-    bool visible = cfg_bool(section, "overlay_visible", defaults.visible);
+    bool visible = cfg_get(section, "overlay_visible", defaults.visible);
     if (setting_toggle(opts.visible_label, "Draws the overlay on top of the game client.", &visible)) {
         cfg_store(section, "overlay_visible", visible);
         app_state.send_overlay_command(plugin, CommandId::SetOverlayVisible, visible ? 1 : 0);
     }
 
-    bool locked = cfg_bool(section, "overlay_locked", defaults.locked);
+    bool locked = cfg_get(section, "overlay_locked", defaults.locked);
     if (setting_toggle(opts.locked_label, "Freezes the overlay so it cannot be dragged or resized.", &locked)) {
         cfg_store(section, "overlay_locked", locked);
         app_state.send_overlay_command(plugin, CommandId::SetLocked, locked ? 1 : 0);
     }
 
-    bool click_through = cfg_bool(section, "overlay_click_through", defaults.click_through);
+    bool click_through = cfg_get(section, "overlay_click_through", defaults.click_through);
     if (setting_toggle("Click-through mode", "Mouse input passes to the game.",&click_through)) {
         cfg_store(section, "overlay_click_through", click_through);
         app_state.send_overlay_command(plugin, CommandId::SetClickThrough, click_through ? 1 : 0);
     }
 
-    float opacity = cfg_float(section, "overlay_opacity", defaults.opacity);
+    float opacity = cfg_get(section, "overlay_opacity", defaults.opacity);
     begin_setting_row(opts.opacity_label, "How solid the overlay panel reads over gameplay.");
     if (ImGui::SliderFloat("##overlay_opacity", &opacity, opts.min_opacity, opts.max_opacity, "%.2f")) {
         cfg_store(section, "overlay_opacity", opacity);
@@ -98,7 +98,7 @@ void render_overlay_settings(AppState& app_state, const OverlaySettingsOptions& 
     end_setting_row();
 
     if (opts.show_scale) {
-        float scale = cfg_float(section, "overlay_scale", defaults.scale);
+        float scale = cfg_get(section, "overlay_scale", defaults.scale);
         begin_setting_row(opts.scale_label, "Independent of the desktop window's DPI scale.");
         if (ImGui::SliderFloat("##overlay_scale", &scale, opts.min_scale, opts.max_scale, "%.2fx")) {
             cfg_store(section, "overlay_scale", scale);
@@ -111,7 +111,7 @@ void render_overlay_settings(AppState& app_state, const OverlaySettingsOptions& 
     section_header(ICON_EYE, "VISIBILITY", colors::Violet);
 
     auto bits = static_cast<uint32_t>(
-        cfg_int(section, "overlay_hide_conditions", static_cast<int>(defaults.hide_conditions)));
+        cfg_get(section, "overlay_hide_conditions", static_cast<int>(defaults.hide_conditions)));
     const uint32_t original_bits = bits;
 
     // Conditions are suspended while unlocked, so the overlay can always be
@@ -130,7 +130,7 @@ void render_overlay_settings(AppState& app_state, const OverlaySettingsOptions& 
     // Only "Only in combat" hides when combat ends, so only it waits.
     const bool only_in_combat = combat_visibility_of(bits) == CombatVisibility::OnlyInCombat;
     if (!only_in_combat) ImGui::BeginDisabled();
-    float hide_after = cfg_float(section, "overlay_hide_after_combat_seconds", defaults.hide_after_combat_s);
+    float hide_after = cfg_get(section, "overlay_hide_after_combat_seconds", defaults.hide_after_combat_s);
     begin_setting_row("Hide after combat", "Seconds the overlay stays up once combat ends, to read the result.");
     if (ImGui::SliderFloat("##hide_after_combat", &hide_after, 0.0f, 60.0f, "%.0f s")) {
         cfg_store(section, "overlay_hide_after_combat_seconds", hide_after);

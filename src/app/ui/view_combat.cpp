@@ -624,7 +624,7 @@ void render_healing_table(const meter::EncounterSummary& summary, float height) 
 void render_plugin_section(AppState& app_state) {
     begin_settings_card("##MeterPluginCard", ICON_HISTORY, "PULL TRACKING", colors::Accent);
 
-    int pulls_kept = cfg_int(METER, "pull_history_limit", static_cast<int>(meter::constants::DEFAULT_HISTORY_CAPACITY));
+    int pulls_kept = cfg_get(METER, "pull_history_limit", static_cast<int>(meter::constants::DEFAULT_HISTORY_CAPACITY));
     begin_setting_row("Pulls kept", "Finished pulls the pull list holds. Lowering it drops the oldest.");
     if (ImGui::SliderInt("##pulls_kept", &pulls_kept, meter::constants::MIN_PULL_HISTORY_LIMIT,
                          meter::constants::MAX_PULL_HISTORY_LIMIT, "%d pulls",
@@ -637,7 +637,7 @@ void render_plugin_section(AppState& app_state) {
     }
     end_setting_row();
 
-    bool track_vitals = cfg_bool(METER, "track_vitals", true);
+    bool track_vitals = cfg_get(METER, "track_vitals", true);
     if (setting_toggle("Track deaths, buffs and debuffs",
                        "Reads party and enemy HP and status lists 4 times a second. Off, the "
                        "Deaths and Buffs & Debuffs tabs stay empty and pulls show no boss HP.",
@@ -676,7 +676,7 @@ void render_display_section(AppState& app_state) {
     begin_settings_card("##MeterDisplayCard", ICON_CHECKLIST, "METER DISPLAY", colors::Violet);
 
     static const char* metric_modes[] = { "Damage", "Healing" };
-    int metric = cfg_int(METER, "overlay_metric", 0);
+    int metric = cfg_get(METER, "overlay_metric", 0);
     begin_setting_row("Table", "Which table the in-game meter draws.");
     if (ImGui::Combo("##meter_metric", &metric, metric_modes, 2)) {
         cfg_store(METER, "overlay_metric", metric);
@@ -684,7 +684,7 @@ void render_display_section(AppState& app_state) {
     }
     end_setting_row();
 
-    int dps_metric = cfg_int(METER, "dps_metric", 0);
+    int dps_metric = cfg_get(METER, "dps_metric", 0);
     begin_setting_row("DPS metric", "The damage rate the in-game meter ranks by. The Damage tab picks its own.");
     const auto label_of = [](void*, int idx) {
         return dps_metric_label(meter::dps_metric_from(static_cast<uint32_t>(idx)));
@@ -695,26 +695,26 @@ void render_display_section(AppState& app_state) {
     }
     end_setting_row();
 
-    bool party_only = cfg_bool(METER, "party_only", false);
+    bool party_only = cfg_get(METER, "party_only", false);
     if (setting_toggle("Party members only",
                        "Lists your party and the Limit Break. Solo, every friendly row stays.", &party_only)) {
         cfg_store(METER, "party_only", party_only);
         app_state.send_combat_overlay_party_only(party_only);
     }
 
-    bool hide_inactive = cfg_bool(METER, "hide_inactive", false);
+    bool hide_inactive = cfg_get(METER, "hide_inactive", false);
     if (setting_toggle("Hide idle combatants", "Drops anyone with no contribution this pull.", &hide_inactive)) {
         cfg_store(METER, "hide_inactive", hide_inactive);
         app_state.send_combat_hide_inactive(hide_inactive);
     }
 
-    bool show_bars = cfg_bool(METER, "show_bars", true);
+    bool show_bars = cfg_get(METER, "show_bars", true);
     if (setting_toggle("Job-coloured row bars", "Draws a bar in each row's job colour behind it.", &show_bars)) {
         cfg_store(METER, "show_bars", show_bars);
         app_state.send_combat_show_bars(show_bars);
     }
 
-    int refresh_ms = cfg_int(METER, "refresh_interval_ms", 500);
+    int refresh_ms = cfg_get(METER, "refresh_interval_ms", 500);
     begin_setting_row("Refresh rate", "How often the in-game meter redraws.");
     if (ImGui::SliderInt("##refresh_ms", &refresh_ms, 100, 2000, "%d ms")) {
         cfg_store(METER, "refresh_interval_ms", refresh_ms);
@@ -725,25 +725,25 @@ void render_display_section(AppState& app_state) {
     ImGui::Dummy(ImVec2(0.0f, m(6.0f)));
     section_header(ICON_LAYERS, "COLUMNS", colors::Violet);
 
-    bool col_share = cfg_bool(METER, "show_col_share", true);
+    bool col_share = cfg_get(METER, "show_col_share", true);
     if (setting_toggle("Damage share", "Percentage of total raid damage.", &col_share)) {
         cfg_store(METER, "show_col_share", col_share);
         app_state.send_combat_column_share(col_share);
     }
 
-    bool col_crit = cfg_bool(METER, "show_col_crit", true);
+    bool col_crit = cfg_get(METER, "show_col_crit", true);
     if (setting_toggle("Critical hit rate", "Per-combatant crit percentage.", &col_crit)) {
         cfg_store(METER, "show_col_crit", col_crit);
         app_state.send_combat_column_crit(col_crit);
     }
 
-    bool col_dh = cfg_bool(METER, "show_col_dh", true);
+    bool col_dh = cfg_get(METER, "show_col_dh", true);
     if (setting_toggle("Direct hit rate", "Per-combatant direct hit percentage.", &col_dh)) {
         cfg_store(METER, "show_col_dh", col_dh);
         app_state.send_combat_column_dh(col_dh);
     }
 
-    bool col_cdh = cfg_bool(METER, "show_col_cdh", true);
+    bool col_cdh = cfg_get(METER, "show_col_cdh", true);
     if (setting_toggle("Critical direct hit", "Combined crit-and-direct percentage.", &col_cdh)) {
         cfg_store(METER, "show_col_cdh", col_cdh);
         app_state.send_combat_column_cdh(col_cdh);
@@ -1020,7 +1020,7 @@ void render_view_combat(AppState& app_state) {
 
     const meter::EncounterSummary& current_summary = is_live ? s_live_summary : s_selected_pull;
 
-    const bool tracking_on = cfg_bool(METER, "track_vitals", true);
+    const bool tracking_on = cfg_get(METER, "track_vitals", true);
     const uint64_t shown_id = is_live ? 0 : s_selected_pull_id;
     const auto pull_tab = [&](const char* pane_id, auto render, Drilldown drilldown) {
         return [&, pane_id, render, drilldown] {
