@@ -93,11 +93,9 @@ bool WndProcHook::install(void* hwnd) {
     HWND target = static_cast<HWND>(hwnd);
     if (!IsWindow(target)) return false;
 
-    m_game_hwnd = hwnd;
     g_original_wndproc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(
         target, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(hooked_wndproc)
     ));
-    m_original_wndproc = reinterpret_cast<void*>(g_original_wndproc);
 
     m_installed.store(g_original_wndproc != nullptr);
     return m_installed.load();
@@ -120,8 +118,7 @@ WndProcHook& WndProcHook::instance() noexcept {
     return s_instance;
 }
 
-bool WndProcHook::install(void* hwnd) {
-    m_game_hwnd = hwnd;
+bool WndProcHook::install(void*) {
     m_installed.store(true);
     return true;
 }

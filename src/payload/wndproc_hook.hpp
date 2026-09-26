@@ -17,7 +17,6 @@ public:
     void uninstall();
 
     [[nodiscard]] bool is_installed() const noexcept { return m_installed.load(); }
-    [[nodiscard]] void* game_hwnd() const noexcept { return m_game_hwnd; }
 
 private:
     WndProcHook() = default;
@@ -26,8 +25,6 @@ private:
     WndProcHook& operator=(const WndProcHook&) = delete;
 
     std::atomic<bool> m_installed{false};
-    void* m_game_hwnd{nullptr};
-    [[maybe_unused]] void* m_original_wndproc{nullptr};
 };
 
 } // namespace hub::payload

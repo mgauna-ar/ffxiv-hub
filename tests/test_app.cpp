@@ -631,21 +631,17 @@ TEST_CASE(AppState, PullHistoryIndexMatchesFullSummaries) {
     }
 
     const auto index = state.get_pull_history_index();
-    const auto full = state.get_pull_history();
     TEST_ASSERT_EQ(index.size(), 2u);
-    TEST_ASSERT_EQ(index.size(), full.size());
 
     for (size_t i = 0; i < index.size(); ++i) {
-        TEST_ASSERT_EQ(index[i].encounter_id, full[i].encounter_id);
-        TEST_ASSERT_EQ(index[i].zone_visit, full[i].zone_visit);
-        TEST_ASSERT_EQ(index[i].pull_number, full[i].pull_number);
-        TEST_ASSERT_EQ(index[i].total_damage, full[i].total_damage);
-        TEST_ASSERT_EQ(index[i].combatant_count, full[i].combatants.size());
-        TEST_ASSERT(index[i].state == full[i].state);
-
-        const auto one = state.get_pull(i);
-        TEST_ASSERT(one.has_value());
-        TEST_ASSERT_EQ(one->encounter_id, full[i].encounter_id);
+        const auto full = state.get_pull(i);
+        TEST_ASSERT(full.has_value());
+        TEST_ASSERT_EQ(index[i].encounter_id, full->encounter_id);
+        TEST_ASSERT_EQ(index[i].zone_visit, full->zone_visit);
+        TEST_ASSERT_EQ(index[i].pull_number, full->pull_number);
+        TEST_ASSERT_EQ(index[i].total_damage, full->total_damage);
+        TEST_ASSERT_EQ(index[i].combatant_count, full->combatants.size());
+        TEST_ASSERT(index[i].state == full->state);
     }
 
     TEST_ASSERT(!state.get_pull(index.size()).has_value());

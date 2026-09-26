@@ -131,7 +131,6 @@ public:
         TimePoint now = std::chrono::steady_clock::now(),
         uint64_t timestamp_us = 0
     );
-    void split_encounter(TimePoint now = std::chrono::steady_clock::now());
     void reset_current();
 
     /// Zone configuration
@@ -163,18 +162,15 @@ public:
         return m_state;
     }
     [[nodiscard]] bool in_combat() const { return state() == EncounterState::InCombat; }
-    [[nodiscard]] double active_duration_seconds(TimePoint now = std::chrono::steady_clock::now()) const;
 
-    /// Current live metrics and registry.
-    ///
-    /// These hand out raw references and do NOT hold the engine lock: they are
-    /// for single-threaded use (tests, construction). Anything running while the
-    /// payload threads are live must go through with_registry/with_accumulator.
-    [[nodiscard]] MetricsAccumulator& accumulator() noexcept { return m_accumulator; }
-    [[nodiscard]] const MetricsAccumulator& accumulator() const noexcept { return m_accumulator; }
+    /// Test-only. These hand out raw references and do NOT hold the engine lock,
+    /// on a class several payload threads share. Production code goes through
+    /// with_registry/with_accumulator.
+    [[nodiscard]] MetricsAccumulator& accumulator_unlocked() noexcept { return m_accumulator; }
+    [[nodiscard]] const MetricsAccumulator& accumulator_unlocked() const noexcept { return m_accumulator; }
 
-    [[nodiscard]] CombatantRegistry& registry() noexcept { return m_registry; }
-    [[nodiscard]] const CombatantRegistry& registry() const noexcept { return m_registry; }
+    [[nodiscard]] CombatantRegistry& registry_unlocked() noexcept { return m_registry; }
+    [[nodiscard]] const CombatantRegistry& registry_unlocked() const noexcept { return m_registry; }
 
     /// Runs fn against the registry/accumulator with the engine lock held.
     template <typename Fn>

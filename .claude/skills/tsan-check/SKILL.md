@@ -37,8 +37,8 @@ the orchestration loop drains and dispatches them.
 
 Every public entry point takes `EncounterEngine::m_mutex`, which is recursive because the
 lifecycle calls re-enter each other. The registry must be reached through
-`with_registry()`; the raw `registry()`/`accumulator()` accessors do not lock and are for
-single-threaded use only. Adding an entry point that skips the mutex, or reaching the
+`with_registry()`; the raw `registry_unlocked()`/`accumulator_unlocked()` accessors do not
+lock and are for tests only. Adding an entry point that skips the mutex, or reaching the
 registry through a raw accessor from one of those threads, is exactly what this run
 catches.
 

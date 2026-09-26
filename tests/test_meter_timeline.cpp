@@ -340,7 +340,7 @@ TEST_CASE(MeterTimeline, OffUnlessTheAppTurnsItOn) {
 
     // The in-game engine never turns it on.
     CombatPlugin plugin;
-    register_party(plugin.engine().registry());
+    register_party(plugin.engine().registry_unlocked());
     plugin.engine().process_action(hit(kWar, kBoss, 1000, 0.0), clock(0.0));
     TEST_ASSERT(plugin.engine().timeline(0, clock(1.0)).rows.empty());
 }

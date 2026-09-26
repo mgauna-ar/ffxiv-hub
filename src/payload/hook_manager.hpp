@@ -1,7 +1,6 @@
 #pragma once
 
 #include "hub/plugin_api.hpp"
-#include "common/ipc/ring_buffer.hpp"
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -38,8 +37,6 @@ namespace hub::payload {
  */
 class HookManager {
 public:
-    using RingBuffer = ipc::PacketRingBuffer;
-
     static HookManager& instance() noexcept;
 
     bool install();
@@ -64,9 +61,6 @@ public:
         return index < m_consumers.size() ? m_consumers[index] : nullptr;
     }
 
-    void set_ring_buffer(RingBuffer* ring) noexcept { m_ring_buffer.store(ring); }
-    [[nodiscard]] RingBuffer* ring_buffer() const noexcept { return m_ring_buffer.load(); }
-
     // Dispatch simulation for unit testing
     void dispatch_use_action_location_test(
         void* action_mgr, uint32_t action_type, uint32_t action_id,
@@ -89,7 +83,6 @@ private:
     /// Only mutated before install() and after uninstall() drains the detours,
     /// so the read side needs no synchronization.
     std::vector<IHookConsumer*> m_consumers;
-    std::atomic<RingBuffer*> m_ring_buffer{nullptr};
     std::atomic<void*> m_action_manager{nullptr};
     const char* m_last_error{"OK"};
 };

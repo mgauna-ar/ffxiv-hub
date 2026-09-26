@@ -30,9 +30,6 @@ public:
 
     /// Periodic frame update called from the in-game payload or desktop manager
     virtual void update(double delta_seconds) = 0;
-
-    /// Clean shutdown and resource release
-    virtual void shutdown() = 0;
 };
 
 /// Interface for plugins that provide an independent in-game floating overlay window
@@ -67,7 +64,7 @@ public:
     virtual void set_geometry(const Rect& rect) noexcept = 0;
 };
 
-/// Interface for plugins supporting JSON configuration persistence and desktop settings UI
+/// Interface for plugins supporting JSON configuration persistence
 class IConfigurable {
 public:
     virtual ~IConfigurable() = default;
@@ -79,9 +76,6 @@ public:
 
     /// Deserialize configuration fields from JSON value
     virtual void deserialize_config(const config::JsonValue& in) = 0;
-
-    /// Render interactive settings controls in the Desktop Manager dashboard
-    virtual void render_settings_ui() = 0;
 };
 
 /// Interface for plugins that consume game memory detours (ReceiveActionEffect, UseActionLocation)

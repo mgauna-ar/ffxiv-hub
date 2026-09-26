@@ -61,7 +61,7 @@ threading), `release-windows` (MSVC build, packaging, CI).
      - Binary inspection tooling (`tools/inspect_exe.py`, `tools/xivbin/`) → `.claude/skills/inspect-game-client/`.
      - A user-visible setting or config key → the README that documents that key. Every key is documented in exactly one file.
      - Anything a README screenshot shows → re-render with `make screenshots` and commit `docs/images/`. The tool itself (`tools/screenshots/`) → the README's *Building from source*.
-   - **Never leave documentation out of sync with code.** There are now seven documentation files and they must co-evolve with every pull request and agent task.
+   - **Never leave documentation out of sync with code.** The documentation files are `README.md`, this file, each plugin's `AGENTS.md` and `README.md`, and every `SKILL.md` under `.claude/skills/`; they must co-evolve with every pull request and agent task.
 
 ---
 
@@ -163,7 +163,7 @@ be preserved. Plugin-specific invariants live in the two plugin `AGENTS.md` file
 These live here rather than in the meter's own file because the payload, the app and the
 DX11 `Present` path can violate them from outside `plugins/combat_meter/`.
 
-- **`EncounterEngine` Is Shared State, Not Thread-Local**: In-game, three threads reach one engine - the `ReceiveActionEffect`/`ProcessHotDot` detours on the game's main thread, the payload orchestration thread (`sync_party`, `set_zone`, `update`, the vitals pass that reads HP and status lists, and every command from the app), and the DX11 `Present` thread rendering `CombatOverlay`. Every public entry point takes `EncounterEngine::m_mutex` (recursive, because the lifecycle calls re-enter each other). The registry must be reached through `with_registry()`; the raw `registry()`/`accumulator()` accessors do not lock and are for single-threaded use only.
+- **`EncounterEngine` Is Shared State, Not Thread-Local**: In-game, three threads reach one engine - the `ReceiveActionEffect`/`ProcessHotDot` detours on the game's main thread, the payload orchestration thread (`sync_party`, `set_zone`, `update`, the vitals pass that reads HP and status lists, and every command from the app), and the DX11 `Present` thread rendering `CombatOverlay`. Every public entry point takes `EncounterEngine::m_mutex` (recursive, because the lifecycle calls re-enter each other). The registry must be reached through `with_registry()`; the raw `registry_unlocked()`/`accumulator_unlocked()` accessors do not lock and are for tests only.
 - **Derived Rates Are Recomputed On The Tick, Not Per Packet**: `record_action` only accumulates. `MetricsAccumulator::recalculate` - which walks every combatant, resolves owners and merges pets - runs from `update()`, from `end_encounter()`, and lazily from `current_summary()` when packets have landed since. It must never be called per decoded effect: at raid AoE rates that is an O(combatants) sweep per hit on the game's detour thread.
 - **Pulls End On The Client's Combat Alone**: `EncounterEngine::set_game_state` must be fed `GameStateProvider::client_flags()`: in-game by `CombatPlugin::update`, and in the app from `GameStatePayload::client_flags`, which `dllmain.cpp` fills. `flags()`, and `GameStatePayload::flags` with it, fold the meter's own pull into `InCombat` for the overlays. Fed that word, a pull would hold itself open and never end. The payload pushes the game state on any change to either word and at least once a second, because the app's engine takes a report older than `kGameStateTtl` as unknown.
 

@@ -242,11 +242,6 @@ void CombatPlugin::on_vitals(std::span<const ActorVitals> actors, uint64_t now_u
     });
 }
 
-void CombatPlugin::shutdown() {
-    m_initialized = false;
-    m_engine.reset_current();
-}
-
 void CombatPlugin::serialize_config(config::JsonValue& out) const {
     // The app's commands change the overlay and engine, not m_config (the load-time
     // copy), so read the live state or the autosave reverts them.
@@ -313,10 +308,6 @@ void CombatPlugin::deserialize_config(const config::JsonValue& in) {
         // The master switch may have just changed.
         refresh_overlay_suppression();
     }
-}
-
-void CombatPlugin::render_settings_ui() {
-    // Rendered in desktop app during Session 5
 }
 
 void CombatPlugin::on_receive_action_effect(
