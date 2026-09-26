@@ -550,7 +550,9 @@ double replay_round_trips(const Night& night, hub::app::AppState& app, double ni
     const auto at = [&](double t) {
         return origin + duration_cast<steady_clock::duration>(duration<double>(t));
     };
-    const auto wall_now_ms = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
+    // A fixed evening, 2026-09-26 21:47 UTC, so the feed's clock column renders the same
+    // on every run (the Makefile pins TZ).
+    constexpr long long wall_now_ms = 1'790'459'220'000;
 
     hub::mitigator::AnimationLockMitigator mitigator;
     Rng rng(0x51A7E);

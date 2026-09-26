@@ -65,7 +65,12 @@ Both binaries must stay in the same directory when extracted: the desktop app re
 - **Linux clang++ / g++ Build & Test** (`build-linux`, `ubuntu-latest`): `make` with
   each compiler, so the `-Werror` build, the unit tests, the `check-ui` syntax pass
   over the `HAVE_IMGUI` desktop UI and the `check-headers` pass all run off
-  Windows.
+  Windows. It then builds the screenshot tool (`build/screenshots/hub_screenshots`,
+  with `zlib1g-dev`), without rendering, so a change that breaks it fails CI.
+- **Linux CMake Build & Test** (`build-linux-cmake`, `ubuntu-latest`): configures
+  `CMakeLists.txt` with clang++ in Release, builds and runs CTest. This is the only job
+  that builds the non-MSVC branch of `hub_warnings` (`-Wall -Wextra -Wpedantic
+  -Werror`).
 - **Linux ThreadSanitizer** and **Linux AddressSanitizer + UBSan** (`sanitizers`,
   `ubuntu-latest`): `make tsan` and `make asan` with clang++. Both lower
   `vm.mmap_rnd_bits` to 28 first, which the LLVM 18 sanitizer runtimes need on the

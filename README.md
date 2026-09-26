@@ -469,6 +469,8 @@ make tsan    # ThreadSanitizer
 make asan    # AddressSanitizer + UndefinedBehaviorSanitizer
 ```
 
+macOS has no LeakSanitizer, so there `make asan` runs without leak detection.
+
 ### README screenshots (macOS or Linux)
 
 The pictures in `docs/images/` are drawn by the desktop app's and the overlays' own code
@@ -483,6 +485,10 @@ The first run downloads Selawik, Microsoft's openly licensed (OFL) stand-in for 
 and checks its SHA-256. To draw with other fonts, set `SHOTS_WINDOWS_DIR` to a folder
 whose `Fonts` subfolder holds `segoeui.ttf`, `segoeuib.ttf` and `seguisb.ttf`. The party,
 its numbers and the boss HP are invented; the source is in `tools/screenshots/`.
+
+The night is fixed down to its wall clock, and the tool runs in UTC, so redrawing on the
+same machine writes the same files. Another compiler or platform can still move a few
+antialiased pixels, so commit only the pictures a change actually alters.
 
 ### Windows binaries
 

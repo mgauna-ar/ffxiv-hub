@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Static questions about ffxiv_dx11.exe, answered from the local install.
 
-    python3 tools/inspect_exe.py sig GROUP_MANAGER_INSTANCE --rip 5 9
+    python3 tools/inspect_exe.py sig GROUP_MANAGER_INSTANCE
     python3 tools/inspect_exe.py func 0x140b4a4b0
     python3 tools/inspect_exe.py disasm 0x140b26dd0 0x140b26df0
     python3 tools/inspect_exe.py xrefs 0x140b259b0          # callers of a function
@@ -9,7 +9,8 @@
     python3 tools/inspect_exe.py field 0x7fdc --writes      # stores to a struct offset
     python3 tools/inspect_exe.py jumptable 0x1409010a8 77 --index 0x140901134 --first 1
 
-`sig` takes a name from include/hub/game_definitions.hpp or a literal pattern.
+`sig` takes a name from include/hub/game_definitions.hpp or a literal pattern. A
+name with a <NAME>_RIP_* pair in the header resolves its RIP operand without --rip.
 Addresses are VAs at the image base the exe declares (0x140000000).
 """
 
@@ -20,7 +21,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-from check_signatures import read_signatures
+from check_signatures import read_rip_operands, read_signatures
 from xivbin.pe import Image
 
 
@@ -34,13 +35,14 @@ def label(img, func):
 
 def cmd_sig(img, args):
     pattern = dict(read_signatures()).get(args.pattern, args.pattern)
+    rip = args.rip or read_rip_operands().get(args.pattern)
     hits = img.find_pattern(pattern)
     print(f"{len(hits)} match(es) for {pattern}")
     for hit in hits:
         line = f"  {hit:#x}"
-        if args.rip:
+        if rip:
             ins = hit + args.at
-            target = img.rip_target(ins, args.rip[0], args.rip[1])
+            target = img.rip_target(ins, rip[0], rip[1])
             line += f"  -> {target:#x} ({img.section_of(target)})"
         print(line)
 
@@ -94,7 +96,8 @@ def main():
     p.add_argument("pattern", help="signature name from game_definitions.hpp, or a pattern")
     p.add_argument("--at", type=num, default=0, help="instruction offset from the match start")
     p.add_argument("--rip", type=num, nargs=2, metavar=("DISP_OFF", "INS_END"),
-                   help="displacement offset and instruction end, from the match (or --at)")
+                   help="displacement offset and instruction end, from the match (or --at); "
+                        "defaults to the signature's _RIP_* pair in the header")
     p.set_defaults(fn=cmd_sig)
 
     p = sub.add_parser("func", help="disassemble the function containing an address")
