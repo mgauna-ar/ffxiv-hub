@@ -86,7 +86,7 @@ jobs:
         run: ctest --test-dir build -C Release --output-on-failure
 
       # The archive's contents are the install() rules in CMakeLists.txt, the same
-      # package a local cpack run writes, with its SHA256 sidecar.
+      # package a local cpack run writes.
       - name: Package (CPack)
         run: cpack --config build/CPackConfig.cmake -G ZIP -C Release -B dist
 
@@ -105,9 +105,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: ffxiv-hub-release
-          path: |
-            dist/ffxiv-hub-windows-x64.zip
-            dist/ffxiv-hub-windows-x64.zip.sha256
+          path: dist/ffxiv-hub-windows-x64.zip
           if-no-files-found: error
           retention-days: 1
 
@@ -142,7 +140,5 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          files: |
-            ffxiv-hub-windows-x64.zip
-            ffxiv-hub-windows-x64.zip.sha256
+          files: ffxiv-hub-windows-x64.zip
           generate_release_notes: true

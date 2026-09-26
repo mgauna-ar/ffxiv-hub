@@ -36,10 +36,10 @@ cpack -G ZIP -C Release
 ```
 
 Produces `ffxiv-hub-windows-x64.zip` containing **only the two binaries**, `ffxiv-hub.exe`
-and `hub_payload.dll`, at the root of the archive (`CPACK_INCLUDE_TOPLEVEL_DIRECTORY OFF`),
-and its checksum `ffxiv-hub-windows-x64.zip.sha256` (`CPACK_PACKAGE_CHECKSUM`, in the
-`sha256sum -c` format). Documentation is not packaged - it lives in the repository, and a
-copy in the archive would go stale against the release it shipped with.
+and `hub_payload.dll`, at the root of the archive (`CPACK_INCLUDE_TOPLEVEL_DIRECTORY
+OFF`). No checksum file is shipped: GitHub shows each release asset's SHA256 on the
+release page. Documentation is not packaged - it lives in the repository, and a copy in
+the archive would go stale against the release it shipped with.
 
 The equivalent by hand:
 
@@ -59,9 +59,9 @@ Both binaries must stay in the same directory when extracted: the desktop app re
   - Builds Release `/MT` binaries with warnings as errors.
   - Executes the full CTest suite.
   - Packages with `cpack --config build/CPackConfig.cmake -G ZIP -C Release -B dist`,
-    the same zip and `.sha256` as the local run above.
+    the same zip as the local run above.
   - Uploads the two loose binaries as the build artifact, and on a tag also the archive
-    and its `.sha256` for the release job.
+    for the release job.
 - **Linux clang++ / g++ Build & Test** (`build-linux`, `ubuntu-latest`): `make` with
   each compiler, so the `-Werror` build, the unit tests, the `check-ui` syntax pass
   over the `HAVE_IMGUI` desktop UI and the `check-headers` pass all run off
@@ -73,7 +73,7 @@ Both binaries must stay in the same directory when extracted: the desktop app re
 - **Publish GitHub Release** (`release`): only on tags matching `v*.*.*`, after every
   job above has passed. It first checks that the tag, less its `v`, equals
   `HUB_VERSION_STRING` in `include/hub/version.hpp`, and fails the release otherwise.
-  Then it downloads the archive and its `.sha256` and publishes them.
+  Then it downloads the archive and publishes it.
 
 Every job has a `timeout-minutes` (20 for the builds and sanitizers, 5 for the release),
 so a test that deadlocks fails in minutes instead of holding the runner for six hours. A

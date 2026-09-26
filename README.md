@@ -504,12 +504,12 @@ cd build
 cpack -G ZIP -C Release
 ```
 
-This writes `ffxiv-hub-windows-x64.zip`, with the two binaries at its root, and its
-SHA256 checksum `ffxiv-hub-windows-x64.zip.sha256`: the same files a release publishes.
+This writes `ffxiv-hub-windows-x64.zip`, with the two binaries at its root: the same file
+a release publishes.
 
 The GitHub Actions workflow builds and tests every push to `main`, and uploads the result
 as a workflow artifact. On a `v*.*.*` tag it also publishes `ffxiv-hub-windows-x64.zip`,
-with its SHA256 checksum, as a release; the tag must match the version in
+as a release, whose page shows its SHA256; the tag must match the version in
 `include/hub/version.hpp`.
 
 ---
