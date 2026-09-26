@@ -36,6 +36,35 @@ void add_bins(std::vector<TimelineBin>& to, const std::vector<TimelineBin>& from
     }
 }
 
+/// `stats`' row for an action, or with `is_status` for the status behind a DoT/HoT
+/// tick, keyed apart from actions by STATUS_ACTION_KEY_OFFSET. Created on first use.
+ActionSummary& action_entry(CombatantStats& stats, ActionId id, bool is_status = false) {
+    ActionSummary& act = stats.actions[is_status ? (id | STATUS_ACTION_KEY_OFFSET) : id];
+    act.action_id = id;
+    if (is_status) act.is_status = true;
+    if (act.name.empty()) {
+        act.name = is_status ? status_id_to_name(id) : action_id_to_name(id);
+    }
+    return act;
+}
+
+/// Widens [min, max] to take in `value`. `first` sets the minimum outright, since a
+/// row's 0 is only a real minimum once it has a hit.
+void track_min_max(uint64_t& min, uint64_t& max, uint64_t value, bool first) {
+    if (first || value < min) min = value;
+    if (value > max) max = value;
+}
+
+void count_severity(HitCounts& counts, HitSeverity severity) {
+    counts.total_hits++;
+    switch (severity) {
+        case HitSeverity::Normal: counts.normal_hits++; break;
+        case HitSeverity::Critical: counts.crit_hits++; break;
+        case HitSeverity::DirectHit: counts.dh_hits++; break;
+        case HitSeverity::CritDirectHit: counts.cdh_hits++; break;
+    }
+}
+
 } // namespace
 
 CombatantStats& MetricsAccumulator::get_or_create_stats(EntityId entity_id, const CombatantRegistry& registry) {
@@ -103,35 +132,14 @@ void MetricsAccumulator::record_damage_hit(
         record_credits(stats, packet.damage, packet.credits, packet.timestamp_us, registry);
     }
 
-    stats.hits.total_hits++;
-    switch (severity) {
-        case HitSeverity::Normal: stats.hits.normal_hits++; break;
-        case HitSeverity::Critical: stats.hits.crit_hits++; break;
-        case HitSeverity::DirectHit: stats.hits.dh_hits++; break;
-        case HitSeverity::CritDirectHit: stats.hits.cdh_hits++; break;
-    }
+    count_severity(stats.hits, severity);
 
-    ActionSummary& act = stats.actions[packet.action_id];
-    act.action_id = packet.action_id;
-    if (act.name.empty()) {
-        act.name = action_id_to_name(packet.action_id);
-    }
+    ActionSummary& act = action_entry(stats, packet.action_id);
     act.hit_count++;
     act.damage_hits++;
     act.total_damage += packet.damage;
-    if (act.damage_hits == 1 || packet.damage < act.min_damage) {
-        act.min_damage = packet.damage;
-    }
-    if (packet.damage > act.max_damage) {
-        act.max_damage = packet.damage;
-    }
-    act.hits.total_hits++;
-    switch (severity) {
-        case HitSeverity::Normal: act.hits.normal_hits++; break;
-        case HitSeverity::Critical: act.hits.crit_hits++; break;
-        case HitSeverity::DirectHit: act.hits.dh_hits++; break;
-        case HitSeverity::CritDirectHit: act.hits.cdh_hits++; break;
-    }
+    track_min_max(act.min_damage, act.max_damage, packet.damage, act.damage_hits == 1);
+    count_severity(act.hits, severity);
 
     // An effect that hit nothing carries the placeholder id, which would otherwise
     // open a junk combatant row.
@@ -205,64 +213,18 @@ void MetricsAccumulator::record_action(const ipc::CombatActionPacket& packet, co
             eff_heal = raw_heal - over_heal;
         }
 
-        stats.total_healing += raw_heal;
-        stats.effective_healing += eff_heal;
-        stats.overhealing += over_heal;
-        if (TimelineBin* bin = timeline_bin(stats.entity_id, packet.timestamp_us, registry)) {
-            add_capped(bin->healing, eff_heal);
-        }
-
-        const EntityId target_id = static_cast<EntityId>(packet.target_id);
-        if (eff_heal > 0 && is_friendly_target(target_id, registry)) {
-            record_taken(target_id, RecapSample{
-                packet.timestamp_us, raw_source_id, packet.action_id,
-                eff_heal, RecapKind::Heal, static_cast<uint8_t>(packet.hit_flags)}, false, registry);
-        }
-
-        if (source_friendly) {
-            m_total_healing += raw_heal;
-            m_total_effective_healing += eff_heal;
-            m_total_overhealing += over_heal;
-        }
-
         const bool heal_crit = (severity == HitSeverity::Critical || severity == HitSeverity::CritDirectHit);
-        stats.heal_hit_counts.total_hits++;
-        if (heal_crit) {
-            stats.heal_hit_counts.crit_hits++;
-        } else {
-            stats.heal_hit_counts.normal_hits++;
-        }
-
-        ActionSummary& act = stats.actions[packet.action_id];
-        act.action_id = packet.action_id;
-        if (act.name.empty()) {
-            act.name = action_id_to_name(packet.action_id);
-        }
-        act.hit_count++;
-        act.heal_hits++;
-        act.total_healing += raw_heal;
-        act.effective_healing += eff_heal;
-        act.overhealing += over_heal;
-        if (act.heal_hits == 1 || eff_heal < act.min_heal) {
-            act.min_heal = eff_heal;
-        }
-        if (eff_heal > act.max_heal) {
-            act.max_heal = eff_heal;
-        }
-        act.heal_hit_counts.total_hits++;
-        if (heal_crit) {
-            act.heal_hit_counts.crit_hits++;
-        } else {
-            act.heal_hit_counts.normal_hits++;
-        }
+        record_heal(stats, action_entry(stats, packet.action_id),
+                    HealAmounts{raw_heal, eff_heal, over_heal},
+                    heal_crit ? HealHit::Critical : HealHit::Normal, source_friendly,
+                    static_cast<EntityId>(packet.target_id),
+                    RecapSample{packet.timestamp_us, raw_source_id, packet.action_id,
+                                eff_heal, RecapKind::Heal, static_cast<uint8_t>(packet.hit_flags)},
+                    registry);
     } else if (effect == EffectType::Miss) {
         stats.hits.total_hits++;
         stats.hits.miss_hits++;
-        ActionSummary& act = stats.actions[packet.action_id];
-        act.action_id = packet.action_id;
-        if (act.name.empty()) {
-            act.name = action_id_to_name(packet.action_id);
-        }
+        ActionSummary& act = action_entry(stats, packet.action_id);
         act.hit_count++;
         act.hits.total_hits++;
         act.hits.miss_hits++;
@@ -304,21 +266,11 @@ void MetricsAccumulator::record_status_tick(const ipc::StatusTickPacket& packet,
 
         stats.hits.tick_hits++;
 
-        ActionSummary& act = stats.actions[action_key];
-        act.action_id = packet.status_id;
-        act.is_status = true;
-        if (act.name.empty()) {
-            act.name = status_id_to_name(packet.status_id);
-        }
+        ActionSummary& act = action_entry(stats, packet.status_id, true);
         act.hit_count++;
         act.damage_hits++;
         act.total_damage += packet.damage_or_heal;
-        if (act.damage_hits == 1 || packet.damage_or_heal < act.min_damage) {
-            act.min_damage = packet.damage_or_heal;
-        }
-        if (packet.damage_or_heal > act.max_damage) {
-            act.max_damage = packet.damage_or_heal;
-        }
+        track_min_max(act.min_damage, act.max_damage, packet.damage_or_heal, act.damage_hits == 1);
         act.hits.tick_hits++;
 
         if (hub::game::is_real_entity_id(packet.target_id)) {
@@ -334,45 +286,54 @@ void MetricsAccumulator::record_status_tick(const ipc::StatusTickPacket& packet,
         // Split in-game like a direct heal. Min, max and the recap use what landed.
         const uint32_t over_heal = std::min(packet.overheal, packet.damage_or_heal);
         const uint32_t eff_heal = packet.damage_or_heal - over_heal;
+        record_heal(stats, action_entry(stats, packet.status_id, true),
+                    HealAmounts{packet.damage_or_heal, eff_heal, over_heal}, HealHit::Tick, source_friendly,
+                    packet.target_id,
+                    RecapSample{packet.timestamp_us, raw_source_id, action_key, eff_heal, RecapKind::HotTick, 0},
+                    registry);
+    }
+}
 
-        stats.total_healing += packet.damage_or_heal;
-        stats.effective_healing += eff_heal;
-        stats.overhealing += over_heal;
-        if (TimelineBin* bin = timeline_bin(stats.entity_id, packet.timestamp_us, registry)) {
-            add_capped(bin->healing, eff_heal);
-        }
-        if (source_friendly) {
-            m_total_healing += packet.damage_or_heal;
-            m_total_effective_healing += eff_heal;
-            m_total_overhealing += over_heal;
-        }
+void MetricsAccumulator::record_heal(
+    CombatantStats& stats, ActionSummary& act, const HealAmounts& heal, HealHit hit, bool source_friendly,
+    EntityId target_id, const RecapSample& recap, const CombatantRegistry& registry
+) {
+    stats.total_healing += heal.raw;
+    stats.effective_healing += heal.effective;
+    stats.overhealing += heal.over;
+    if (TimelineBin* bin = timeline_bin(stats.entity_id, recap.timestamp_us, registry)) {
+        add_capped(bin->healing, heal.effective);
+    }
+    if (source_friendly) {
+        m_total_healing += heal.raw;
+        m_total_effective_healing += heal.effective;
+        m_total_overhealing += heal.over;
+    }
 
-        stats.heal_hit_counts.tick_hits++;
+    act.hit_count++;
+    act.heal_hits++;
+    act.total_healing += heal.raw;
+    act.effective_healing += heal.effective;
+    act.overhealing += heal.over;
+    track_min_max(act.min_heal, act.max_heal, heal.effective, act.heal_hits == 1);
 
-        ActionSummary& act = stats.actions[action_key];
-        act.action_id = packet.status_id;
-        act.is_status = true;
-        if (act.name.empty()) {
-            act.name = status_id_to_name(packet.status_id);
+    // Ticks carry no severity, so they are counted apart rather than booked as
+    // guaranteed non-crits.
+    for (HitCounts* counts : {&stats.heal_hit_counts, &act.heal_hit_counts}) {
+        if (hit == HealHit::Tick) {
+            counts->tick_hits++;
+            continue;
         }
-        act.hit_count++;
-        act.heal_hits++;
-        act.total_healing += packet.damage_or_heal;
-        act.effective_healing += eff_heal;
-        act.overhealing += over_heal;
-        if (act.heal_hits == 1 || eff_heal < act.min_heal) {
-            act.min_heal = eff_heal;
+        counts->total_hits++;
+        if (hit == HealHit::Critical) {
+            counts->crit_hits++;
+        } else {
+            counts->normal_hits++;
         }
-        if (eff_heal > act.max_heal) {
-            act.max_heal = eff_heal;
-        }
-        act.heal_hit_counts.tick_hits++;
+    }
 
-        if (eff_heal > 0 && is_friendly_target(packet.target_id, registry)) {
-            record_taken(packet.target_id, RecapSample{
-                packet.timestamp_us, raw_source_id, action_key,
-                eff_heal, RecapKind::HotTick, 0}, false, registry);
-        }
+    if (heal.effective > 0 && is_friendly_target(target_id, registry)) {
+        record_taken(target_id, recap, false, registry);
     }
 }
 
@@ -384,12 +345,7 @@ bool MetricsAccumulator::record_cast(const ipc::CastPacket& packet, const Combat
     }
     CombatantStats& stats = get_or_create_stats(source, registry);
     ++stats.casts;
-    ActionSummary& act = stats.actions[packet.action_id];
-    act.action_id = packet.action_id;
-    if (act.name.empty()) {
-        act.name = action_id_to_name(packet.action_id);
-    }
-    ++act.casts;
+    ++action_entry(stats, packet.action_id).casts;
     const hub::game::GcdTiming timing = hub::game::gcd_timing(packet.action_id);
     if (timing.recast_100ms != 0) {
         ++stats.gcd_casts;

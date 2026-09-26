@@ -251,6 +251,12 @@ private:
     void enter_zone_locked(uint32_t zone_id, std::string zone_name);
     [[nodiscard]] const EncounterSummary* latest_pull_locked() const noexcept;
     [[nodiscard]] EncounterSummary summary_locked(TimePoint now, bool with_detail);
+    /// The fields an archived pull and the live view fill alike: zone, start, totals,
+    /// state, boss and the ranked combatants. The id, pull number and end are the
+    /// caller's.
+    [[nodiscard]] EncounterSummary base_summary_locked(double duration_seconds, EncounterState state,
+                                                       EncounterEndReason reason, BossSummary boss,
+                                                       bool with_actions) const;
     void add_detail_rows_locked(EncounterSummary& summary, uint64_t end_us) const;
 
     struct ArchivedPull {
