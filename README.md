@@ -435,8 +435,12 @@ ffxiv-hub/
 ├── plugins/latency_mitigator/   Latency Mitigator: RTT tracking, lock math, ping HUD
 ├── tests/                       Unit tests, runnable on Windows, macOS and Linux
 └── tools/                       Table generators, signature checks, game-client inspection,
-                                 the layering check, README screenshots
+                                 README screenshots
 ```
+
+Each part under `src/` and `plugins/` keeps its headers in `include/<name>/` and its
+sources in `src/`. A part is built against only its own `include/` folder and those of
+the parts it may use, so a plugin cannot include the payload's or the app's headers.
 
 ---
 
@@ -444,7 +448,7 @@ ffxiv-hub/
 
 ### Tests (macOS, Linux or Windows)
 
-You need a C++20 compiler, GNU `make` and `python3`. `make` uses `clang++`; `make CXX=g++` picks
+You need a C++20 compiler and GNU `make`. `make` uses `clang++`; `make CXX=g++` picks
 g++. g++ 13 and clang 18 to 20 all build it with warnings as errors, and CI builds it
 with both.
 
@@ -453,8 +457,8 @@ make
 ```
 
 This builds and runs the unit test suite, syntax-checks the desktop UI code with Dear
-ImGui enabled, and checks that no source includes a header from a layer it must not
-depend on (`tools/check_layers.py`). The build is incremental: objects go to `build/test/`, so after an
+ImGui enabled, and compiles every header on its own to check that it only includes what
+its part may use. The build is incremental: objects go to `build/test/`, so after an
 edit only the files it affects recompile. `make clean` removes the build outputs.
 
 The same suite also runs under the sanitizers, each built into its own folder under
@@ -482,8 +486,7 @@ its numbers and the boss HP are invented; the source is in `tools/screenshots/`.
 
 ### Windows binaries
 
-You need Visual Studio 2022 with *Desktop development with C++*, CMake 3.22+, and Python 3
-for the layering check (the build warns and skips it without Python):
+You need Visual Studio 2022 with *Desktop development with C++*, and CMake 3.22+:
 
 ```cmd
 cmake -B build -S . -A x64
@@ -527,8 +530,9 @@ Bundled third-party code:
 
 - **Dear ImGui** (MIT), vendored under `src/third_party/imgui/`.
 - **MinHook** (BSD-2-Clause), vendored under `src/third_party/minhook/`.
-- **Lucide icons** (ISC). A subset is embedded in `src/common/ui/icons_font.inl`;
-  regenerate it with `tools/embed_icon_font.py`.
+- **Lucide icons** (ISC). A subset is embedded in
+  `src/common/include/common/ui/icons_font.inl`; regenerate it with
+  `tools/embed_icon_font.py`.
 
 FINAL FANTASY XIV © SQUARE ENIX CO., LTD. FINAL FANTASY is a registered trademark of
 Square Enix Holdings Co., Ltd. FFXIV Hub is an independent project and is not affiliated

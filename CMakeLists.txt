@@ -117,19 +117,13 @@ endif()
 
 # -----------------------------------------------------------------------------
 # Layers (AGENTS.md): plugins depend on common; payload and app depend on the
-# plugins and common; nothing depends on the payload or the app. Each plugin sees
-# only its own include folder, and tools/check_layers.py rejects an include that
-# crosses a layer inside src/.
+# plugins and common; nothing depends on the payload or the app. Each layer keeps
+# its headers under its own include/ root and publishes only that root, so an
+# #include across a layer does not compile.
 # -----------------------------------------------------------------------------
-file(GLOB HUB_COMMON_SOURCES CONFIGURE_DEPENDS
-    src/common/*.cpp
-    src/common/ipc/*.cpp
-    src/common/config/*.cpp
-    src/common/os/*.cpp
-    src/common/ui/*.cpp
-)
+file(GLOB_RECURSE HUB_COMMON_SOURCES CONFIGURE_DEPENDS src/common/src/*.cpp)
 add_library(hub_common STATIC ${HUB_COMMON_SOURCES})
-target_include_directories(hub_common PUBLIC include src)
+target_include_directories(hub_common PUBLIC include src/common/include)
 target_link_libraries(hub_common PRIVATE hub_warnings)
 if(HUB_WINDOWS)
     # The shared overlay code in common/ui draws with ImGui.
@@ -150,33 +144,22 @@ add_library(hub_plugins INTERFACE)
 target_link_libraries(hub_plugins INTERFACE hub_meter hub_mitigator)
 
 # The payload less its DllMain, so the tests link it too.
-file(GLOB HUB_PAYLOAD_SOURCES CONFIGURE_DEPENDS src/payload/*.cpp)
-list(REMOVE_ITEM HUB_PAYLOAD_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/payload/dllmain.cpp")
+file(GLOB HUB_PAYLOAD_SOURCES CONFIGURE_DEPENDS src/payload/src/*.cpp)
+list(REMOVE_ITEM HUB_PAYLOAD_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/payload/src/dllmain.cpp")
 add_library(hub_payload_core STATIC ${HUB_PAYLOAD_SOURCES})
+target_include_directories(hub_payload_core PUBLIC src/payload/include)
 target_link_libraries(hub_payload_core PUBLIC hub_plugins PRIVATE hub_warnings)
 if(HUB_WINDOWS)
     target_link_libraries(hub_payload_core PUBLIC minhook imgui d3d11 dxgi)
 endif()
 
 # The desktop manager less its wWinMain.
-file(GLOB HUB_APP_UI_SOURCES CONFIGURE_DEPENDS src/app/ui/*.cpp)
-add_library(hub_app_core STATIC src/app/app_state.cpp ${HUB_APP_UI_SOURCES})
+file(GLOB HUB_APP_UI_SOURCES CONFIGURE_DEPENDS src/app/src/ui/*.cpp)
+add_library(hub_app_core STATIC src/app/src/app_state.cpp ${HUB_APP_UI_SOURCES})
+target_include_directories(hub_app_core PUBLIC src/app/include)
 target_link_libraries(hub_app_core PUBLIC hub_plugins PRIVATE hub_warnings)
 if(HUB_WINDOWS)
     target_link_libraries(hub_app_core PUBLIC imgui)
-endif()
-
-# Include-level layering check, run on every build.
-find_package(Python3 COMPONENTS Interpreter)
-if(Python3_Interpreter_FOUND)
-    add_custom_target(check_layers ALL
-        COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/tools/check_layers.py"
-        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-        COMMENT "Checking includes against the layering rules"
-        VERBATIM
-    )
-else()
-    message(WARNING "Python 3 not found: the include layering check (tools/check_layers.py) will not run.")
 endif()
 
 # Unit Tests Target (cross-platform runnable on macOS, Linux, Windows)
@@ -192,12 +175,12 @@ endif()
 # Windows-specific targets (In-Game Payload DLL and Desktop Manager GUI)
 if(HUB_WINDOWS)
     # In-Game Unified Payload DLL
-    add_library(hub_payload SHARED src/payload/dllmain.cpp)
+    add_library(hub_payload SHARED src/payload/src/dllmain.cpp)
     target_link_libraries(hub_payload PRIVATE hub_payload_core hub_warnings)
 
     # Desktop Manager Executable (ffxiv-hub.exe)
     add_executable(ffxiv-hub WIN32
-        src/app/main.cpp
+        src/app/src/main.cpp
         src/app/resources/app.rc
     )
     target_link_libraries(ffxiv-hub PRIVATE

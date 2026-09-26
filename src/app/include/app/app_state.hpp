@@ -162,7 +162,7 @@ public:
     [[nodiscard]] std::optional<ipc::OverlayGeometryPayload> overlay_geometry(PluginId id) const;
 
     /// Sends one command to the payload. The parameters mean what the command's
-    /// handler in src/payload/command_dispatcher.cpp reads them as; a bool goes as
+    /// handler in src/payload/src/command_dispatcher.cpp reads them as; a bool goes as
     /// 1 or 0 in `param_uint`. ReloadConfig makes the payload re-read config.json,
     /// which it otherwise overwrites with its own copy on the next autosave.
     /// False when no payload is connected.

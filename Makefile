@@ -4,21 +4,45 @@
 ifeq ($(origin CXX),default)
 CXX = clang++
 endif
-CXXFLAGS = -std=c++20 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc -Iplugins -Iplugins/latency_mitigator/include -Iplugins/combat_meter/include -Itests
+CXXFLAGS = -std=c++20 -Wall -Wextra -Wpedantic -Werror
 
-COMMON_SRCS = $(wildcard src/common/*.cpp) \
-              $(wildcard src/common/ipc/*.cpp) \
-              $(wildcard src/common/config/*.cpp) \
-              $(wildcard src/common/os/*.cpp) \
-              $(wildcard src/common/ui/*.cpp)
+# Each layer compiles against only the include roots of the layers AGENTS.md lets
+# it depend on, so an #include across a layer does not compile. The tests and the
+# screenshot tool see them all.
+COMMON_INC = -Iinclude -Isrc/common/include
+METER_INC = $(COMMON_INC) -Iplugins/combat_meter/include
+MITIGATOR_INC = $(COMMON_INC) -Iplugins/latency_mitigator/include
+PLUGINS_INC = $(COMMON_INC) -Iplugins/combat_meter/include -Iplugins/latency_mitigator/include
+PAYLOAD_INC = $(PLUGINS_INC) -Isrc/payload/include
+APP_INC = $(PLUGINS_INC) -Isrc/app/include
+ALL_INC = $(PLUGINS_INC) -Isrc/payload/include -Isrc/app/include
+TEST_INC = $(ALL_INC) -Itests
+
+# $(1): a source or header path; the include roots it compiles against.
+layer_inc = $(strip \
+    $(if $(filter include/% src/common/%,$(1)),$(COMMON_INC), \
+    $(if $(filter plugins/combat_meter/%,$(1)),$(METER_INC), \
+    $(if $(filter plugins/latency_mitigator/%,$(1)),$(MITIGATOR_INC), \
+    $(if $(filter src/payload/%,$(1)),$(PAYLOAD_INC), \
+    $(if $(filter src/app/%,$(1)),$(APP_INC), \
+    $(TEST_INC)))))))
+
+# Recorded in each variant's flags stamp, so a change of include roots rebuilds.
+LAYER_INC_STAMP = $(COMMON_INC) | $(METER_INC) | $(MITIGATOR_INC) | $(PAYLOAD_INC) | $(APP_INC) | $(TEST_INC)
+
+COMMON_SRCS = $(wildcard src/common/src/*.cpp) \
+              $(wildcard src/common/src/ipc/*.cpp) \
+              $(wildcard src/common/src/config/*.cpp) \
+              $(wildcard src/common/src/os/*.cpp) \
+              $(wildcard src/common/src/ui/*.cpp)
 
 PLUGIN_SRCS = $(wildcard plugins/latency_mitigator/src/*.cpp) \
               $(wildcard plugins/combat_meter/src/*.cpp)
 
-PAYLOAD_SRCS = $(wildcard src/payload/*.cpp)
+PAYLOAD_SRCS = $(wildcard src/payload/src/*.cpp)
 
-APP_SRCS = src/app/app_state.cpp \
-           $(wildcard src/app/ui/*.cpp)
+APP_SRCS = src/app/src/app_state.cpp \
+           $(wildcard src/app/src/ui/*.cpp)
 
 TEST_SRCS = $(wildcard tests/*.cpp)
 
@@ -40,18 +64,13 @@ UI_CHECK_SRCS = $(APP_SRCS)
 # warning, so it is only passed to a compiler that knows it.
 NO_NONTRIVIAL_MEMCALL := $(shell $(CXX) -Werror -Wnontrivial-memcall -x c++ -fsyntax-only /dev/null 2>/dev/null && echo -Wno-nontrivial-memcall)
 UI_CHECK_FLAGS = -std=c++20 -Wall -Wextra -Wpedantic -Werror \
-                 -Iinclude -Isrc -Iplugins -Iplugins/latency_mitigator/include -Iplugins/combat_meter/include \
-                 -I$(IMGUI_DIR) -DHAVE_IMGUI=1 -include $(IMGUI_DIR)/imgui.h \
+                 $(APP_INC) -I$(IMGUI_DIR) -DHAVE_IMGUI=1 -include $(IMGUI_DIR)/imgui.h \
                  $(NO_NONTRIVIAL_MEMCALL)
 
 all: test
 
-test: hub_test_runner check-ui check-layers
+test: hub_test_runner check-ui check-headers
 	./hub_test_runner
-
-# Rejects an #include that crosses AGENTS.md's layers (see tools/check_layers.py).
-check-layers:
-	@python3 tools/check_layers.py
 
 # Each variant compiles one object per source into build/<variant>/obj, with -MMD -MP
 # dependency files, so an edit recompiles only what includes it. flags records the
@@ -66,11 +85,11 @@ $(2): $$($(1)_OBJS)
 
 $$($(1)_OBJS): build/$(1)/obj/%.o: %.cpp build/$(1)/flags
 	@mkdir -p $$(dir $$@)
-	$$(CXX) $$(CXXFLAGS) $(3) -MMD -MP -c $$< -o $$@
+	$$(CXX) $$(CXXFLAGS) $$(call layer_inc,$$<) $(3) -MMD -MP -c $$< -o $$@
 
 build/$(1)/flags: FORCE
 	@mkdir -p $$(dir $$@)
-	@echo '$$(CXX) $$(CXXFLAGS) $(3)' | cmp -s - $$@ || echo '$$(CXX) $$(CXXFLAGS) $(3)' > $$@
+	@echo '$$(CXX) $$(CXXFLAGS) $(3) $$(LAYER_INC_STAMP)' | cmp -s - $$@ || echo '$$(CXX) $$(CXXFLAGS) $(3) $$(LAYER_INC_STAMP)' > $$@
 
 -include $$($(1)_OBJS:.o=.d)
 endef
@@ -112,6 +131,30 @@ build/check-ui/flags: FORCE
 
 -include $(UI_CHECK_STAMPS:.ok=.d)
 
+# Every header, compiled on its own against its layer's include roots. A header is
+# otherwise only compiled inside the sources that include it, with their roots, so
+# a common header that only the payload includes could reach into payload/ unseen.
+# It also keeps each header self-contained. One stamp per header, as check-ui.
+HEADERS = $(shell find include src/common/include src/payload/include src/app/include \
+                       plugins/combat_meter/include plugins/latency_mitigator/include tests \
+                       -name '*.hpp')
+HEADER_CHECK_STAMPS = $(patsubst %.hpp,build/check-headers/%.ok,$(HEADERS))
+
+check-headers: $(HEADER_CHECK_STAMPS)
+	@echo "Header check: OK"
+
+$(HEADER_CHECK_STAMPS): build/check-headers/%.ok: %.hpp build/check-headers/flags
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $(call layer_inc,$<) -fsyntax-only -include $< -x c++ /dev/null \
+		-MMD -MP -MF $(@:.ok=.d) -MT $@
+	@touch $@
+
+build/check-headers/flags: FORCE
+	@mkdir -p $(dir $@)
+	@echo '$(CXX) $(CXXFLAGS) $(LAYER_INC_STAMP)' | cmp -s - $@ || echo '$(CXX) $(CXXFLAGS) $(LAYER_INC_STAMP)' > $@
+
+-include $(HEADER_CHECK_STAMPS:.ok=.d)
+
 # README screenshots (docs/images), on Linux or macOS with zlib. The desktop window
 # and both overlays are drawn by their own code into a software rasterizer: the
 # overlay host and the overlays are built as on Windows against a shim, and the
@@ -125,12 +168,11 @@ SELAWIK_PACKAGE = https://registry.npmjs.org/winstrap/-/winstrap-0.5.12.tgz
 SELAWIK_SHA256 = c6ed78b1b13b531588b1b10e002380740adbacbd192cd85e6c2178abec042578
 
 SHOTS_BASE_FLAGS = -std=c++20 -O2 -MMD -MP \
-                   -Iinclude -Isrc -Iplugins -Iplugins/latency_mitigator/include -Iplugins/combat_meter/include \
-                   -I$(SHOTS_DIR) -I$(IMGUI_DIR) -DIMGUI_USER_CONFIG='"imconfig_screenshots.h"'
+                   $(ALL_INC) -I$(SHOTS_DIR) -I$(IMGUI_DIR) -DIMGUI_USER_CONFIG='"imconfig_screenshots.h"'
 # GCC's -O2 truncation analysis flags snprintf calls in the app that the unit test
 # build, at -O0, never sees.
 SHOTS_FLAGS = $(SHOTS_BASE_FLAGS) -Wall -Wextra -Wpedantic -Wno-format-truncation
-SHOTS_WIN32_SRCS = src/payload/overlay_host.cpp \
+SHOTS_WIN32_SRCS = src/payload/src/overlay_host.cpp \
                    plugins/combat_meter/src/combat_overlay.cpp \
                    plugins/latency_mitigator/src/latency_overlay.cpp \
                    $(SHOTS_DIR)/overlay_scene.cpp
@@ -176,8 +218,8 @@ $(SHOTS_BUILD)/windows/Fonts/segoeui.ttf:
 
 clean:
 	rm -f hub_test_runner *.o
-	rm -rf build/test build/tsan build/asan build/check-ui $(SHOTS_BUILD)
+	rm -rf build/test build/tsan build/asan build/check-ui build/check-headers $(SHOTS_BUILD)
 
 FORCE:
 
-.PHONY: all test tsan asan clean check-ui check-layers screenshots FORCE
+.PHONY: all test tsan asan clean check-ui check-headers screenshots FORCE

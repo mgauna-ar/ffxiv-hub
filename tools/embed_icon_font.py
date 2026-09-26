@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Subsets the Lucide icon font to the glyphs FFXIV Hub's UIs use and emits
-src/common/ui/icons.hpp + icons_font.inl. Both the desktop app and the in-game
-overlay merge this subset into their font atlas.
+icons.hpp + icons_font.inl into src/common/include/common/ui/. Both the desktop app
+and the in-game overlay merge this subset into their font atlas.
 
 Both outputs are checked in, so this only has to be re-run when a glyph is added
 to ICONS below. It needs fonttools and the upstream font:
@@ -19,7 +19,7 @@ REPO = os.path.dirname(HERE)
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--font", default="Lucide.ttf", help="upstream Lucide .ttf")
 parser.add_argument("--css", default="lucide.css", help="upstream lucide.css (name -> codepoint map)")
-parser.add_argument("--out", default=os.path.join(REPO, "src", "common", "ui"),
+parser.add_argument("--out", default=os.path.join(REPO, "src", "common", "include", "common", "ui"),
                     help="directory to write icons.hpp and icons_font.inl into")
 args = parser.parse_args()
 

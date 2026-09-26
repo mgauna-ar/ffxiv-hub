@@ -36,7 +36,7 @@ python3 tools/gen_game_tables.py
 ```
 
 Writes `include/hub/game/{actions,status,territory,limit_break,job,guaranteed_hits}.hpp`
-and `src/common/game_tables.cpp`. Review `git diff` on those: it shows exactly which
+and `src/common/src/game_tables.cpp`. Review `git diff` on those: it shows exactly which
 actions, statuses, duties and jobs the patch added or renamed. Regeneration is
 deterministic - an unchanged install must produce byte-identical files.
 

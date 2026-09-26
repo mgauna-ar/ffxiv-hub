@@ -116,8 +116,8 @@ Action RTT.
 **Ping grading.** The badge is colour-graded against shared thresholds
 (`PING_GRADE_GOOD_MS` / `FAIR_MS` / `POOR_MS` in
 [`types.hpp`](include/mitigator/types.hpp)), in the `Ping*` colours of
-`src/common/ui/overlay_palette.hpp`. The desktop view uses the same bands, so the two never
-disagree:
+`src/common/include/common/ui/overlay_palette.hpp`. The desktop view uses the same
+bands, so the two never disagree:
 
 | Band | Threshold | Meaning |
 |---|---|---|

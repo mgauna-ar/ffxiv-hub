@@ -9,7 +9,7 @@
 namespace hub::game {
 
 /// Name from the game's Status sheet.
-/// Empty when the sheet carries no such row. Defined in src/common/game_tables.cpp,
+/// Empty when the sheet carries no such row. Defined in src/common/src/game_tables.cpp,
 /// so including this header does not pull the table into every translation unit.
 [[nodiscard]] std::string_view status_sheet_name(uint32_t id) noexcept;
 
@@ -20,7 +20,7 @@ namespace hub::game {
 }
 
 /// True for a status the game files as a debuff (Status sheet category 2), whoever
-/// applied it. Defined in src/common/game_tables.cpp.
+/// applied it. Defined in src/common/src/game_tables.cpp.
 [[nodiscard]] bool status_is_detrimental(uint32_t id) noexcept;
 
 } // namespace hub::game

@@ -7,12 +7,7 @@
 // detection lives in one place instead of being restated per file.
 
 #ifdef _WIN32
-#if __has_include("third_party/imgui/imgui.h")
-#include "third_party/imgui/imgui.h"
-#ifndef HAVE_IMGUI
-#define HAVE_IMGUI 1
-#endif
-#elif __has_include("imgui.h")
+#if __has_include("imgui.h")
 #include "imgui.h"
 #ifndef HAVE_IMGUI
 #define HAVE_IMGUI 1

@@ -3,7 +3,7 @@
 
 Reads the Excel sheets straight out of the game's SqPack archive - no network,
 no third-party data. Re-run after a patch and review the diff on the generated
-headers and src/common/game_tables.cpp.
+headers and src/common/src/game_tables.cpp.
 
     python3 tools/gen_game_tables.py [--game-dir ~/ffxiv/game]
 
@@ -211,7 +211,7 @@ def gen_lookup_header(fn, fallback_prefix, doc, extra=""):
 namespace hub::game {{
 
 /// {doc}
-/// Empty when the sheet carries no such row. Defined in src/common/game_tables.cpp,
+/// Empty when the sheet carries no such row. Defined in src/common/src/game_tables.cpp,
 /// so including this header does not pull the table into every translation unit.
 [[nodiscard]] std::string_view {fn}_sheet_name(uint32_t id) noexcept;
 
@@ -554,7 +554,7 @@ struct GcdTiming {{
     uint16_t cast_100ms{{0}};
 }};
 
-/// Defined in src/common/game_tables.cpp, like the two below.
+/// Defined in src/common/src/game_tables.cpp, like the two below.
 [[nodiscard]] GcdTiming gcd_timing(uint32_t id) noexcept;
 
 /// True for a player action on the global cooldown (cooldown group {GCD_COOLDOWN_GROUP}, as its
@@ -569,10 +569,10 @@ struct GcdTiming {{
     write("include/hub/game/status.hpp", gen_lookup_header(
         "status", "Status", "Name from the game's Status sheet.", extra="""
 /// True for a status the game files as a debuff (Status sheet category 2), whoever
-/// applied it. Defined in src/common/game_tables.cpp.
+/// applied it. Defined in src/common/src/game_tables.cpp.
 [[nodiscard]] bool status_is_detrimental(uint32_t id) noexcept;
 """))
-    write("src/common/game_tables.cpp", gen_tables_cpp(
+    write("src/common/src/game_tables.cpp", gen_tables_cpp(
         [("action", sheets["action"]), ("status", sheets["status"])],
         sheets["status_detrimental"], sheets["gcd"], sheets["pressed"]))
     write("include/hub/game/limit_break.hpp", gen_limit_break_header(sheets["limit_break"]))
