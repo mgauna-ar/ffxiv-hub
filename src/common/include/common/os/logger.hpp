@@ -38,6 +38,8 @@ public:
     static void open_log_folder();
     /// Folder holding config.json.
     static void open_config_folder();
+    /// config.json itself, in whatever app opens .json files.
+    static void open_config_file();
     static void shutdown();
 };
 

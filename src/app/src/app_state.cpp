@@ -2,7 +2,7 @@
 #include "common/ui/overlay_config.hpp"
 #include "common/os/process_finder.hpp"
 #include "common/os/injector.hpp"
-#include "common/os/unique_handle.hpp"
+#include "common/os/unload_marker.hpp"
 #include "common/os/logger.hpp"
 #include "common/os/auto_start.hpp"
 #include "hub/plugin_registry.hpp"
@@ -326,9 +326,8 @@ void AppState::check_game_process() {
     }
     m_last_process_check = now;
 
-    auto proc = os::ProcessFinder::find_process();
-    // Owns the handle find_process opened, on every path out of here.
-    const os::UniqueHandle process_handle(proc ? proc->handle : nullptr);
+    // Owns the game handle find_process opened, until this check returns.
+    const auto proc = os::ProcessFinder::find_process();
     const uint32_t pid = proc ? proc->pid : 0;
     if (pid != m_game_pid.load()) {
         m_network_monitor.set_target_pid(pid);
@@ -337,7 +336,7 @@ void AppState::check_game_process() {
 
     ConnectionObservation seen{};
     seen.process_alive = pid != 0;
-    seen.handle_opened = proc && proc->handle != nullptr;
+    seen.handle_opened = proc && proc->handle;
     seen.pipe_connected = m_pipe_server.is_connected();
     seen.unload_requested = pid != 0 && m_unloaded_pid.load() == pid;
 
@@ -352,17 +351,15 @@ void AppState::check_game_process() {
         // OpenProcess failed (e.g. Access Denied / privilege mismatch)
         if (proc->last_error == 5) { // ERROR_ACCESS_DENIED
             m_access_denied.store(true);
-            static uint32_t last_warned_pid = 0;
-            if (last_warned_pid != pid) {
-                last_warned_pid = pid;
+            if (m_open_warned_pid != pid) {
+                m_open_warned_pid = pid;
                 os::Logger::error("FFXIV detected (PID " + std::to_string(pid) +
                     ") but OpenProcess failed with ERROR_ACCESS_DENIED (5). Please run FFXIV Hub as Administrator.");
             }
         } else {
             m_access_denied.store(false);
-            static uint32_t last_warned_pid = 0;
-            if (last_warned_pid != pid) {
-                last_warned_pid = pid;
+            if (m_open_warned_pid != pid) {
+                m_open_warned_pid = pid;
                 os::Logger::warn("FFXIV detected (PID " + std::to_string(pid) +
                     ") but OpenProcess failed with Win32 Error " + std::to_string(proc->last_error) + ".");
             }
@@ -374,10 +371,17 @@ void AppState::check_game_process() {
     // Only the main game window (FFXIVGAME) of this very process counts.
     const auto window_ready = [&]() { return os::ProcessFinder::has_game_window(pid); };
     const auto payload_loaded = [&]() { return os::DllInjector::is_payload_already_loaded(*proc); };
+    const auto payload_unloaded = [&]() { return os::payload_marked_unloaded(pid); };
 
     const ConnectionState previous = m_connection_state.load();
-    const ConnectionDecision decision = decide_connection(previous, seen, window_ready, payload_loaded);
+    const ConnectionDecision decision = decide_connection(previous, seen, window_ready, payload_loaded,
+                                                          payload_unloaded);
     m_connection_state.store(decision.next);
+    if (decision.next == ConnectionState::Unloaded) {
+        // Found through the payload's mark after an app restart: remember it like
+        // an unload sent from here, so the next checks take no module snapshot.
+        m_unloaded_pid.store(pid);
+    }
 
     if (decision.next != previous) {
         if (decision.next == ConnectionState::Reconnecting) {

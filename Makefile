@@ -103,9 +103,11 @@ $(eval $(call test_runner,asan,build/asan/hub_test_runner,$(ASAN_FLAGS)))
 tsan: build/tsan/hub_test_runner
 	TSAN_OPTIONS="halt_on_error=1 $(TSAN_OPTIONS)" ./build/tsan/hub_test_runner
 
-# AddressSanitizer and UndefinedBehaviorSanitizer run of the suite.
+# AddressSanitizer and UndefinedBehaviorSanitizer run of the suite. macOS has no
+# LeakSanitizer, and asking for it there aborts the run.
+ASAN_DETECT_LEAKS := $(if $(filter Darwin,$(shell uname -s)),0,1)
 asan: build/asan/hub_test_runner
-	ASAN_OPTIONS="detect_leaks=1 $(ASAN_OPTIONS)" UBSAN_OPTIONS="print_stacktrace=1 $(UBSAN_OPTIONS)" \
+	ASAN_OPTIONS="detect_leaks=$(ASAN_DETECT_LEAKS) $(ASAN_OPTIONS)" UBSAN_OPTIONS="print_stacktrace=1 $(UBSAN_OPTIONS)" \
 		./build/asan/hub_test_runner
 
 # One stamp per UI source, so only an edited file (or one whose headers changed)
@@ -187,8 +189,9 @@ SHOTS_OBJS = $(patsubst %.cpp,$(SHOTS_BUILD)/obj/%.o,$(SHOTS_SRCS))
 SHOTS_WIN32_OBJS = $(patsubst %.cpp,$(SHOTS_BUILD)/obj/win32/%.o,$(SHOTS_WIN32_SRCS))
 SHOTS_IMGUI_OBJS = $(patsubst %.cpp,$(SHOTS_BUILD)/obj/%.o,$(SHOTS_IMGUI_SRCS))
 
+# TZ=UTC: the latency feed prints its clock column in local time.
 screenshots: $(SHOTS_BUILD)/hub_screenshots $(SHOTS_WINDOWS_DIR)/Fonts/segoeui.ttf
-	$(SHOTS_BUILD)/hub_screenshots --windows-dir $(SHOTS_WINDOWS_DIR) --out docs/images
+	TZ=UTC $(SHOTS_BUILD)/hub_screenshots --windows-dir $(SHOTS_WINDOWS_DIR) --out docs/images
 
 $(SHOTS_BUILD)/hub_screenshots: $(SHOTS_OBJS) $(SHOTS_WIN32_OBJS) $(SHOTS_IMGUI_OBJS)
 	$(CXX) $^ -o $@ -lz -pthread

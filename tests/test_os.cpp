@@ -6,6 +6,7 @@
 #include "common/os/local_time.hpp"
 #include "common/os/network_monitor.hpp"
 #include "common/os/paths.hpp"
+#include "common/os/unload_marker.hpp"
 #include "common/config/config_manager.hpp"
 #include <chrono>
 #include <ctime>
@@ -78,6 +79,14 @@ TEST_CASE(OS, SingleInstanceGuard) {
     TEST_ASSERT_TRUE(inst2.try_acquire());
     TEST_ASSERT_TRUE(inst2.is_primary());
     inst2.release();
+}
+
+TEST_CASE(OS, UnloadMarkIsPerProcess) {
+    TEST_ASSERT(!payload_marked_unloaded(424242));
+    mark_payload_unloaded(424242);
+    TEST_ASSERT(payload_marked_unloaded(424242));
+    // A restarted game is another process and starts unmarked.
+    TEST_ASSERT(!payload_marked_unloaded(424243));
 }
 
 TEST_CASE(OS, AutoStartConfiguration) {

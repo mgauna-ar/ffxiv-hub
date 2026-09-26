@@ -14,7 +14,7 @@ combat meter treating party slot 0 as the local player. The install is at `~/ffx
 
 | Question | Command |
 |---|---|
-| Does a signature still match, and where does it point? | `python3 tools/inspect_exe.py sig GROUP_MANAGER_INSTANCE --rip 5 9` |
+| Does a signature still match, and where does it point? | `python3 tools/inspect_exe.py sig GROUP_MANAGER_INSTANCE` (a literal pattern takes `--rip <disp offset> <insn end>`) |
 | Check all signatures after a patch | `python3 tools/check_signatures.py`: every signature matches once, and each static-global one lands in a data section, following the `<SIGNATURE>_RIP_*` pair in `game_definitions.hpp`. See `after-game-patch` |
 | Show a function | `python3 tools/inspect_exe.py func 0x140b4a4b0` |
 | Show a range (leaf functions have no `.pdata` entry) | `python3 tools/inspect_exe.py disasm 0x140b26dd0 0x140b26df0` |
@@ -36,10 +36,11 @@ reaches the client through a signature in `include/hub/game_definitions.hpp`, an
 
 ## Recipes
 
-**Find a manager's instance.** Resolve its signature with `sig NAME --rip <disp offset>
-<insn end>`, counted from the match start: the signature's `<NAME>_RIP_DISP_OFFSET` and
-`<NAME>_RIP_INSN_END` in `game_definitions.hpp`, which the payload passes to
-`resolve_rip_relative`. The target lands in `.data`.
+**Find a manager's instance.** Resolve its signature with `sig NAME`. It follows the
+signature's `<NAME>_RIP_DISP_OFFSET` and `<NAME>_RIP_INSN_END` in `game_definitions.hpp`,
+counted from the match start, the pair the payload passes to `resolve_rip_relative`; a
+re-cut pattern not in the header yet takes them as `--rip <disp offset> <insn end>`. The
+target lands in `.data`.
 
 **Find what fills a field.** `field <offset> --writes` lists the stores. A field set
 through a helper shows no direct store; look for a small function whose only job is that

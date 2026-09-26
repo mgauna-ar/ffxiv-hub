@@ -14,9 +14,9 @@ enum class ConnectionState : uint8_t {
     /// The pipe dropped without an unload. The payload is still resident and
     /// retries every 2 s, so this only waits.
     Reconnecting,
-    /// The app unloaded the payload and its pipe has gone. The DLL stays mapped
-    /// with its hooks as passthroughs, which blocks re-injection until the game
-    /// restarts.
+    /// The payload was unloaded, by this app or, as the mark it left says, by an
+    /// earlier one. The DLL stays mapped with its hooks as passthroughs, which
+    /// blocks re-injection until the game restarts.
     Unloaded
 };
 
@@ -51,14 +51,17 @@ struct ConnectionDecision {
  * @brief The supervisor's state transition, one step per process check.
  *
  * Pure and platform-independent, so every edge is unit-tested without Windows.
- * `window_ready` and `payload_loaded` are callables returning bool, evaluated
- * only when the decision depends on them.
+ * `window_ready`, `payload_loaded` and `payload_unloaded` are callables returning
+ * bool, evaluated only when the decision depends on them. `payload_unloaded` says
+ * whether the resident payload left the mark of an unload, which is how an app
+ * started after the unload learns of it.
  */
-template <typename WindowReady, typename PayloadLoaded>
+template <typename WindowReady, typename PayloadLoaded, typename PayloadUnloaded>
 [[nodiscard]] ConnectionDecision decide_connection(ConnectionState current,
                                                    const ConnectionObservation& seen,
                                                    WindowReady&& window_ready,
-                                                   PayloadLoaded&& payload_loaded) {
+                                                   PayloadLoaded&& payload_loaded,
+                                                   PayloadUnloaded&& payload_unloaded) {
     if (!seen.process_alive) {
         return { ConnectionState::WaitingForGame, ConnectionAction::None };
     }
@@ -94,6 +97,10 @@ template <typename WindowReady, typename PayloadLoaded>
         return { ConnectionState::WaitingForGame, ConnectionAction::None };
     }
     if (payload_loaded()) {
+        // An unloaded payload is resident too, and its pipe never comes back.
+        if (payload_unloaded()) {
+            return { ConnectionState::Unloaded, ConnectionAction::None };
+        }
         return { ConnectionState::InjectedWaitingPipe, ConnectionAction::AdoptResident };
     }
     return { ConnectionState::Injecting, ConnectionAction::Inject };

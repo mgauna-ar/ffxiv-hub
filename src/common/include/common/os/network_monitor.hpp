@@ -56,7 +56,8 @@ public:
 
 private:
     void worker_loop();
-    bool probe_once();
+    /// One ping of `pid`'s game server; the platform part. `pid` is never 0.
+    bool probe_target(uint32_t pid);
 
     std::atomic<bool> m_running{false};
     std::atomic<uint32_t> m_target_pid{0};

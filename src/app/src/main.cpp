@@ -352,11 +352,11 @@ void wire_tray(hub::os::TrayManager& tray_manager, MainWindow& window) {
     });
 
     tray_manager.set_on_open_logs([]() {
-        hub::os::Logger::open_log_file();
+        hub::os::Logger::open_log_folder();
     });
 
     tray_manager.set_on_open_config([]() {
-        hub::os::Logger::open_config_folder();
+        hub::os::Logger::open_config_file();
     });
 
     tray_manager.set_notifications_enabled(
@@ -442,7 +442,7 @@ void run_frame_loop(MainWindow& window, hub::app::AppState& app_state, hub::os::
                  app_state.connection_state(), app_state.is_access_denied(), app_state.game_pid())) {
             tray_manager.show_notification(notice.title, notice.message);
         }
-        tray_manager.set_game_connected(app_state.is_connected(), app_state.game_pid());
+        tray_manager.set_status(app_state.connection_status_string());
 
         if (window.minimized) {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));

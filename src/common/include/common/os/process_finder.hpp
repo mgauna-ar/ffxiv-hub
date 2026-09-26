@@ -1,6 +1,7 @@
 #pragma once
 
 #include "hub/game_definitions.hpp"
+#include "common/os/unique_handle.hpp"
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -9,10 +10,11 @@
 namespace hub::os {
 
 struct ProcessInfo {
-    uint32_t    pid{0};
-    std::string name;
-    void*       handle{nullptr};        // Win32 HANDLE
-    uint32_t    last_error{0};
+    uint32_t     pid{0};
+    std::string  name;
+    /// The game opened for injection; empty when OpenProcess refused.
+    UniqueHandle handle;
+    uint32_t     last_error{0};
 };
 
 /**

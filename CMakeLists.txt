@@ -121,10 +121,12 @@ endif()
 # its headers under its own include/ root and publishes only that root, so an
 # #include across a layer does not compile.
 # -----------------------------------------------------------------------------
+find_package(Threads REQUIRED)
+
 file(GLOB_RECURSE HUB_COMMON_SOURCES CONFIGURE_DEPENDS src/common/src/*.cpp)
 add_library(hub_common STATIC ${HUB_COMMON_SOURCES})
 target_include_directories(hub_common PUBLIC include src/common/include)
-target_link_libraries(hub_common PRIVATE hub_warnings)
+target_link_libraries(hub_common PUBLIC Threads::Threads PRIVATE hub_warnings)
 if(HUB_WINDOWS)
     # The shared overlay code in common/ui draws with ImGui.
     target_link_libraries(hub_common PUBLIC imgui)

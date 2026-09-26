@@ -121,7 +121,7 @@ The sidebar badge is the short form of the connection status; hover it for the f
 | Hooked & active | Connected (PID …) | Attached and working. |
 | Hooks missing | Connected, hooks not installed (PID …) | The payload answered but could not hook the game, usually after a patch. |
 | Reconnecting | Reconnecting to payload (PID …)... | The connection dropped while the game runs. The payload retries every 2 seconds on its own. |
-| Unloaded | Payload unloaded. Restart the game to attach again. | You used **Unload payload**. A tray notification says the same. |
+| Unloaded | Payload unloaded. Restart the game to attach again. | You used **Unload payload** in this game session, even if the Hub was restarted since. A tray notification says the same. |
 | Access denied | Access Denied (Run as Admin) | Windows refused access to the game. Run the Hub as administrator. |
 - The combat meter and the ping badge appear in game. The badge's RTT reading fills in
   after your first ability, and the meter fills once you start fighting.
@@ -163,7 +163,8 @@ always be found and dragged back. Each overlay can:
 | Latency Mitigator | Live latency stats, the round-trip graph and a feed of every action, plus Settings |
 | Hub Settings | Start with Windows, close to tray, notifications, the config file, reset, unload, and the diagnostic log |
 
-**Tray icon.** Click it to open the window, or right-click for the menu:
+**Tray icon.** Click it to open the window, hover over it for the connection status (the
+same wording as the sidebar), or right-click for the menu:
 
 | Item | What it does |
 |---|---|
@@ -249,8 +250,8 @@ Run FFXIV Hub as administrator."* and `hub.log` records the access-denied error 
 game's PID. The Hub needs elevation even when you didn't start the game or its launcher as
 administrator.
 
-If the dashboard sits at *Injected, awaiting handshake*, the payload was unloaded earlier
-in this game session. Restart the game.
+If the dashboard reads *Payload unloaded*, the payload was unloaded earlier in this game
+session. Restart the game.
 
 </details>
 
@@ -468,6 +469,8 @@ make tsan    # ThreadSanitizer
 make asan    # AddressSanitizer + UndefinedBehaviorSanitizer
 ```
 
+macOS has no LeakSanitizer, so there `make asan` runs without leak detection.
+
 ### README screenshots (macOS or Linux)
 
 The pictures in `docs/images/` are drawn by the desktop app's and the overlays' own code
@@ -482,6 +485,10 @@ The first run downloads Selawik, Microsoft's openly licensed (OFL) stand-in for 
 and checks its SHA-256. To draw with other fonts, set `SHOTS_WINDOWS_DIR` to a folder
 whose `Fonts` subfolder holds `segoeui.ttf`, `segoeuib.ttf` and `seguisb.ttf`. The party,
 its numbers and the boss HP are invented; the source is in `tools/screenshots/`.
+
+The night is fixed down to its wall clock, and the tool runs in UTC, so redrawing on the
+same machine writes the same files. Another compiler or platform can still move a few
+antialiased pixels, so commit only the pictures a change actually alters.
 
 ### Windows binaries
 

@@ -14,6 +14,7 @@
 #include "common/ipc/pipe_client.hpp"
 #include "common/config/config_manager.hpp"
 #include "common/os/logger.hpp"
+#include "common/os/unload_marker.hpp"
 #include "meter/combat_plugin.hpp"
 #include "meter/combat_overlay.hpp"
 #include "mitigator/latency_plugin.hpp"
@@ -61,12 +62,13 @@ void init_payload_log() {
 // Waits for game window readiness to avoid hooking transient splash screens.
 // Null if it never appeared or an unload was requested meanwhile.
 HWND wait_for_game_window() {
-    for (int attempts = 0; attempts < 60 && !g_shutdown_requested.load(); ++attempts) {
+    constexpr auto attempts_allowed = intervals::GAME_WINDOW_WAIT / intervals::GAME_WINDOW_POLL;
+    for (int attempts = 0; attempts < attempts_allowed && !g_shutdown_requested.load(); ++attempts) {
         HWND game_hwnd = FindWindowW(L"FFXIVGAME", nullptr);
         if (game_hwnd && IsWindow(game_hwnd)) {
             return game_hwnd;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        std::this_thread::sleep_for(intervals::GAME_WINDOW_POLL);
     }
     return nullptr;
 }
@@ -181,7 +183,8 @@ private:
         });
 
         hub::os::Logger::info("Connecting to desktop app pipe (" + std::string(hub::ipc::DEFAULT_PIPE_NAME) + ")...");
-        const bool connected_initially = m_pipe_client->connect(10000);
+        const bool connected_initially =
+            m_pipe_client->connect(static_cast<uint32_t>(intervals::INITIAL_CONNECT_TIMEOUT.count()));
         hub::os::Logger::info(std::string("Initial pipe connect -> ") + (connected_initially ? "connected" : "not connected yet, will keep retrying"));
     }
 
@@ -309,6 +312,7 @@ private:
         if (m_schedule.meter_report.fire(now)) report_meter();
         if (connected && m_schedule.heartbeat.due(now)) {
             send_heartbeat_and_status(now);
+            report_dropped_packets();
             m_schedule.heartbeat.mark(now);
         }
         if (connected) push_game_state(now);
@@ -424,6 +428,16 @@ private:
         m_last_combatant_count = summary.combatants.size();
     }
 
+    // Packets a producer found its lane full for, or that found no lane at all.
+    // The count only grows, so this logs each new batch once.
+    void report_dropped_packets() {
+        const uint64_t dropped = m_pipe_client->dropped_packets();
+        if (dropped == m_last_dropped_packets) return;
+        hub::os::Logger::warn("Outbound queue full: " + std::to_string(dropped - m_last_dropped_packets) +
+                              " packet(s) to the app dropped");
+        m_last_dropped_packets = dropped;
+    }
+
     // Heartbeat plus hook state, so the desktop app's "Connected" reflects
     // whether the hooks are actually installed rather than only that the
     // pipe came up.
@@ -501,6 +515,8 @@ private:
     // Graceful teardown when explicit unload is requested while the game keeps running
     void teardown() {
         hub::os::Logger::info("Payload shutting down.");
+        // First, so an app that starts while the rest runs already finds it.
+        hub::os::mark_payload_unloaded(static_cast<uint32_t>(GetCurrentProcessId()));
         hub::payload::save_plugin_config(m_combat_plugin.get(), m_latency_plugin.get());
         m_hook_mgr.uninstall();
         hub::payload::Dx11Hook::instance().uninstall();
@@ -544,6 +560,7 @@ private:
     uint32_t m_heartbeat_sequence = 0;
     size_t m_last_combatant_count = 0;
     uint64_t m_last_dropped_commands = 0;
+    uint64_t m_last_dropped_packets = 0;
     bool m_prev_connected = false;
 };
 
