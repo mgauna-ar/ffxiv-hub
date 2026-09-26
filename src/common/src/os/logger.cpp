@@ -131,6 +131,10 @@ void Logger::open_config_folder() {
     open_with_default_app(cfg_path.has_parent_path() ? cfg_path.parent_path() : std::filesystem::path("."));
 }
 
+void Logger::open_config_file() {
+    open_with_default_app(hub::config::ConfigManager::instance().get_config_path());
+}
+
 void Logger::shutdown() {
     std::lock_guard<std::mutex> lock(g_log_mutex);
     if (g_log_file.is_open()) {

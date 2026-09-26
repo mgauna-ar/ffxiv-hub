@@ -202,9 +202,24 @@ bool PipeServer::send_packet(
 #endif
 }
 
+void PipeServer::note_version_mismatch(std::span<const uint8_t> data) {
+    PacketHeader hdr{};
+    if (data.size() < sizeof(hdr)) return;
+    std::memcpy(&hdr, data.data(), sizeof(hdr));
+    if (hdr.magic != IPC_MAGIC || hdr.version == IPC_VERSION) return;
+    m_version_mismatches.fetch_add(1, std::memory_order_relaxed);
+    if (m_version_warned.exchange(true)) return;
+    os::Logger::warn("PipeServer: the payload speaks IPC version " + std::to_string(hdr.version) +
+                     " and this app version " + std::to_string(IPC_VERSION) +
+                     "; its packets are ignored. Restart the game to load the matching payload.");
+}
+
 bool PipeServer::process_raw_packet(std::span<const uint8_t> data) {
     auto maybe_hdr = deserialize_header(data);
-    if (!maybe_hdr.has_value()) return false;
+    if (!maybe_hdr.has_value()) {
+        note_version_mismatch(data);
+        return false;
+    }
 
     const auto& hdr = *maybe_hdr;
     const size_t total_expected = sizeof(PacketHeader) + hdr.payload_size;
@@ -291,7 +306,7 @@ void PipeServer::server_worker_thread() {
         HANDLE hPipe = CreateNamedPipeA(
             m_pipe_name.c_str(),
             PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
-            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
             1,
             65536,
             65536,
@@ -329,6 +344,9 @@ void PipeServer::server_worker_thread() {
                     connected = GetOverlappedResult(hPipe, &ov_connect, &unused, FALSE);
                 } else {
                     CancelIoEx(hPipe, &ov_connect);
+                    // ov_connect and its event live on this stack: wait the cancel out.
+                    DWORD unused = 0;
+                    GetOverlappedResult(hPipe, &ov_connect, &unused, TRUE);
                     connected = FALSE;
                 }
             }
@@ -341,6 +359,7 @@ void PipeServer::server_worker_thread() {
             continue;
         }
 
+        m_version_warned.store(false);
         m_connected.store(true);
 
         const os::UniqueHandle read_event(CreateEventW(nullptr, TRUE, FALSE, nullptr));

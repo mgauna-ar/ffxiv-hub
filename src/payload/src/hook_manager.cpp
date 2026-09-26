@@ -44,9 +44,12 @@ namespace {
 std::atomic<int32_t> g_in_flight_detours{0};
 std::atomic<bool> g_shutting_down{false};
 
+// Sequentially consistent, like Dx11Hook::CallScope: the detour raises the count
+// then reads g_shutting_down, and uninstall() sets the flag then reads the count.
+// With weaker orders both reads may miss the other's write.
 struct DetourScope {
-    DetourScope() { g_in_flight_detours.fetch_add(1, std::memory_order_acquire); }
-    ~DetourScope() { g_in_flight_detours.fetch_sub(1, std::memory_order_release); }
+    DetourScope() { g_in_flight_detours.fetch_add(1); }
+    ~DetourScope() { g_in_flight_detours.fetch_sub(1); }
     DetourScope(const DetourScope&) = delete;
     DetourScope& operator=(const DetourScope&) = delete;
 };
@@ -387,7 +390,7 @@ void HookManager::uninstall() {
     }
 
     const auto start = std::chrono::steady_clock::now();
-    while (g_in_flight_detours.load(std::memory_order_acquire) > 0) {
+    while (g_in_flight_detours.load() > 0) {
         const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - start
         ).count();

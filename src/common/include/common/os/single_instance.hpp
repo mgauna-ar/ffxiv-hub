@@ -1,5 +1,6 @@
 #pragma once
 
+#include "common/os/unique_handle.hpp"
 #include <string>
 #include <cstdint>
 
@@ -38,7 +39,7 @@ public:
 
 private:
     std::string m_name;
-    void* m_handle{nullptr};
+    UniqueHandle m_handle;
     bool m_is_primary{false};
     uint32_t m_activation_msg_id{0};
 };

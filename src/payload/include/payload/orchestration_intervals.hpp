@@ -8,6 +8,12 @@
 /// Windows.
 namespace hub::payload::intervals {
 
+/// Poll for the FFXIVGAME window before setup, and how long to wait for it.
+inline constexpr std::chrono::milliseconds GAME_WINDOW_POLL{500};
+inline constexpr std::chrono::milliseconds GAME_WINDOW_WAIT{30000};
+/// The first pipe connect at injection, when the app is usually already listening.
+inline constexpr std::chrono::milliseconds INITIAL_CONNECT_TIMEOUT{10000};
+
 /// The loop's own period. Every interval below is checked once per tick, so a job
 /// can run up to one tick late.
 inline constexpr std::chrono::milliseconds TICK{50};
@@ -20,7 +26,7 @@ inline constexpr std::chrono::milliseconds PARTY_SYNC{1500};
 inline constexpr std::chrono::milliseconds RECONNECT{2000};
 /// Timeout of one reconnect attempt.
 inline constexpr std::chrono::milliseconds RECONNECT_TIMEOUT{500};
-/// Heartbeat and hook status.
+/// Heartbeat and hook status, and the outbound-drop check.
 inline constexpr std::chrono::milliseconds HEARTBEAT{1000};
 /// Game state push when nothing changed.
 inline constexpr std::chrono::milliseconds GAME_STATE_KEEPALIVE{1000};

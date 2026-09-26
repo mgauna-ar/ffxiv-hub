@@ -97,6 +97,8 @@ public:
     [[nodiscard]] bool is_connected() const noexcept { return m_connected.load(); }
     [[nodiscard]] bool is_running() const noexcept { return m_running.load(); }
     [[nodiscard]] uint64_t packets_received() const noexcept { return m_packets_received.load(); }
+    /// Frames dropped because the payload speaks another IPC_VERSION.
+    [[nodiscard]] uint64_t version_mismatches() const noexcept { return m_version_mismatches.load(); }
     [[nodiscard]] const std::string& pipe_name() const noexcept { return m_pipe_name; }
 
 private:
@@ -105,11 +107,17 @@ private:
     /// Nulls the handle, then waits out any send still inside it. The worker
     /// calls this before it closes the handle.
     void detach_pipe_handle();
+    /// Counts a frame with our magic but another IPC_VERSION, and logs the first
+    /// one of each connection; the rest would only repeat it.
+    void note_version_mismatch(std::span<const uint8_t> data);
 
     std::string m_pipe_name;
     std::atomic<bool> m_running{false};
     std::atomic<bool> m_connected{false};
     std::atomic<uint64_t> m_packets_received{0};
+    std::atomic<uint64_t> m_version_mismatches{0};
+    /// Cleared on each accepted connection.
+    std::atomic<bool> m_version_warned{false};
     std::atomic<uint32_t> m_outbound_sequence{0};
 
     std::thread m_worker_thread;

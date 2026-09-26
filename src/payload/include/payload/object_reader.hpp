@@ -94,7 +94,6 @@ public:
     /// which includes solo play (the party list is empty then).
     [[nodiscard]] uint16_t current_territory() const noexcept { return m_last_territory; }
 
-    void set_ring_buffer(RingBuffer* ring_buffer) noexcept { m_ring_buffer = ring_buffer; }
     [[nodiscard]] bool is_initialized() const noexcept { return m_initialized; }
 
 private:

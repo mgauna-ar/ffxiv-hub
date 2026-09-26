@@ -194,6 +194,9 @@ private:
     /// PID the payload was unloaded from, 0 if none. Keyed by PID so a restarted
     /// game is attached again without anyone clearing it.
     std::atomic<uint32_t> m_unloaded_pid{0};
+    /// Last PID an OpenProcess failure was logged for, so each game logs it once.
+    /// Only check_game_process() touches it.
+    uint32_t m_open_warned_pid{0};
     std::atomic<uint32_t> m_game_state_flags{0};
     std::atomic<uint64_t> m_last_heartbeat_ms{0};
     mutable std::mutex m_status_mutex;
