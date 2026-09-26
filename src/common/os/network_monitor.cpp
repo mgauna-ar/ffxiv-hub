@@ -1,4 +1,5 @@
 #include "common/os/network_monitor.hpp"
+#include "common/os/unique_handle.hpp"
 #include <algorithm>
 #include <vector>
 
@@ -24,6 +25,17 @@ namespace {
 constexpr uint32_t kSleepStepMs = 100;
 #else
 constexpr uint32_t kSleepStepMs = 50;
+#endif
+
+#ifdef _WIN32
+/// An IcmpCreateFile handle, which only IcmpCloseHandle may close.
+struct IcmpHandleTraits {
+    using pointer = HANDLE;
+    static pointer empty() noexcept { return INVALID_HANDLE_VALUE; }
+    static bool is_valid(pointer handle) noexcept { return handle != INVALID_HANDLE_VALUE && handle != nullptr; }
+    static void close(pointer handle) noexcept { IcmpCloseHandle(handle); }
+};
+using UniqueIcmpHandle = BasicUniqueHandle<IcmpHandleTraits>;
 #endif
 } // namespace
 
@@ -148,8 +160,8 @@ bool NetworkMonitor::probe_once() {
     }
 
     // 2. Perform ICMP Echo Probe
-    HANDLE hIcmpFile = IcmpCreateFile();
-    if (hIcmpFile == INVALID_HANDLE_VALUE) {
+    const UniqueIcmpHandle icmp(IcmpCreateFile());
+    if (!icmp) {
         m_current_ping_ms.store(-1.0);
         return false;
     }
@@ -159,7 +171,7 @@ bool NetworkMonitor::probe_once() {
     std::vector<uint8_t> reply_buf(reply_size);
 
     DWORD replies = IcmpSendEcho(
-        hIcmpFile,
+        icmp.get(),
         target_ip,
         send_data,
         static_cast<WORD>(sizeof(send_data)),
@@ -176,8 +188,6 @@ bool NetworkMonitor::probe_once() {
             ping_result = static_cast<double>(echo_reply->RoundTripTime);
         }
     }
-
-    IcmpCloseHandle(hIcmpFile);
 
     m_current_ping_ms.store(ping_result);
 

@@ -218,7 +218,7 @@ void AppState::register_ipc_callbacks() {
     });
 
     m_pipe_server.set_status_callback([this](const ipc::StatusPayload& status) {
-        m_hooks_installed.store(std::string_view(status.status_message).find("NOT installed") == std::string_view::npos);
+        m_hooks_installed.store(ipc::reports_hooks_installed(status));
         std::lock_guard<std::mutex> lock(m_status_mutex);
         m_payload_status_message.assign(
             status.status_message,

@@ -2,6 +2,7 @@
 
 #include "hub/types.hpp"
 #include "common/ipc/protocol.hpp"
+#include "common/os/unique_handle.hpp"
 #include <functional>
 #include <atomic>
 #include <thread>
@@ -123,9 +124,9 @@ private:
     /// Win32 HANDLE, owned and closed by the worker thread. Atomic so a send can
     /// read it under m_send_mutex alone.
     [[maybe_unused]] std::atomic<void*> m_pipe_handle{nullptr};
-    [[maybe_unused]] void* m_stop_event{nullptr};  // Win32 HANDLE
+    hub::os::UniqueHandle m_stop_event;
     /// Reused across writes rather than created per packet. Guarded by m_send_mutex.
-    [[maybe_unused]] void* m_write_event{nullptr}; // Win32 HANDLE
+    hub::os::UniqueHandle m_write_event;
 
     // Dispatch callbacks
     CombatActionCallback m_on_combat_action;

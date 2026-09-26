@@ -13,6 +13,7 @@
 #include <windows.h>
 #include <d3d11.h>
 #include <dxgi.h>
+#include <wrl/client.h>
 #include "MinHook.h"
 #include "payload/minhook_init.hpp"
 
@@ -22,6 +23,8 @@
 namespace hub::payload {
 
 namespace {
+
+using Microsoft::WRL::ComPtr;
 
 using FnPresent = HRESULT(WINAPI*)(IDXGISwapChain*, UINT, UINT);
 
@@ -40,6 +43,10 @@ std::atomic<bool> g_shutting_down{false};
 std::atomic<bool> g_game_exiting{false};
 bool g_initialized = false;
 HWND g_game_hwnd = nullptr;
+// Raw rather than ComPtr on purpose: these live for the process, and a static
+// ComPtr would Release in the loader's static destruction at process exit, when
+// nothing may touch COM. release_device_objects() and cleanup_render_target()
+// are their one release path.
 ID3D11Device* g_device = nullptr;
 ID3D11DeviceContext* g_context = nullptr;
 ID3D11RenderTargetView* g_main_rtv = nullptr;
@@ -47,11 +54,10 @@ IDXGISwapChain* g_current_swap_chain = nullptr;
 
 void create_render_target(IDXGISwapChain* swap_chain) {
     if (!g_device || !swap_chain) return;
-    ID3D11Texture2D* back_buffer = nullptr;
-    HRESULT hr = swap_chain->GetBuffer(0, IID_PPV_ARGS(&back_buffer));
+    ComPtr<ID3D11Texture2D> back_buffer;
+    HRESULT hr = swap_chain->GetBuffer(0, IID_PPV_ARGS(back_buffer.ReleaseAndGetAddressOf()));
     if (SUCCEEDED(hr) && back_buffer) {
-        g_device->CreateRenderTargetView(back_buffer, nullptr, &g_main_rtv);
-        back_buffer->Release();
+        g_device->CreateRenderTargetView(back_buffer.Get(), nullptr, &g_main_rtv);
     }
 }
 
@@ -64,6 +70,12 @@ void cleanup_render_target() {
         g_main_rtv->Release();
         g_main_rtv = nullptr;
     }
+}
+
+// Drops the device and context taken from the game's swap chain.
+void release_device_objects() {
+    if (g_context) { g_context->Release(); g_context = nullptr; }
+    if (g_device)  { g_device->Release();  g_device = nullptr; }
 }
 
 static void render_overlay_frame() {
@@ -139,17 +151,17 @@ void bind_and_render(IDXGISwapChain* swap_chain) {
                               (target_hwnd != nullptr && g_game_hwnd != target_hwnd));
 
     if (need_rebind) {
-        ID3D11Device* dev = nullptr;
-        if (SUCCEEDED(swap_chain->GetDevice(__uuidof(ID3D11Device), reinterpret_cast<void**>(&dev)))) {
+        ComPtr<ID3D11Device> dev;
+        if (SUCCEEDED(swap_chain->GetDevice(IID_PPV_ARGS(dev.ReleaseAndGetAddressOf())))) {
             if (g_initialized) {
                 cleanup_render_target();
                 OverlayHost::instance().shutdown();
-                if (g_context) { g_context->Release(); g_context = nullptr; }
-                if (g_device) { g_device->Release(); g_device = nullptr; }
+                release_device_objects();
                 g_initialized = false;
             }
 
-            g_device = dev;
+            // The reference GetDevice took is the one g_device holds.
+            g_device = dev.Detach();
             g_device->GetImmediateContext(&g_context);
             g_current_swap_chain = swap_chain;
             g_game_hwnd = target_hwnd;
@@ -223,6 +235,94 @@ HRESULT WINAPI hooked_resize_buffers(
     return hr;
 }
 
+/// A hidden window of a private class, only there to give a dummy swap chain an
+/// output. Destroyed, and its class unregistered, when it goes out of scope.
+class DummyWindow {
+public:
+    DummyWindow() {
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof(WNDCLASSEXW);
+        wc.style = CS_HREDRAW | CS_VREDRAW;
+        wc.lpfnWndProc = DefWindowProcW;
+        wc.hInstance = m_instance;
+        wc.lpszClassName = kClassName;
+        RegisterClassExW(&wc);
+
+        m_hwnd = CreateWindowExW(
+            0, kClassName, L"", WS_OVERLAPPEDWINDOW,
+            0, 0, 100, 100, nullptr, nullptr, m_instance, nullptr
+        );
+    }
+    ~DummyWindow() {
+        if (m_hwnd) DestroyWindow(m_hwnd);
+        UnregisterClassW(kClassName, m_instance);
+    }
+    DummyWindow(const DummyWindow&) = delete;
+    DummyWindow& operator=(const DummyWindow&) = delete;
+
+    [[nodiscard]] HWND get() const noexcept { return m_hwnd; }
+
+private:
+    static constexpr const wchar_t* kClassName = L"FFXIVHubDummyWindowClass";
+    HINSTANCE m_instance = GetModuleHandleW(nullptr);
+    HWND m_hwnd = nullptr;
+};
+
+/// Reads Present and ResizeBuffers out of the IDXGISwapChain vtable, which every
+/// swap chain in the process shares, by creating a throwaway device and swap
+/// chain on a dummy window. All three are gone again when this returns. Returns
+/// null on success, else what failed.
+const char* find_swap_chain_targets(void*& present_target, void*& resize_buffers_target) {
+    const DummyWindow dummy_window;
+    if (!dummy_window.get()) {
+        return "Failed to create dummy window";
+    }
+
+    D3D_FEATURE_LEVEL feature_level;
+    const D3D_FEATURE_LEVEL feature_levels[] = { D3D_FEATURE_LEVEL_11_0 };
+
+    DXGI_SWAP_CHAIN_DESC scd{};
+    scd.BufferCount = 1;
+    scd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    scd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    scd.OutputWindow = dummy_window.get();
+    scd.SampleDesc.Count = 1;
+    scd.Windowed = TRUE;
+    scd.BufferDesc.ScanlineOrdering = DXGI_MODE_SCANLINE_ORDER_UNSPECIFIED;
+    scd.BufferDesc.Scaling = DXGI_MODE_SCALING_UNSPECIFIED;
+    scd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+
+    ComPtr<IDXGISwapChain> dummy_swap_chain;
+    ComPtr<ID3D11Device> dummy_device;
+    ComPtr<ID3D11DeviceContext> dummy_context;
+
+    HRESULT hr = D3D11CreateDeviceAndSwapChain(
+        nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0,
+        feature_levels, 1, D3D11_SDK_VERSION, &scd,
+        dummy_swap_chain.ReleaseAndGetAddressOf(), dummy_device.ReleaseAndGetAddressOf(),
+        &feature_level, dummy_context.ReleaseAndGetAddressOf()
+    );
+
+    if (FAILED(hr) || !dummy_swap_chain) {
+        // Fallback to WARP software driver for headless environments / CI virtual machines
+        hr = D3D11CreateDeviceAndSwapChain(
+            nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0,
+            feature_levels, 1, D3D11_SDK_VERSION, &scd,
+            dummy_swap_chain.ReleaseAndGetAddressOf(), dummy_device.ReleaseAndGetAddressOf(),
+            &feature_level, dummy_context.ReleaseAndGetAddressOf()
+        );
+    }
+
+    if (FAILED(hr) || !dummy_swap_chain) {
+        return "Failed to create dummy D3D11 device and swap chain";
+    }
+
+    void** vtable = *reinterpret_cast<void***>(dummy_swap_chain.Get());
+    present_target = vtable[SWAP_CHAIN_VTABLE_PRESENT];
+    resize_buffers_target = vtable[SWAP_CHAIN_VTABLE_RESIZE_BUFFERS];
+    return nullptr;
+}
+
 } // namespace
 
 Dx11Hook& Dx11Hook::instance() noexcept {
@@ -248,75 +348,12 @@ void Dx11Hook::mark_game_exiting() noexcept {
 bool Dx11Hook::install() {
     if (m_installed.load()) return true;
 
-    WNDCLASSEXW wc{};
-    wc.cbSize = sizeof(WNDCLASSEXW);
-    wc.style = CS_HREDRAW | CS_VREDRAW;
-    wc.lpfnWndProc = DefWindowProcW;
-    wc.hInstance = GetModuleHandleW(nullptr);
-    wc.lpszClassName = L"FFXIVHubDummyWindowClass";
-
-    RegisterClassExW(&wc);
-
-    HWND dummy_hwnd = CreateWindowExW(
-        0, wc.lpszClassName, L"", WS_OVERLAPPEDWINDOW,
-        0, 0, 100, 100, nullptr, nullptr, wc.hInstance, nullptr
-    );
-
-    if (!dummy_hwnd) {
-        UnregisterClassW(wc.lpszClassName, wc.hInstance);
-        m_last_error = "Failed to create dummy window";
+    void* present_target = nullptr;
+    void* resize_buffers_target = nullptr;
+    if (const char* error = find_swap_chain_targets(present_target, resize_buffers_target)) {
+        m_last_error = error;
         return false;
     }
-
-    D3D_FEATURE_LEVEL feature_level;
-    const D3D_FEATURE_LEVEL feature_levels[] = { D3D_FEATURE_LEVEL_11_0 };
-
-    DXGI_SWAP_CHAIN_DESC scd{};
-    scd.BufferCount = 1;
-    scd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-    scd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    scd.OutputWindow = dummy_hwnd;
-    scd.SampleDesc.Count = 1;
-    scd.Windowed = TRUE;
-    scd.BufferDesc.ScanlineOrdering = DXGI_MODE_SCANLINE_ORDER_UNSPECIFIED;
-    scd.BufferDesc.Scaling = DXGI_MODE_SCALING_UNSPECIFIED;
-    scd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
-
-    IDXGISwapChain* dummy_swap_chain = nullptr;
-    ID3D11Device* dummy_device = nullptr;
-    ID3D11DeviceContext* dummy_context = nullptr;
-
-    HRESULT hr = D3D11CreateDeviceAndSwapChain(
-        nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0,
-        feature_levels, 1, D3D11_SDK_VERSION, &scd,
-        &dummy_swap_chain, &dummy_device, &feature_level, &dummy_context
-    );
-
-    if (FAILED(hr) || !dummy_swap_chain) {
-        // Fallback to WARP software driver for headless environments / CI virtual machines
-        hr = D3D11CreateDeviceAndSwapChain(
-            nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0,
-            feature_levels, 1, D3D11_SDK_VERSION, &scd,
-            &dummy_swap_chain, &dummy_device, &feature_level, &dummy_context
-        );
-    }
-
-    if (FAILED(hr) || !dummy_swap_chain) {
-        DestroyWindow(dummy_hwnd);
-        UnregisterClassW(wc.lpszClassName, wc.hInstance);
-        m_last_error = "Failed to create dummy D3D11 device and swap chain";
-        return false;
-    }
-
-    void** vtable = *reinterpret_cast<void***>(dummy_swap_chain);
-    void* present_target = vtable[SWAP_CHAIN_VTABLE_PRESENT];
-    void* resize_buffers_target = vtable[SWAP_CHAIN_VTABLE_RESIZE_BUFFERS];
-
-    dummy_swap_chain->Release();
-    dummy_context->Release();
-    dummy_device->Release();
-    DestroyWindow(dummy_hwnd);
-    UnregisterClassW(wc.lpszClassName, wc.hInstance);
 
     if (!initialize_minhook()) {
         m_last_error = "MinHook initialization failed";
@@ -367,8 +404,7 @@ void Dx11Hook::uninstall() {
 
     OverlayHost::instance().shutdown();
 
-    if (g_context) { g_context->Release(); g_context = nullptr; }
-    if (g_device)  { g_device->Release();  g_device = nullptr; }
+    release_device_objects();
     g_initialized = false;
 }
 

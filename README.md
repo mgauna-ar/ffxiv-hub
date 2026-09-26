@@ -412,6 +412,8 @@ flowchart LR
   - Overlays restore every render target they touch.
   - Game memory is only read inside exception guards, so a bad read after a patch fails
     safely.
+  - The named pipe admits only your own Windows user, so another account or service on
+    the machine cannot send the payload commands.
 - **Portable core.** The analytics, timing math, IPC protocol and config are plain C++20
   with no Windows headers, so the whole test suite also runs on macOS and Linux.
 

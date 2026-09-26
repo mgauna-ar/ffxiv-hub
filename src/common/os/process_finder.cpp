@@ -1,4 +1,5 @@
 #include "common/os/process_finder.hpp"
+#include "common/os/unique_handle.hpp"
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -10,28 +11,24 @@
 namespace hub::os {
 
 bool ProcessFinder::enable_debug_privilege() {
-    HANDLE token = nullptr;
-    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &token)) {
+    HANDLE raw_token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &raw_token)) {
         return false;
     }
+    const UniqueHandle token(raw_token);
 
-    auto enable_priv = [&](LPCWSTR priv_name) -> bool {
-        LUID luid{};
-        if (!LookupPrivilegeValueW(nullptr, priv_name, &luid)) {
-            return false;
-        }
-        TOKEN_PRIVILEGES tp{};
-        tp.PrivilegeCount = 1;
-        tp.Privileges[0].Luid = luid;
-        tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
-        const BOOL res = AdjustTokenPrivileges(token, FALSE, &tp, sizeof(TOKEN_PRIVILEGES), nullptr, nullptr);
-        return res && (GetLastError() != ERROR_NOT_ALL_ASSIGNED);
-    };
-
-    const bool debug_ok = enable_priv(L"SeDebugPrivilege");
-    enable_priv(L"SeSecurityPrivilege");
-    CloseHandle(token);
-    return debug_ok;
+    // SeDebugPrivilege alone: it lets an elevated app open an elevated game.
+    // Nothing here reads or writes a SACL, so SeSecurityPrivilege is not taken.
+    LUID luid{};
+    if (!LookupPrivilegeValueW(nullptr, L"SeDebugPrivilege", &luid)) {
+        return false;
+    }
+    TOKEN_PRIVILEGES tp{};
+    tp.PrivilegeCount = 1;
+    tp.Privileges[0].Luid = luid;
+    tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+    const BOOL res = AdjustTokenPrivileges(token.get(), FALSE, &tp, sizeof(TOKEN_PRIVILEGES), nullptr, nullptr);
+    return res && (GetLastError() != ERROR_NOT_ALL_ASSIGNED);
 }
 
 namespace {
@@ -56,19 +53,18 @@ ProcessInfo open_game_process(DWORD pid, std::string_view process_name) {
 } // namespace
 
 std::optional<ProcessInfo> ProcessFinder::find_process(std::string_view process_name) {
-    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    const UniqueHandle snapshot(CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0));
     PROCESSENTRY32W entry{};
     entry.dwSize = sizeof(PROCESSENTRY32W);
 
     std::wstring target_name_w(process_name.begin(), process_name.end());
     std::optional<ProcessInfo> fallback_proc;
 
-    if (snapshot != INVALID_HANDLE_VALUE && Process32FirstW(snapshot, &entry)) {
+    if (snapshot && Process32FirstW(snapshot.get(), &entry)) {
         do {
             if (_wcsicmp(entry.szExeFile, target_name_w.c_str()) == 0) {
                 ProcessInfo info = open_game_process(entry.th32ProcessID, process_name);
                 if (info.handle != nullptr) {
-                    CloseHandle(snapshot);
                     return info;
                 }
 
@@ -76,11 +72,7 @@ std::optional<ProcessInfo> ProcessFinder::find_process(std::string_view process_
                     fallback_proc = info;
                 }
             }
-        } while (Process32NextW(snapshot, &entry));
-    }
-
-    if (snapshot != INVALID_HANDLE_VALUE) {
-        CloseHandle(snapshot);
+        } while (Process32NextW(snapshot.get(), &entry));
     }
 
     // Fallback: If not found in snapshot or couldn't open process with valid handle,

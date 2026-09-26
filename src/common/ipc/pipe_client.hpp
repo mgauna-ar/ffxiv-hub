@@ -2,6 +2,7 @@
 
 #include "common/ipc/protocol.hpp"
 #include "common/ipc/ring_buffer.hpp"
+#include "common/os/unique_handle.hpp"
 #include <atomic>
 #include <cstddef>
 #include <thread>
@@ -56,11 +57,11 @@ private:
     /// cleared by disconnect(), so cancellation - not a nulled pointer - is what
     /// ends the read.
     [[maybe_unused]] void* m_reader_handle{nullptr};
-    [[maybe_unused]] void* m_stop_event{nullptr};
+    hub::os::UniqueHandle m_stop_event;
     /// Per-thread OVERLAPPED events, so a blocked read/write can be cancelled at
     /// disconnect instead of having the handle closed out from under it.
-    [[maybe_unused]] void* m_read_event{nullptr};
-    [[maybe_unused]] void* m_write_event{nullptr};
+    hub::os::UniqueHandle m_read_event;
+    hub::os::UniqueHandle m_write_event;
     /// The reader thread's last Win32 error, for its disconnect log line.
     [[maybe_unused]] unsigned long m_last_read_error{0};
     std::mutex m_send_mutex;

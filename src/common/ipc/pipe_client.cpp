@@ -16,19 +16,15 @@ namespace hub::ipc {
 
 PipeClient::PipeClient(const char* pipe_name)
     : m_pipe_name(pipe_name ? pipe_name : DEFAULT_PIPE_NAME) {
-    m_stop_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    m_read_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    m_write_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    m_stop_event.reset(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+    m_read_event.reset(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+    m_write_event.reset(CreateEventW(nullptr, TRUE, FALSE, nullptr));
 }
 
+// The events close after this body, once disconnect() has joined the workers
+// waiting on them.
 PipeClient::~PipeClient() {
     disconnect();
-    for (void** ev : {&m_stop_event, &m_read_event, &m_write_event}) {
-        if (*ev) {
-            CloseHandle(static_cast<HANDLE>(*ev));
-            *ev = nullptr;
-        }
-    }
 }
 
 bool PipeClient::connect(uint32_t timeout_ms) {
@@ -94,7 +90,7 @@ void PipeClient::disconnect() {
 
     m_running.store(false);
     if (m_stop_event) {
-        SetEvent(static_cast<HANDLE>(m_stop_event));
+        SetEvent(m_stop_event.get());
     }
 
     // Cancel first, close after the workers are joined: closing a handle another
@@ -118,7 +114,7 @@ void PipeClient::disconnect() {
 
 void PipeClient::start_worker_threads() {
     m_running.store(true);
-    if (m_stop_event) ResetEvent(static_cast<HANDLE>(m_stop_event));
+    if (m_stop_event) ResetEvent(m_stop_event.get());
     m_reader_handle = m_pipe_handle.load();
     m_reader_thread = std::thread(&PipeClient::reader_thread_func, this);
     m_writer_thread = std::thread(&PipeClient::writer_thread_func, this);
@@ -134,7 +130,7 @@ bool PipeClient::write_raw(const uint8_t* data, size_t size) {
     size_t total = 0;
     while (total < size) {
         OVERLAPPED ov{};
-        ov.hEvent = static_cast<HANDLE>(m_write_event);
+        ov.hEvent = m_write_event.get();
         ResetEvent(ov.hEvent);
 
         DWORD written = 0;
@@ -142,7 +138,7 @@ bool PipeClient::write_raw(const uint8_t* data, size_t size) {
         if (!ok && GetLastError() == ERROR_IO_PENDING) {
             // Wait on the stop event too: a write issued after disconnect()'s
             // CancelIoEx would otherwise block on a peer that is not reading.
-            HANDLE wait_events[2] = { ov.hEvent, static_cast<HANDLE>(m_stop_event) };
+            HANDLE wait_events[2] = { ov.hEvent, m_stop_event.get() };
             if (WaitForMultipleObjects(2, wait_events, FALSE, INFINITE) != WAIT_OBJECT_0) {
                 CancelIoEx(h_pipe, &ov);
                 GetOverlappedResult(h_pipe, &ov, &written, TRUE); // ov lives on this stack
@@ -165,13 +161,13 @@ void PipeClient::set_command_handler(CommandHandler handler) {
 std::ptrdiff_t PipeClient::read_some(uint8_t* dst, size_t len) {
     auto h_pipe = static_cast<HANDLE>(m_reader_handle);
     OVERLAPPED ov{};
-    ov.hEvent = static_cast<HANDLE>(m_read_event);
+    ov.hEvent = m_read_event.get();
     ResetEvent(ov.hEvent);
 
     DWORD read = 0;
     BOOL ok = ReadFile(h_pipe, dst, static_cast<DWORD>(len), &read, &ov);
     if (!ok && GetLastError() == ERROR_IO_PENDING) {
-        HANDLE wait_events[2] = { ov.hEvent, static_cast<HANDLE>(m_stop_event) };
+        HANDLE wait_events[2] = { ov.hEvent, m_stop_event.get() };
         if (WaitForMultipleObjects(2, wait_events, FALSE, INFINITE) != WAIT_OBJECT_0) {
             CancelIoEx(h_pipe, &ov);
             // ov and dst must outlive the cancelled read.
