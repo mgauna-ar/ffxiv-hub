@@ -758,7 +758,7 @@ TEST_CASE(AppState, PluginMasterSwitchPersistsAndMirrors) {
     auto& cfg = config::ConfigManager::instance();
     cfg.save();
     cfg.load();
-    TEST_ASSERT(!cfg.root()["combat_meter"]["plugin_enabled"].as_bool(true));
+    TEST_ASSERT(!cfg.get("combat_meter", "plugin_enabled", true));
     TEST_ASSERT(!state.is_plugin_enabled(PluginId::CombatMeter));
 
     state.set_plugin_enabled(PluginId::CombatMeter, true);
@@ -782,9 +782,9 @@ TEST_CASE(AppState, ResetConfigRestoresDefaultsEverywhere) {
     TEST_ASSERT(state.initialize());
 
     state.set_plugin_enabled(PluginId::CombatMeter, false);
-    cfg.root()["hub"]["minimize_to_tray"] = config::JsonValue(false);
-    cfg.root()["combat_meter"]["show_col_crit"] = config::JsonValue(false);
-    cfg.root()["latency_mitigator"]["target_ping_ms"] = config::JsonValue(40.0);
+    cfg.set("hub", "minimize_to_tray", config::JsonValue(false));
+    cfg.set("combat_meter", "show_col_crit", config::JsonValue(false));
+    cfg.set("latency_mitigator", "target_ping_ms", config::JsonValue(40.0));
     TEST_ASSERT(cfg.save());
 
     state.reset_config();
@@ -796,7 +796,7 @@ TEST_CASE(AppState, ResetConfigRestoresDefaultsEverywhere) {
     config::ConfigManager reader;
     reader.set_custom_path_for_testing(tmp);
     TEST_ASSERT(reader.load());
-    auto& root = reader.root();
+    const auto root = reader.document();
     TEST_ASSERT(root["hub"]["minimize_to_tray"].as_bool(false));
     TEST_ASSERT(root["combat_meter"]["show_col_crit"].as_bool(false));
     TEST_ASSERT(root["combat_meter"]["plugin_enabled"].as_bool(false));
@@ -813,8 +813,8 @@ TEST_CASE(AppState, PullHistoryLimitComesFromTheConfig) {
     const auto tmp = std::filesystem::temp_directory_path() / "hub_pull_limit_test.json";
     std::filesystem::remove(tmp);
     cfg.set_custom_path_for_testing(tmp);
-    const int before = cfg.root()["combat_meter"]["pull_history_limit"].as_int(100);
-    cfg.root()["combat_meter"]["pull_history_limit"] = config::JsonValue(12);
+    const int before = cfg.get("combat_meter", "pull_history_limit", 100);
+    cfg.set("combat_meter", "pull_history_limit", config::JsonValue(12));
     TEST_ASSERT(cfg.save());
 
     app::AppState state;
@@ -856,6 +856,6 @@ TEST_CASE(AppState, PullHistoryLimitComesFromTheConfig) {
 
     state.shutdown();
     std::filesystem::remove(tmp);
-    cfg.root()["combat_meter"]["pull_history_limit"] = config::JsonValue(before);
+    cfg.set("combat_meter", "pull_history_limit", config::JsonValue(before));
     cfg.set_custom_path_for_testing({});
 }

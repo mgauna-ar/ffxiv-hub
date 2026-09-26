@@ -5,6 +5,7 @@
 #include "app/ui/widgets.hpp"
 #include "common/os/auto_start.hpp"
 #include "common/os/logger.hpp"
+#include <filesystem>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -18,7 +19,7 @@ constexpr const char* HUB = "hub";
 
 std::vector<std::string> read_recent_log_lines(size_t max_lines = 50) {
     std::vector<std::string> lines;
-    std::string path = os::Logger::log_file_path();
+    std::filesystem::path path = os::Logger::log_file_path();
     if (path.empty()) {
         path = os::Logger::default_log_path();
     }
@@ -85,14 +86,14 @@ void render_config_card(AppState& app_state) {
 
     const char* reload_label = ICON_REFRESH "  Reload from disk";
     if (button(ICON_SAVE "  Save now", ButtonKind::Secondary, ButtonSize::Medium)) {
-        app_state.config_manager().save();
+        cfg_save();
     }
     same_line_if_room(button_width(reload_label, ButtonSize::Medium));
     if (button(reload_label, ButtonKind::Secondary, ButtonSize::Medium)) {
         app_state.config_manager().load();
         // The payload holds its own copy and autosaves over hand edits, so it has
         // to be told as well.
-        app_state.send_reload_config();
+        app_state.send_command(PluginId::Core, CommandId::ReloadConfig);
     }
     ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
     if (button(ICON_FOLDER "  Open config directory", ButtonKind::Secondary, ButtonSize::Large)) {

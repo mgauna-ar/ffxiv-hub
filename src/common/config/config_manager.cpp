@@ -1,102 +1,61 @@
 #include "common/config/config_manager.hpp"
-#include "hub/plugin_registry.hpp"
+#include "common/os/logger.hpp"
+#include "common/os/paths.hpp"
 #include <fstream>
 #include <sstream>
-#include <cstdlib>
 #include <algorithm>
+#include <utility>
 
 namespace hub::config {
 
-JsonValue ConfigManager::default_document() {
-    // A plugin keeps its current value for a key missing from the file, so a
-    // reset only takes in-game if every key it reads is listed here.
-    JsonValue root{JsonValue::ObjectType{}};
-    root["hub"] = JsonValue::ObjectType{
-        {"start_with_windows", JsonValue(false)},
-        {"minimize_to_tray", JsonValue(true)},
-        {"show_notifications", JsonValue(true)},
-        {"refresh_interval_ms", JsonValue(500)}
-    };
-    // Overlay keys are the canonical set shared by every plugin - see
-    // hub::ui::serialize_overlay. A negative position means "never placed", so
-    // the overlay falls back to its own default.
-    root[plugins::COMBAT_METER.config_section] = JsonValue::ObjectType{
-        {"overlay_visible", JsonValue(true)},
-        {"overlay_x", JsonValue(-1.0f)},
-        {"overlay_y", JsonValue(-1.0f)},
-        {"overlay_width", JsonValue(800.0f)},
-        {"overlay_height", JsonValue(480.0f)},
-        {"overlay_opacity", JsonValue(0.88f)},
-        {"overlay_scale", JsonValue(1.0f)},
-        {"overlay_locked", JsonValue(false)},
-        {"overlay_click_through", JsonValue(false)},
-        {"overlay_hide_conditions", JsonValue(0)},
-        {"overlay_hide_after_combat_seconds", JsonValue(5.0f)},
-        {"party_only", JsonValue(false)},
-        {"hide_inactive", JsonValue(false)},
-        {"overlay_metric", JsonValue(0)},
-        {"dps_metric", JsonValue(0)},
-        // Only the app reads and writes these.
-        {"desktop_dps_metric", JsonValue(0)},
-        {"pull_history_limit", JsonValue(100)},
-        {"show_bars", JsonValue(true)},
-        {"refresh_interval_ms", JsonValue(500)},
-        {"show_col_share", JsonValue(true)},
-        {"show_col_crit", JsonValue(true)},
-        {"show_col_dh", JsonValue(true)},
-        {"show_col_cdh", JsonValue(true)},
-        {"track_vitals", JsonValue(true)}
-    };
-    root[plugins::LATENCY_MITIGATOR.config_section] = JsonValue::ObjectType{
-        {"enabled", JsonValue(true)},
-        {"dry_run", JsonValue(false)},
-        {"target_ping_ms", JsonValue(15.0f)},
-        {"min_animation_lock_ms", JsonValue(25.0f)},
-        {"max_animation_lock_ms", JsonValue(2500.0f)},
-        {"spike_multiplier", JsonValue(2.5f)},
-        {"rtt_sample_window", JsonValue(10)},
-        {"safety_margin_ms", JsonValue(0.0f)},
-        {"overlay_visible", JsonValue(true)},
-        {"overlay_x", JsonValue(20.0f)},
-        {"overlay_y", JsonValue(20.0f)},
-        {"overlay_width", JsonValue(120.0f)},
-        {"overlay_height", JsonValue(32.0f)},
-        {"overlay_opacity", JsonValue(0.90f)},
-        {"overlay_scale", JsonValue(1.0f)},
-        {"overlay_locked", JsonValue(false)},
-        {"overlay_click_through", JsonValue(false)},
-        {"overlay_hide_conditions", JsonValue(0)},
-        {"overlay_hide_after_combat_seconds", JsonValue(5.0f)},
-        {"overlay_mode", JsonValue(0)}
-    };
-    return root;
+namespace {
+
+/// Lays each section of `over` onto `base`: an object's keys one by one, anything
+/// else whole.
+void merge_document(JsonValue& base, const JsonValue& over) {
+    for (const auto& [section_key, section_val] : over.as_object()) {
+        auto& target = base[section_key];
+        if (section_val.is_object() && target.is_object()) {
+            for (const auto& [k, v] : section_val.as_object()) {
+                target[k] = v;
+            }
+        } else {
+            target = section_val;
+        }
+    }
 }
 
-ConfigManager::ConfigManager() : m_root(default_document()) {}
-
-void ConfigManager::reset_to_defaults() {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    m_root = default_document();
-}
+} // namespace
 
 std::filesystem::path ConfigManager::get_config_path() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return config_path_locked();
+}
+
+std::filesystem::path ConfigManager::config_path_locked() const {
     if (!m_custom_path.empty()) {
         return m_custom_path;
     }
+    const auto dir = os::app_data_dir();
+    return dir.empty() ? std::filesystem::path("config.json") : dir / "config.json";
+}
 
-#ifdef _WIN32
-    const char* appdata = std::getenv("APPDATA");
-    if (appdata && appdata[0] != '\0') {
-        return std::filesystem::path(appdata) / "ffxiv-hub" / "config.json";
-    }
-    return std::filesystem::path("config.json");
-#else
-    const char* home = std::getenv("HOME");
-    if (home && home[0] != '\0') {
-        return std::filesystem::path(home) / ".config" / "ffxiv-hub" / "config.json";
-    }
-    return std::filesystem::path("config.json");
-#endif
+void ConfigManager::set_defaults(JsonValue defaults) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_defaults = defaults.is_object() ? std::move(defaults) : JsonValue(JsonValue::ObjectType{});
+    JsonValue root = m_defaults;
+    merge_document(root, m_root);
+    m_root = std::move(root);
+}
+
+JsonValue ConfigManager::defaults() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_defaults;
+}
+
+void ConfigManager::reset_to_defaults() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_root = m_defaults;
 }
 
 std::optional<JsonValue> ConfigManager::read_disk_document(const std::filesystem::path& path) {
@@ -105,7 +64,7 @@ std::optional<JsonValue> ConfigManager::read_disk_document(const std::filesystem
         return std::nullopt;
     }
 
-    std::ifstream file(path);
+    std::ifstream file(path, std::ios::binary);
     if (!file.is_open()) {
         return std::nullopt;
     }
@@ -122,22 +81,11 @@ std::optional<JsonValue> ConfigManager::read_disk_document(const std::filesystem
 
 bool ConfigManager::load() {
     std::lock_guard<std::mutex> lock(m_mutex);
-    auto parsed = read_disk_document(get_config_path());
+    auto parsed = read_disk_document(config_path_locked());
     if (!parsed) {
         return false;
     }
-
-    // Merge parsed fields into m_root
-    for (const auto& [section_key, section_val] : parsed->as_object()) {
-        if (section_val.is_object() && m_root.contains(section_key)) {
-            for (const auto& [k, v] : section_val.as_object()) {
-                m_root[section_key][k] = v;
-            }
-        } else {
-            m_root[section_key] = section_val;
-        }
-    }
-
+    merge_document(m_root, *parsed);
     return true;
 }
 
@@ -147,70 +95,135 @@ void ConfigManager::set_owned_sections(std::vector<std::string> sections) {
 }
 
 bool ConfigManager::save() {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    const auto path = get_config_path();
+    std::filesystem::path path;
+    std::string error;
+    bool was_failing = false;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        path = config_path_locked();
 
-    if (m_owned_sections.empty()) {
-        return write_atomic(path, m_root);
+        if (m_owned_sections.empty()) {
+            error = write_atomic(path, m_root);
+        } else {
+            // The other process may have written since this one loaded, so start
+            // from the file as it is now and lay only our own keys over it. A
+            // missing or unreadable file falls back to the whole document so it
+            // is still complete.
+            JsonValue doc = read_disk_document(path).value_or(m_root);
+            for (const auto& section : m_owned_sections) {
+                const JsonValue& ours = std::as_const(m_root)[section];
+                if (!ours.is_object()) {
+                    continue;
+                }
+                auto& target = doc[section];
+                if (!target.is_object()) {
+                    target = JsonValue(JsonValue::ObjectType{});
+                }
+                for (const auto& [k, v] : ours.as_object()) {
+                    target[k] = v;
+                }
+            }
+            error = write_atomic(path, doc);
+        }
+        was_failing = m_save_failing;
+        m_save_failing = !error.empty();
     }
 
-    // The other process may have written since this one loaded, so start from
-    // the file as it is now and lay only our own keys over it. A missing or
-    // unreadable file falls back to the whole document so it is still complete.
-    JsonValue doc = read_disk_document(path).value_or(m_root);
-    for (const auto& section : m_owned_sections) {
-        if (!m_root.contains(section) || !m_root[section].is_object()) {
-            continue;
-        }
-        if (!doc.contains(section) || !doc[section].is_object()) {
-            doc[section] = JsonValue(JsonValue::ObjectType{});
-        }
-        for (const auto& [k, v] : m_root[section].as_object()) {
-            doc[section][k] = v;
-        }
+    // Outside the lock: the logger reads the config path to find its own file.
+    // Once per failure spell, since the payload retries every few seconds.
+    if (!error.empty() && !was_failing) {
+        os::Logger::error("Could not save " + os::to_utf8(path) + ": " + error);
+    } else if (error.empty() && was_failing) {
+        os::Logger::info("Saved " + os::to_utf8(path) + " again.");
     }
-    return write_atomic(path, doc);
+    return error.empty();
 }
 
-bool ConfigManager::write_atomic(const std::filesystem::path& path, const JsonValue& doc) {
-    try {
-        const auto dir = path.parent_path();
-        if (!dir.empty() && !std::filesystem::exists(dir)) {
-            std::filesystem::create_directories(dir);
-        }
+std::string ConfigManager::write_atomic(const std::filesystem::path& path, const JsonValue& doc) {
+    // Write to a sibling temp file and rename over the target. The payload
+    // and the desktop app both write this document, so a truncating write
+    // can be observed half-finished by the other process.
+    auto tmp = path;
+    tmp += ".tmp";
+    std::error_code ec;
 
-        // Write to a sibling temp file and rename over the target. The payload
-        // and the desktop app both write this document, so a truncating write
-        // can be observed half-finished by the other process.
-        auto tmp = path;
-        tmp += ".tmp";
-
-        {
-            std::ofstream file(tmp, std::ios::binary | std::ios::trunc);
-            if (!file.is_open()) {
-                return false;
-            }
-
-            file << doc.stringify(2);
-            file.flush();
-            file.close();
-
-            if (!file.good()) {
-                std::error_code ec;
-                std::filesystem::remove(tmp, ec);
-                return false;
-            }
-        }
-
-        std::filesystem::rename(tmp, path);
-        return true;
-    } catch (...) {
-        std::error_code ec;
-        auto tmp = path;
-        tmp += ".tmp";
-        std::filesystem::remove(tmp, ec);
-        return false;
+    const auto dir = path.parent_path();
+    if (!dir.empty() && !std::filesystem::exists(dir, ec)) {
+        std::filesystem::create_directories(dir, ec);
+        if (ec) return "cannot create its folder (" + ec.message() + ")";
     }
+
+    {
+        std::ofstream file(tmp, std::ios::binary | std::ios::trunc);
+        if (!file.is_open()) {
+            return "cannot open " + os::to_utf8(tmp) + " for writing";
+        }
+        try {
+            file << doc.stringify(2);
+        } catch (...) {
+            // Out of memory: the payload's autosave has no handler above it.
+            file.setstate(std::ios::failbit);
+        }
+        file.flush();
+        file.close();
+        if (!file.good()) {
+            std::filesystem::remove(tmp, ec);
+            return "writing " + os::to_utf8(tmp) + " failed";
+        }
+    }
+
+    std::filesystem::rename(tmp, path, ec);
+    if (ec) {
+        const std::string reason = ec.message();
+        std::filesystem::remove(tmp, ec);
+        return "cannot replace it (" + reason + ")";
+    }
+    return {};
+}
+
+JsonValue ConfigManager::document() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_root;
+}
+
+JsonValue ConfigManager::section(std::string_view name) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    const JsonValue& sec = m_root[std::string(name)];
+    return sec.is_object() ? sec : JsonValue(JsonValue::ObjectType{});
+}
+
+std::optional<JsonValue> ConfigManager::value(std::string_view section, std::string_view key) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    const JsonValue& sec = m_root[std::string(section)];
+    const std::string k(key);
+    if (!sec.contains(k)) return std::nullopt;
+    return sec[k];
+}
+
+JsonValue& ConfigManager::section_locked(std::string_view name) {
+    auto& sec = m_root[std::string(name)];
+    if (!sec.is_object()) {
+        sec = JsonValue(JsonValue::ObjectType{});
+    }
+    return sec;
+}
+
+void ConfigManager::set(std::string_view section, std::string_view key, JsonValue value) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    section_locked(section)[std::string(key)] = std::move(value);
+}
+
+void ConfigManager::merge_section(std::string_view section, const JsonValue& keys) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    auto& sec = section_locked(section);
+    for (const auto& [k, v] : keys.as_object()) {
+        sec[k] = v;
+    }
+}
+
+void ConfigManager::set_section(std::string_view section, JsonValue object) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_root[std::string(section)] = object.is_object() ? std::move(object) : JsonValue(JsonValue::ObjectType{});
 }
 
 Rect ConfigManager::clamp_geometry_to_screen(

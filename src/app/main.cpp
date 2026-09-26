@@ -39,9 +39,7 @@ bool g_window_minimized = false;
 /// Read per close rather than cached: the setting can be toggled while running,
 /// and closing is rare enough that the lookup cost does not matter.
 bool close_to_tray_enabled() {
-    auto& root = hub::config::ConfigManager::instance().root();
-    if (!root.contains("hub") || !root["hub"].is_object()) return true;
-    return root["hub"]["minimize_to_tray"].as_bool(true);
+    return hub::config::ConfigManager::instance().get("hub", "minimize_to_tray", true);
 }
 bool g_running = true;
 
@@ -328,9 +326,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     tray_manager.set_on_toggle_auto_start([&tray_manager](bool enabled) {
         if (hub::os::AutoStart::set_enabled(enabled)) {
             tray_manager.set_auto_start(enabled);
-            auto& root = hub::config::ConfigManager::instance().root();
-            root["hub"]["start_with_windows"] = hub::config::JsonValue(enabled);
-            hub::config::ConfigManager::instance().save();
+            auto& cfg = hub::config::ConfigManager::instance();
+            cfg.set("hub", "start_with_windows", hub::config::JsonValue(enabled));
+            (void)cfg.save();
         } else {
             // The checkmark has to follow the registry, not the click, or it
             // silently claims a state that was never written.
@@ -350,7 +348,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     });
 
     tray_manager.set_notifications_enabled(
-        hub::config::ConfigManager::instance().root()["hub"]["show_notifications"].as_bool(true));
+        hub::config::ConfigManager::instance().get("hub", "show_notifications", true));
 
 #ifdef HAVE_IMGUI
     IMGUI_CHECKVERSION();

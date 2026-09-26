@@ -74,36 +74,39 @@ void render_overlay_settings(AppState& app_state, const OverlaySettingsOptions& 
     bool visible = cfg_get(section, "overlay_visible", defaults.visible);
     if (setting_toggle(opts.visible_label, "Draws the overlay on top of the game client.", &visible)) {
         cfg_store(section, "overlay_visible", visible);
-        app_state.send_overlay_command(plugin, CommandId::SetOverlayVisible, visible ? 1 : 0);
+        app_state.send_command(plugin, CommandId::SetOverlayVisible, visible ? 1 : 0);
     }
 
     bool locked = cfg_get(section, "overlay_locked", defaults.locked);
     if (setting_toggle(opts.locked_label, "Freezes the overlay so it cannot be dragged or resized.", &locked)) {
         cfg_store(section, "overlay_locked", locked);
-        app_state.send_overlay_command(plugin, CommandId::SetLocked, locked ? 1 : 0);
+        app_state.send_command(plugin, CommandId::SetLocked, locked ? 1 : 0);
     }
 
     bool click_through = cfg_get(section, "overlay_click_through", defaults.click_through);
     if (setting_toggle("Click-through mode", "Mouse input passes to the game.",&click_through)) {
         cfg_store(section, "overlay_click_through", click_through);
-        app_state.send_overlay_command(plugin, CommandId::SetClickThrough, click_through ? 1 : 0);
+        app_state.send_command(plugin, CommandId::SetClickThrough, click_through ? 1 : 0);
     }
 
     float opacity = cfg_get(section, "overlay_opacity", defaults.opacity);
     begin_setting_row(opts.opacity_label, "How solid the overlay panel reads over gameplay.");
+    // Sent every frame of a drag so the overlay previews it; saved once, on release.
     if (ImGui::SliderFloat("##overlay_opacity", &opacity, opts.min_opacity, opts.max_opacity, "%.2f")) {
-        cfg_store(section, "overlay_opacity", opacity);
-        app_state.send_overlay_command(plugin, CommandId::SetOpacity, 0, opacity);
+        cfg_set(section, "overlay_opacity", opacity);
+        app_state.send_command(plugin, CommandId::SetOpacity, 0, opacity);
     }
+    if (ImGui::IsItemDeactivatedAfterEdit()) cfg_save();
     end_setting_row();
 
     if (opts.show_scale) {
         float scale = cfg_get(section, "overlay_scale", defaults.scale);
         begin_setting_row(opts.scale_label, "Independent of the desktop window's DPI scale.");
         if (ImGui::SliderFloat("##overlay_scale", &scale, opts.min_scale, opts.max_scale, "%.2fx")) {
-            cfg_store(section, "overlay_scale", scale);
-            app_state.send_overlay_command(plugin, CommandId::SetScale, 0, scale);
+            cfg_set(section, "overlay_scale", scale);
+            app_state.send_command(plugin, CommandId::SetScale, 0, scale);
         }
+        if (ImGui::IsItemDeactivatedAfterEdit()) cfg_save();
         end_setting_row();
     }
 
@@ -132,9 +135,13 @@ void render_overlay_settings(AppState& app_state, const OverlaySettingsOptions& 
     if (!only_in_combat) ImGui::BeginDisabled();
     float hide_after = cfg_get(section, "overlay_hide_after_combat_seconds", defaults.hide_after_combat_s);
     begin_setting_row("Hide after combat", "Seconds the overlay stays up once combat ends, to read the result.");
+    // Nothing to preview, so the payload and the file both get the value on release.
     if (ImGui::SliderFloat("##hide_after_combat", &hide_after, 0.0f, 60.0f, "%.0f s")) {
-        cfg_store(section, "overlay_hide_after_combat_seconds", hide_after);
-        app_state.send_overlay_command(plugin, CommandId::SetHideAfterCombat, 0, hide_after);
+        cfg_set(section, "overlay_hide_after_combat_seconds", hide_after);
+    }
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        cfg_save();
+        app_state.send_command(plugin, CommandId::SetHideAfterCombat, 0, hide_after);
     }
     end_setting_row();
     if (!only_in_combat) ImGui::EndDisabled();
@@ -174,7 +181,7 @@ void render_overlay_settings(AppState& app_state, const OverlaySettingsOptions& 
 
     if (bits != original_bits) {
         cfg_store(section, "overlay_hide_conditions", static_cast<int>(bits));
-        app_state.send_overlay_command(plugin, CommandId::SetHideConditions, bits);
+        app_state.send_command(plugin, CommandId::SetHideConditions, bits);
     }
 }
 

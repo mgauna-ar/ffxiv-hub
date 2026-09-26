@@ -1,9 +1,11 @@
 #include "payload/command_dispatcher.hpp"
 #include "meter/combat_plugin.hpp"
 #include "meter/combat_overlay.hpp"
+#include "meter/combat_settings.hpp"
 #include "hub/plugin_registry.hpp"
 #include "mitigator/latency_plugin.hpp"
 #include "mitigator/latency_overlay.hpp"
+#include "mitigator/latency_settings.hpp"
 #include "common/config/config_manager.hpp"
 #include "common/ui/overlay_base.hpp"
 
@@ -16,9 +18,34 @@ namespace {
 void reload_config(meter::CombatPlugin* combat, mitigator::LatencyPlugin* latency) {
     auto& config = config::ConfigManager::instance();
     config.load();
-    if (combat) combat->deserialize_config(config.root()[plugins::COMBAT_METER.config_section]);
-    if (latency) latency->deserialize_config(config.root()[plugins::LATENCY_MITIGATOR.config_section]);
+    if (combat) combat->deserialize_config(config.section(plugins::COMBAT_METER.config_section));
+    if (latency) latency->deserialize_config(config.section(plugins::LATENCY_MITIGATOR.config_section));
 }
+
+} // namespace
+
+config::JsonValue plugin_config_defaults() {
+    config::JsonValue doc{config::JsonValue::ObjectType{}};
+    doc[plugins::COMBAT_METER.config_section] = meter::default_settings();
+    doc[plugins::LATENCY_MITIGATOR.config_section] = mitigator::default_settings();
+    return doc;
+}
+
+bool save_plugin_config(meter::CombatPlugin* combat, mitigator::LatencyPlugin* latency) {
+    auto& config = config::ConfigManager::instance();
+    config::JsonValue section;
+    if (combat) {
+        combat->serialize_config(section);
+        config.set_section(plugins::COMBAT_METER.config_section, std::move(section));
+    }
+    if (latency) {
+        latency->serialize_config(section);
+        config.set_section(plugins::LATENCY_MITIGATOR.config_section, std::move(section));
+    }
+    return config.save();
+}
+
+namespace {
 
 /// Handles the commands every overlay shares. Returns true when consumed, so a
 /// plugin's own switch only has to cover what is specific to it.

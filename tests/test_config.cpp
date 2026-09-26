@@ -6,8 +6,21 @@
 #include "meter/combat_plugin.hpp"
 #include "mitigator/latency_plugin.hpp"
 #include "hub/plugin_registry.hpp"
+#include "app/app_state.hpp"
+#include "common/config/key_table.hpp"
+#include "common/os/logger.hpp"
+#include "common/os/paths.hpp"
+#include "meter/combat_settings.hpp"
+#include "mitigator/latency_settings.hpp"
+#include "payload/command_dispatcher.hpp"
+#include <cfloat>
+#include <climits>
+#include <clocale>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <locale>
+#include <sstream>
 
 using namespace hub::config;
 
@@ -63,8 +76,9 @@ TEST_CASE(Config, JsonParseAndStringify) {
 }
 
 TEST_CASE(Config, ConfigManagerDefaults) {
-    auto& mgr = ConfigManager::instance();
-    auto& root = mgr.root();
+    ConfigManager mgr;
+    mgr.set_defaults(hub::app::AppState::default_config());
+    const auto root = mgr.document();
 
     TEST_ASSERT_TRUE(root.contains("hub"));
     TEST_ASSERT_TRUE(root.contains("combat_meter"));
@@ -140,22 +154,27 @@ TEST_CASE(Config, AppSaveDoesNotClobberMirroredGeometry) {
     std::filesystem::remove(tmp);
     cfg.set_custom_path_for_testing(tmp);
 
-    auto& root = cfg.root();
-    root["combat_meter"]["overlay_x"] = JsonValue(-1.0);
-    root["combat_meter"]["overlay_y"] = JsonValue(-1.0);
+    const float x_before = cfg.get("combat_meter", "overlay_x", -1.0f);
+    const float y_before = cfg.get("combat_meter", "overlay_y", -1.0f);
+    cfg.set("combat_meter", "overlay_x", JsonValue(-1.0));
+    cfg.set("combat_meter", "overlay_y", JsonValue(-1.0));
 
     // What the 1 Hz push from the payload delivers after an in-game drag.
-    hub::ui::store_overlay_geometry(root["combat_meter"], 1200.0f, 340.0f, 800.0f, 480.0f);
+    JsonValue geometry{JsonValue::ObjectType{}};
+    hub::ui::store_overlay_geometry(geometry, 1200.0f, 340.0f, 800.0f, 480.0f);
+    cfg.merge_section("combat_meter", geometry);
 
     TEST_ASSERT(cfg.save());
 
     // Wipe in memory, then read back what actually landed on disk.
-    root["combat_meter"]["overlay_x"] = JsonValue(-1.0);
+    cfg.set("combat_meter", "overlay_x", JsonValue(-1.0));
     TEST_ASSERT(cfg.load());
-    TEST_ASSERT_NEAR(cfg.root()["combat_meter"]["overlay_x"].as_float(), 1200.0f, 0.01f);
-    TEST_ASSERT_NEAR(cfg.root()["combat_meter"]["overlay_y"].as_float(), 340.0f, 0.01f);
-    TEST_ASSERT_NEAR(cfg.root()["combat_meter"]["overlay_width"].as_float(), 800.0f, 0.01f);
-    TEST_ASSERT_NEAR(cfg.root()["combat_meter"]["overlay_height"].as_float(), 480.0f, 0.01f);
+    TEST_ASSERT_NEAR(cfg.get("combat_meter", "overlay_x", 0.0f), 1200.0f, 0.01f);
+    TEST_ASSERT_NEAR(cfg.get("combat_meter", "overlay_y", 0.0f), 340.0f, 0.01f);
+    TEST_ASSERT_NEAR(cfg.get("combat_meter", "overlay_width", 0.0f), 800.0f, 0.01f);
+    TEST_ASSERT_NEAR(cfg.get("combat_meter", "overlay_height", 0.0f), 480.0f, 0.01f);
+    cfg.set("combat_meter", "overlay_x", JsonValue(x_before));
+    cfg.set("combat_meter", "overlay_y", JsonValue(y_before));
 
     std::filesystem::remove(tmp);
     cfg.set_custom_path_for_testing({});
@@ -191,9 +210,9 @@ TEST_CASE(Config, SaveIsAtomicOnExistingFile) {
     std::filesystem::remove(sidecar);
     cfg.set_custom_path_for_testing(tmp);
 
-    cfg.root()["hub"]["marker"] = JsonValue("first");
+    cfg.set("hub", "marker", JsonValue("first"));
     TEST_ASSERT(cfg.save());
-    cfg.root()["hub"]["marker"] = JsonValue("second");
+    cfg.set("hub", "marker", JsonValue("second"));
     TEST_ASSERT(cfg.save());
 
     TEST_ASSERT(std::filesystem::exists(tmp));
@@ -215,6 +234,7 @@ TEST_CASE(Config, SaveIsAtomicOnExistingFile) {
 
     std::filesystem::remove(tmp);
     cfg.set_custom_path_for_testing({});
+    cfg.set_section("hub", cfg.defaults()["hub"]);
 }
 
 TEST_CASE(Config, PayloadSaveKeepsAppOnlySections) {
@@ -229,6 +249,8 @@ TEST_CASE(Config, PayloadSaveKeepsAppOnlySections) {
 
     ConfigManager app;
     ConfigManager payload;
+    app.set_defaults(hub::app::AppState::default_config());
+    payload.set_defaults(hub::payload::plugin_config_defaults());
     app.set_custom_path_for_testing(tmp);
     payload.set_custom_path_for_testing(tmp);
 
@@ -237,19 +259,19 @@ TEST_CASE(Config, PayloadSaveKeepsAppOnlySections) {
     TEST_ASSERT(payload.load());
 
     // The app writes behind the payload's back.
-    app.root()["hub"]["minimize_to_tray"] = JsonValue(false);
-    app.root()["hub"]["test_marker"] = JsonValue("kept");
-    app.root()["combat_meter"]["app_only_key"] = JsonValue(true);
+    app.set("hub", "minimize_to_tray", JsonValue(false));
+    app.set("hub", "test_marker", JsonValue("kept"));
+    app.set("combat_meter", "app_only_key", JsonValue(true));
     TEST_ASSERT(app.save());
 
     // The payload autosaves its live overlay state from a stale snapshot.
-    payload.root()["combat_meter"]["overlay_x"] = JsonValue(1200.0);
+    payload.set("combat_meter", "overlay_x", JsonValue(1200.0));
     TEST_ASSERT(payload.save());
 
     ConfigManager reader;
     reader.set_custom_path_for_testing(tmp);
     TEST_ASSERT(reader.load());
-    auto& root = reader.root();
+    const auto root = reader.document();
     TEST_ASSERT_FALSE(root["hub"]["minimize_to_tray"].as_bool(true));
     TEST_ASSERT_EQ(root["hub"]["test_marker"].as_string(), "kept");
     TEST_ASSERT_TRUE(root["combat_meter"]["app_only_key"].as_bool(false));
@@ -270,28 +292,33 @@ TEST_CASE(Config, PayloadAutosaveKeepsTheDesktopRate) {
 
     ConfigManager app;
     ConfigManager payload;
+    app.set_defaults(hub::app::AppState::default_config());
+    payload.set_defaults(hub::payload::plugin_config_defaults());
     app.set_custom_path_for_testing(tmp);
     payload.set_custom_path_for_testing(tmp);
 
-    app.root()["combat_meter"]["desktop_dps_metric"] = JsonValue(1);
+    app.set("combat_meter", "desktop_dps_metric", JsonValue(1));
     TEST_ASSERT(app.save());
     payload.set_owned_sections(hub::plugins::config_sections());
     TEST_ASSERT(payload.load());
 
-    app.root()["combat_meter"]["desktop_dps_metric"] = JsonValue(3);
+    app.set("combat_meter", "desktop_dps_metric", JsonValue(3));
     TEST_ASSERT(app.save());
 
-    // What the payload's autosave does.
+    // What the payload's autosave does (hub::payload::save_plugin_config).
     hub::meter::CombatPlugin combat;
     combat.initialize();
-    combat.serialize_config(payload.root()["combat_meter"]);
+    combat.deserialize_config(payload.section("combat_meter"));
+    JsonValue section;
+    combat.serialize_config(section);
+    payload.set_section("combat_meter", section);
     TEST_ASSERT(payload.save());
 
     ConfigManager reader;
     reader.set_custom_path_for_testing(tmp);
     TEST_ASSERT(reader.load());
-    TEST_ASSERT_EQ(reader.root()["combat_meter"]["desktop_dps_metric"].as_int(0), 3);
-    TEST_ASSERT(reader.root()["combat_meter"].contains("plugin_enabled"));
+    TEST_ASSERT_EQ(reader.get("combat_meter", "desktop_dps_metric", 0), 3);
+    TEST_ASSERT(reader.value("combat_meter", "plugin_enabled").has_value());
 
     std::filesystem::remove(tmp);
 }
@@ -300,28 +327,44 @@ TEST_CASE(Config, ResetToDefaultsDiscardsEveryChange) {
     // "Reset everything" used to delete the file and call load(), which returns
     // early with no file and left every in-memory value as it was.
     ConfigManager cfg;
-    cfg.root()["hub"]["minimize_to_tray"] = JsonValue(false);
-    cfg.root()["combat_meter"]["show_col_crit"] = JsonValue(false);
-    cfg.root()["latency_mitigator"]["target_ping_ms"] = JsonValue(40.0);
-    cfg.root()["stray_section"] = JsonValue(JsonValue::ObjectType{});
+    cfg.set_defaults(hub::app::AppState::default_config());
+    cfg.set("hub", "minimize_to_tray", JsonValue(false));
+    cfg.set("combat_meter", "show_col_crit", JsonValue(false));
+    cfg.set("latency_mitigator", "target_ping_ms", JsonValue(40.0));
+    cfg.set_section("stray_section", JsonValue(JsonValue::ObjectType{}));
 
     cfg.reset_to_defaults();
-    TEST_ASSERT_EQ(cfg.root().stringify(2), ConfigManager::default_document().stringify(2));
+    TEST_ASSERT_EQ(cfg.document().stringify(2), hub::app::AppState::default_config().stringify(2));
 }
 
 namespace {
 
 // A plugin keeps its current value for any key absent from the file, so a key
-// missing from the defaults survives a reset in-game.
+// missing from the defaults survives a reset in-game. Every key a fresh plugin
+// serializes but its master switch must be in the app's defaults and the
+// payload's, at the value the plugin starts with.
 void assert_defaults_cover(const JsonValue& serialized, const char* section) {
-    const auto defaults = ConfigManager::default_document();
+    const auto app_defaults = hub::app::AppState::default_config()[section];
+    const auto payload_defaults = hub::payload::plugin_config_defaults()[section];
     for (const auto& [key, value] : serialized.as_object()) {
-        (void)value;
-        if (key == "plugin_enabled") continue;
-        if (!defaults[section].contains(key)) {
-            TEST_ASSERT_EQ(std::string(section) + "." + key, std::string("listed in default_document()"));
+        if (key == hub::plugins::MASTER_SWITCH_KEY) continue;
+        for (const JsonValue* defaults : {&app_defaults, &payload_defaults}) {
+            if (!defaults->contains(key)) {
+                TEST_ASSERT_EQ(std::string(section) + "." + key, std::string("listed in the defaults"));
+                continue;
+            }
+            TEST_ASSERT_EQ(std::string(section) + "." + key + "=" + (*defaults)[key].stringify(0),
+                           std::string(section) + "." + key + "=" + value.stringify(0));
         }
     }
+    // The payload's defaults hold nothing the plugin does not write.
+    for (const auto& [key, value] : payload_defaults.as_object()) {
+        (void)value;
+        TEST_ASSERT(serialized.contains(key));
+    }
+    // A default master switch would shadow the combat meter's legacy "enabled".
+    TEST_ASSERT_FALSE(app_defaults.contains(hub::plugins::MASTER_SWITCH_KEY));
+    TEST_ASSERT_FALSE(payload_defaults.contains(hub::plugins::MASTER_SWITCH_KEY));
 }
 
 } // namespace
@@ -332,6 +375,8 @@ TEST_CASE(Config, DefaultsCoverEveryCombatMeterKey) {
     JsonValue out{JsonValue::ObjectType{}};
     plugin.serialize_config(out);
     assert_defaults_cover(out, "combat_meter");
+    // Nor the legacy key, which the file alone may carry.
+    TEST_ASSERT_FALSE(hub::app::AppState::default_config()["combat_meter"].contains(hub::meter::LEGACY_ENABLED_KEY));
 }
 
 TEST_CASE(Config, DefaultsCoverEveryLatencyMitigatorKey) {
@@ -340,6 +385,237 @@ TEST_CASE(Config, DefaultsCoverEveryLatencyMitigatorKey) {
     JsonValue out{JsonValue::ObjectType{}};
     plugin.serialize_config(out);
     assert_defaults_cover(out, "latency_mitigator");
+}
+
+TEST_CASE(Config, DefaultsKeepTheAppOnlyMeterKeys) {
+    // The payload never writes these, so only the app's defaults carry them.
+    const auto app = hub::app::AppState::default_config()["combat_meter"];
+    TEST_ASSERT_EQ(app[hub::meter::DESKTOP_DPS_METRIC_KEY].as_int(-1), 0);
+    TEST_ASSERT_EQ(app[hub::meter::PULL_HISTORY_LIMIT_KEY].as_int(-1), 100);
+    const auto payload = hub::payload::plugin_config_defaults()["combat_meter"];
+    TEST_ASSERT_FALSE(payload.contains(hub::meter::DESKTOP_DPS_METRIC_KEY));
+    TEST_ASSERT_FALSE(payload.contains(hub::meter::PULL_HISTORY_LIMIT_KEY));
+}
+
+TEST_CASE(Config, EveryDefaultReachesThePlugin) {
+    // The table reads what it writes: a plugin loaded from altered defaults
+    // serializes them back, key for key.
+    JsonValue meter = hub::meter::default_settings();
+    meter["party_only"] = JsonValue(true);
+    meter["refresh_interval_ms"] = JsonValue(250);
+    meter["dps_metric"] = JsonValue(2);
+    meter["overlay_opacity"] = JsonValue(0.5);
+    hub::meter::CombatPlugin combat;
+    combat.initialize();
+    combat.deserialize_config(meter);
+    JsonValue out;
+    combat.serialize_config(out);
+    for (const auto& [key, value] : meter.as_object()) {
+        TEST_ASSERT_EQ(key + "=" + out[key].stringify(0), key + "=" + value.stringify(0));
+    }
+
+    JsonValue latency = hub::mitigator::default_settings();
+    latency["target_ping_ms"] = JsonValue(22.5);
+    latency["rtt_sample_window"] = JsonValue(20);
+    latency["overlay_mode"] = JsonValue(2);
+    hub::mitigator::LatencyPlugin mitigator;
+    mitigator.initialize();
+    mitigator.deserialize_config(latency);
+    mitigator.serialize_config(out);
+    for (const auto& [key, value] : latency.as_object()) {
+        TEST_ASSERT_EQ(key + "=" + out[key].stringify(0), key + "=" + value.stringify(0));
+    }
+}
+
+TEST_CASE(Config, KeyTableClampsAndIgnoresWrongTypes) {
+    struct Settings {
+        uint32_t bits{7};
+        int count{3};
+        float ratio{0.5f};
+        bool flag{true};
+    };
+    constexpr hub::config::ConfigKey<Settings> keys[] = {
+        hub::config::field<Settings, &Settings::bits>("bits"),
+        hub::config::field<Settings, &Settings::count>("count"),
+        hub::config::field<Settings, &Settings::ratio>("ratio"),
+        hub::config::field<Settings, &Settings::flag>("flag"),
+    };
+
+    JsonValue section{JsonValue::ObjectType{}};
+    section["bits"] = JsonValue(-5);
+    section["count"] = JsonValue(1e20);
+    section["ratio"] = JsonValue(1e300);
+    section["flag"] = JsonValue("yes");
+    Settings s;
+    hub::config::read_keys<Settings>(keys, section, s);
+    TEST_ASSERT_EQ(s.bits, 0u);
+    TEST_ASSERT_EQ(s.count, INT_MAX);
+    TEST_ASSERT_EQ(s.ratio, FLT_MAX);
+    TEST_ASSERT_TRUE(s.flag);
+
+    // An absent key keeps its value; a written one round-trips.
+    Settings t;
+    hub::config::read_keys<Settings>(keys, JsonValue(JsonValue::ObjectType{}), t);
+    TEST_ASSERT_EQ(t.bits, 7u);
+    JsonValue written{JsonValue::ObjectType{}};
+    hub::config::write_keys<Settings>(keys, Settings{42, -2, 0.25f, false}, written);
+    hub::config::read_keys<Settings>(keys, written, t);
+    TEST_ASSERT_EQ(t.bits, 42u);
+    TEST_ASSERT_EQ(t.count, -2);
+    TEST_ASSERT_NEAR(t.ratio, 0.25f, 0.0001f);
+    TEST_ASSERT_FALSE(t.flag);
+}
+
+TEST_CASE(Config, ReadsNeverInsert) {
+    // A read through the old mutable root() created every section and key it
+    // looked up, so code that only read still changed what the next save wrote.
+    ConfigManager cfg;
+    cfg.set("hub", "minimize_to_tray", JsonValue(true));
+    const std::string before = cfg.document().stringify(2);
+
+    TEST_ASSERT_FALSE(cfg.value("no_such_section", "key").has_value());
+    TEST_ASSERT_FALSE(cfg.value("hub", "no_such_key").has_value());
+    TEST_ASSERT_EQ(cfg.get("hub", "no_such_key", 7), 7);
+    TEST_ASSERT_TRUE(cfg.section("no_such_section").is_object());
+    TEST_ASSERT_TRUE(cfg.section("no_such_section").as_object().empty());
+    TEST_ASSERT_EQ(cfg.document().stringify(2), before);
+}
+
+TEST_CASE(Config, SetDefaultsKeepsWhatIsAlreadyInMemory) {
+    ConfigManager cfg;
+    cfg.set("hub", "minimize_to_tray", JsonValue(false));
+    cfg.set_defaults(hub::app::AppState::default_config());
+    TEST_ASSERT_FALSE(cfg.get("hub", "minimize_to_tray", true));
+    TEST_ASSERT_TRUE(cfg.get("hub", "show_notifications", false));
+    cfg.reset_to_defaults();
+    TEST_ASSERT_TRUE(cfg.get("hub", "minimize_to_tray", false));
+}
+
+TEST_CASE(Config, JsonNumbersIgnoreTheGlobalLocale) {
+    // The payload runs inside the game process, whose locale it does not choose.
+    // A C++ global locale with a comma decimal point and digit grouping:
+    struct CommaNumpunct : std::numpunct<char> {
+        char do_decimal_point() const override { return ','; }
+        char do_thousands_sep() const override { return '.'; }
+        std::string do_grouping() const override { return "\3"; }
+    };
+    const std::locale previous = std::locale::global(std::locale(std::locale::classic(), new CommaNumpunct));
+
+    JsonValue doc{JsonValue::ObjectType{}};
+    doc["big"] = JsonValue(1234567);
+    doc["ratio"] = JsonValue(0.5);
+    const std::string text = doc.stringify(0);
+    auto parsed = JsonValue::parse(R"({"ratio": 25.5, "big": 1234567})");
+    std::locale::global(previous);
+
+    TEST_ASSERT(text.find("1234567") != std::string::npos);
+    TEST_ASSERT(text.find("0.5") != std::string::npos);
+    TEST_ASSERT(parsed.has_value());
+    TEST_ASSERT_NEAR((*parsed)["ratio"].as_double(), 25.5, 1e-9);
+    TEST_ASSERT_EQ((*parsed)["big"].as_int(), 1234567);
+
+    // And the C locale, which std::stod followed, where the host has one to set.
+    const std::string c_before = std::setlocale(LC_NUMERIC, nullptr);
+    for (const char* name : {"de_DE.UTF-8", "de_DE.utf8", "fr_FR.UTF-8", "German_Germany.1252"}) {
+        if (std::setlocale(LC_NUMERIC, name) == nullptr) continue;
+        auto in_c_locale = JsonValue::parse(R"({"ratio": 25.5})");
+        const std::string printed = JsonValue(0.25).stringify(0);
+        std::setlocale(LC_NUMERIC, c_before.c_str());
+        TEST_ASSERT(in_c_locale.has_value());
+        TEST_ASSERT_NEAR((*in_c_locale)["ratio"].as_double(), 25.5, 1e-9);
+        TEST_ASSERT(printed.find("0.25") != std::string::npos);
+        break;
+    }
+    std::setlocale(LC_NUMERIC, c_before.c_str());
+}
+
+TEST_CASE(Config, JsonNumberConversionsClamp) {
+    // A hand-edited config can hold any number; converting one outside int's or
+    // float's range is undefined behaviour.
+    TEST_ASSERT_EQ(JsonValue(1e20).as_int(), INT_MAX);
+    TEST_ASSERT_EQ(JsonValue(-1e20).as_int(), INT_MIN);
+    TEST_ASSERT_EQ(JsonValue(-7.9).as_int(), -7);
+    TEST_ASSERT_EQ(JsonValue(std::nan("")).as_int(42), 42);
+    TEST_ASSERT_EQ(JsonValue(1e300).as_float(), FLT_MAX);
+    TEST_ASSERT_EQ(JsonValue(-1e300).as_float(), -FLT_MAX);
+    TEST_ASSERT_NEAR(JsonValue(std::nan("")).as_float(1.5f), 1.5f, 0.0f);
+
+    auto parsed = JsonValue::parse(R"({"huge": 1e20, "neg": -3000000000})");
+    TEST_ASSERT(parsed.has_value());
+    TEST_ASSERT_EQ((*parsed)["huge"].as_int(), INT_MAX);
+    TEST_ASSERT_EQ((*parsed)["neg"].as_int(), INT_MIN);
+
+    // Beyond double, as std::stod rejected it.
+    TEST_ASSERT_FALSE(JsonValue::parse(R"({"x": 1e999})").has_value());
+    TEST_ASSERT_FALSE(JsonValue::parse(R"({"x": -})").has_value());
+}
+
+TEST_CASE(Config, NonFiniteNumbersStringifyAsNull) {
+    // "nan" would make the whole file unreadable on the next load.
+    JsonValue doc{JsonValue::ObjectType{}};
+    doc["x"] = JsonValue(std::nan(""));
+    auto parsed = JsonValue::parse(doc.stringify(2));
+    TEST_ASSERT(parsed.has_value());
+    TEST_ASSERT_TRUE((*parsed)["x"].is_null());
+}
+
+TEST_CASE(Config, SaveFailureIsLoggedOncePerSpell) {
+    const auto dir = std::filesystem::temp_directory_path() / "hub_save_log_test";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    const auto log = dir / "test.log";
+    const auto blocker = dir / "blocker";
+    { std::ofstream touch(blocker); touch << "not a directory"; }
+
+    TEST_ASSERT_TRUE(hub::os::Logger::init(log, false));
+    ConfigManager cfg;
+    cfg.set_custom_path_for_testing(blocker / "config.json");
+    TEST_ASSERT_FALSE(cfg.save());
+    TEST_ASSERT_FALSE(cfg.save());
+    cfg.set_custom_path_for_testing(dir / "config.json");
+    TEST_ASSERT_TRUE(cfg.save());
+    hub::os::Logger::shutdown();
+
+    std::string contents;
+    {
+        std::ifstream in(log);
+        std::stringstream buf;
+        buf << in.rdbuf();
+        contents = buf.str();
+    }
+    size_t failures = 0;
+    for (size_t at = contents.find("Could not save"); at != std::string::npos;
+         at = contents.find("Could not save", at + 1)) {
+        ++failures;
+    }
+    TEST_ASSERT_EQ(failures, 1u);
+    TEST_ASSERT(contents.find("again") != std::string::npos);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE(Config, PathsOutsideAsciiSurvive) {
+    // Widening a path byte by byte corrupted any user folder outside ASCII.
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / std::filesystem::path(u8"hub_usu\u00e1rio_\u65e5\u672c");
+    std::filesystem::remove_all(dir);
+    TEST_ASSERT_EQ(hub::os::to_utf8(dir.filename()), std::string("hub_usu\xc3\xa1rio_\xe6\x97\xa5\xe6\x9c\xac"));
+
+    ConfigManager cfg;
+    cfg.set_custom_path_for_testing(dir / "config.json");
+    cfg.set("hub", "marker", JsonValue("kept"));
+    TEST_ASSERT_TRUE(cfg.save());
+    ConfigManager reader;
+    reader.set_custom_path_for_testing(dir / "config.json");
+    TEST_ASSERT_TRUE(reader.load());
+    TEST_ASSERT_EQ(reader.get("hub", "marker", std::string()), std::string("kept"));
+
+    TEST_ASSERT_TRUE(hub::os::Logger::init(dir / "hub.log", false));
+    hub::os::Logger::shutdown();
+    TEST_ASSERT(std::filesystem::exists(dir / "hub.log"));
+    TEST_ASSERT_EQ(hub::os::Logger::previous_log_path(dir / "hub.log"), dir / "hub.prev.log");
+
+    std::filesystem::remove_all(dir);
 }
 
 TEST_CASE(Config, SaveReportsFailureInsteadOfClaimingSuccess) {

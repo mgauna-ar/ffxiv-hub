@@ -6,6 +6,9 @@
 #include "common/os/logger.hpp"
 #include "common/os/auto_start.hpp"
 #include "hub/plugin_registry.hpp"
+#include "common/os/paths.hpp"
+#include "meter/combat_settings.hpp"
+#include "mitigator/latency_settings.hpp"
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
@@ -55,8 +58,31 @@ AppState::~AppState() {
     shutdown();
 }
 
+config::JsonValue AppState::default_config() {
+    config::JsonValue doc{config::JsonValue::ObjectType{}};
+    doc["hub"] = config::JsonValue::ObjectType{
+        {"start_with_windows", config::JsonValue(false)},
+        {"minimize_to_tray", config::JsonValue(true)},
+        {"show_notifications", config::JsonValue(true)},
+        {"refresh_interval_ms", config::JsonValue(500)}
+    };
+    // Each plugin's keys come from its own table. A plugin keeps its current value
+    // for a key missing from the file, so a reset only takes in-game because
+    // every key it reads is here.
+    auto meter = meter::default_settings();
+    const auto desktop_only = meter::desktop_default_settings();
+    for (const auto& [key, value] : desktop_only.as_object()) {
+        meter[key] = value;
+    }
+    doc[plugins::COMBAT_METER.config_section] = std::move(meter);
+    doc[plugins::LATENCY_MITIGATOR.config_section] = mitigator::default_settings();
+    return doc;
+}
+
 bool AppState::initialize() {
-    config::ConfigManager::instance().load();
+    auto& cfg = config::ConfigManager::instance();
+    cfg.set_defaults(default_config());
+    cfg.load();
     apply_config_to_mirror_engine();
     // Mirror the persisted master switches into the plugin list so the sidebar
     // and dashboard agree with what the payload will read off disk.
@@ -77,14 +103,12 @@ const char* AppState::plugin_config_section(PluginId id) noexcept {
 bool AppState::is_plugin_enabled(PluginId id) const noexcept {
     const char* section = plugin_config_section(id);
     if (section == nullptr) return true;
-    const auto& root = config::ConfigManager::instance().root();
-    if (!root.contains(section) || !root[section].is_object()) return true;
-    const auto& sec = root[section];
+    const auto& cfg = config::ConfigManager::instance();
     // "enabled" is the combat meter's original key, kept so an existing config
     // that switched it off still reads as off.
-    if (sec.contains("plugin_enabled")) return sec["plugin_enabled"].as_bool(true);
-    if (id == PluginId::CombatMeter && sec.contains("enabled")) {
-        return sec["enabled"].as_bool(true);
+    if (const auto on = cfg.value(section, plugins::MASTER_SWITCH_KEY)) return on->as_bool(true);
+    if (id == PluginId::CombatMeter) {
+        return cfg.get(section, meter::LEGACY_ENABLED_KEY, true);
     }
     return true;
 }
@@ -93,31 +117,28 @@ void AppState::set_plugin_enabled(PluginId id, bool enabled) {
     const char* section = plugin_config_section(id);
     if (section == nullptr) return;
 
-    auto& root = config::ConfigManager::instance().root();
-    if (!root.contains(section) || !root[section].is_object()) {
-        root[section] = config::JsonValue(config::JsonValue::ObjectType{});
-    }
-    root[section]["plugin_enabled"] = config::JsonValue(enabled);
+    auto& cfg = config::ConfigManager::instance();
+    cfg.set(section, plugins::MASTER_SWITCH_KEY, config::JsonValue(enabled));
     if (id == PluginId::CombatMeter) {
         // The payload still honours the legacy key, so leaving it behind would
         // switch the plugin back off on the next load.
-        root[section]["enabled"] = config::JsonValue(enabled);
+        cfg.set(section, meter::LEGACY_ENABLED_KEY, config::JsonValue(enabled));
     }
-    config::ConfigManager::instance().save();
+    cfg.save();
 
     for (auto& plugin : m_plugins) {
         if (plugin.id == id) plugin.active = enabled;
     }
 
-    m_pipe_server.send_command(id, CommandId::SetPluginEnabled, enabled ? 1u : 0u);
+    send_command(id, CommandId::SetPluginEnabled, enabled ? 1u : 0u);
 }
 
 void AppState::apply_config_to_mirror_engine() {
-    const auto& meter_cfg = config::ConfigManager::instance().root()[plugins::COMBAT_METER.config_section];
     // Only this engine keeps pulls to browse, so the limit is the app's alone.
-    if (meter_cfg.contains("pull_history_limit")) {
-        set_pull_history_limit(meter_cfg["pull_history_limit"].as_int(
-            static_cast<int>(meter::constants::DEFAULT_HISTORY_CAPACITY)));
+    const auto limit = config::ConfigManager::instance().value(
+        plugins::COMBAT_METER.config_section, meter::PULL_HISTORY_LIMIT_KEY);
+    if (limit) {
+        set_pull_history_limit(limit->as_int(static_cast<int>(meter::constants::DEFAULT_HISTORY_CAPACITY)));
     }
 }
 
@@ -125,7 +146,7 @@ void AppState::reset_config() {
     auto& cfg = config::ConfigManager::instance();
     cfg.reset_to_defaults();
     // The registry is the source of truth for auto-start, so config follows it.
-    cfg.root()["hub"]["start_with_windows"] = config::JsonValue(os::AutoStart::is_enabled());
+    cfg.set("hub", "start_with_windows", config::JsonValue(os::AutoStart::is_enabled()));
     cfg.save();
     apply_config_to_mirror_engine();
 
@@ -133,7 +154,7 @@ void AppState::reset_config() {
     for (const auto& plugin : m_plugins) {
         set_plugin_enabled(plugin.id, true);
     }
-    send_reload_config();
+    send_command(PluginId::Core, CommandId::ReloadConfig);
 }
 
 size_t AppState::enabled_plugin_count() const noexcept {
@@ -257,21 +278,16 @@ void AppState::mirror_geometry_to_config() {
     const auto fold = [](const char* section,
                          const std::optional<ipc::OverlayGeometryPayload>& geom) {
         if (!geom) return;
-        auto& root = config::ConfigManager::instance().root();
-        if (!root.contains(section) || !root[section].is_object()) {
-            root[section] = config::JsonValue(config::JsonValue::ObjectType{});
-        }
         // Geometry only. The payload also reports visible/locked/opacity/scale,
         // but those are driven by desktop app controls and this push lags them
         // by up to a second, so echoing them back would revert a toggle
         // mid-click.
-        ui::store_overlay_geometry(root[section], geom->pos_x, geom->pos_y,
-                                   geom->width, geom->height);
+        config::JsonValue keys{config::JsonValue::ObjectType{}};
+        ui::store_overlay_geometry(keys, geom->pos_x, geom->pos_y, geom->width, geom->height);
+        config::ConfigManager::instance().merge_section(section, keys);
     };
 
-    // Copy under the lock, then write. root() hands out an unguarded reference
-    // and the UI reads it every frame, so the config tree is only ever touched
-    // from this thread.
+    // Copy under the status lock, then write under the config's own.
     std::optional<ipc::OverlayGeometryPayload> combat;
     std::optional<ipc::OverlayGeometryPayload> latency;
     {
@@ -304,7 +320,7 @@ void AppState::update() {
         if (is_connected() &&
             (!m_last_sent_ping_ms || std::abs(ping - *m_last_sent_ping_ms) > 0.5)) {
             m_last_sent_ping_ms = ping;
-            send_network_ping(static_cast<float>(ping));
+            send_command(PluginId::LatencyMitigator, CommandId::UpdateNetworkPing, 0, static_cast<float>(ping));
         }
     }
 }
@@ -420,7 +436,7 @@ void AppState::check_game_process() {
             const bool ok = injector.inject(*proc, dll_path);
             m_connection_state.store(after_injection(ok));
             if (ok) {
-                os::Logger::info("hub_payload.dll injected successfully from " + dll_path.string() + ". Awaiting IPC handshake...");
+                os::Logger::info("hub_payload.dll injected successfully from " + os::to_utf8(dll_path) + ". Awaiting IPC handshake...");
             } else {
                 os::Logger::warn("Failed to inject hub_payload.dll: " + injector.last_error());
             }
@@ -471,13 +487,9 @@ std::optional<ipc::OverlayGeometryPayload> AppState::overlay_geometry(PluginId i
     return std::nullopt;
 }
 
-void AppState::send_overlay_position(PluginId id, float x, float y) {
-    m_pipe_server.send_command(id, CommandId::SetOverlayPosition, 0, x, y);
-}
-
-void AppState::send_overlay_command(PluginId id, CommandId cmd, uint32_t param_uint,
-                                    float param_float, float param_float2) {
-    m_pipe_server.send_command(id, cmd, param_uint, param_float, param_float2);
+bool AppState::send_command(PluginId id, CommandId cmd, uint32_t param_uint,
+                            float param_float, float param_float2) {
+    return m_pipe_server.send_command(id, cmd, param_uint, param_float, param_float2);
 }
 
 // Combat Meter Integration
@@ -506,7 +518,7 @@ void AppState::reset_encounter() {
         std::lock_guard<std::mutex> lock(m_combat_mutex);
         m_engine.reset_current();
     }
-    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::ResetEncounter);
+    send_command(PluginId::CombatMeter, CommandId::ResetEncounter);
 }
 
 void AppState::clear_pull_history() {
@@ -519,10 +531,6 @@ void AppState::set_pull_history_limit(int pulls) {
                                  meter::constants::MAX_PULL_HISTORY_LIMIT);
     std::lock_guard<std::mutex> lock(m_combat_mutex);
     m_engine.set_history_capacity(static_cast<size_t>(limit));
-}
-
-void AppState::send_combat_overlay_party_only(bool party_only) {
-    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::FilterPartyOnly, party_only ? 1 : 0);
 }
 
 // Latency Mitigator Integration
@@ -544,50 +552,14 @@ std::vector<ipc::MitigatorTelemetryPayload> AppState::get_recent_telemetry(size_
     return result;
 }
 
-void AppState::send_mitigator_target_ping(float target_ping_ms) {
-    m_pipe_server.send_command(PluginId::LatencyMitigator, CommandId::SetTargetPing, 0, target_ping_ms);
-}
-
-void AppState::send_mitigator_min_lock(float min_lock_ms) {
-    m_pipe_server.send_command(PluginId::LatencyMitigator, CommandId::SetMinLock, 0, min_lock_ms);
-}
-
-void AppState::send_mitigator_spike_multiplier(float mult) {
-    m_pipe_server.send_command(PluginId::LatencyMitigator, CommandId::SetSpikeMultiplier, 0, mult);
-}
-
-void AppState::send_mitigator_dry_run(bool dry_run) {
-    m_pipe_server.send_command(PluginId::LatencyMitigator, CommandId::ToggleDryRun, dry_run ? 1 : 0);
-}
-
-void AppState::send_mitigator_hud_display_mode(uint32_t mode) {
-    m_pipe_server.send_command(PluginId::LatencyMitigator, CommandId::SetOverlayMode, mode);
-}
-
-void AppState::send_mitigator_enabled(bool enabled) {
-    m_pipe_server.send_command(PluginId::LatencyMitigator, CommandId::SetMitigationEnabled, enabled ? 1 : 0);
-}
-
-void AppState::send_mitigator_reset_stats() {
-    m_pipe_server.send_command(PluginId::LatencyMitigator, CommandId::ResetStats, 0);
-}
-
 void AppState::clear_mitigator_stats() {
     std::lock_guard<std::mutex> lock(m_telemetry_mutex);
     m_telemetry_history.clear();
     m_mitigator_metrics = MitigatorMetrics{};
 }
 
-void AppState::send_mitigator_reset_overlay_geometry() {
-    m_pipe_server.send_command(PluginId::LatencyMitigator, CommandId::ResetOverlayGeometry, 0);
-}
-
-void AppState::send_reload_config() {
-    m_pipe_server.send_command(PluginId::Core, CommandId::ReloadConfig, 0);
-}
-
 void AppState::send_unhook_and_exit() {
-    if (m_pipe_server.send_command(PluginId::Core, CommandId::UnhookAndExit, 0)) {
+    if (send_command(PluginId::Core, CommandId::UnhookAndExit)) {
         m_unloaded_pid.store(m_game_pid.load());
     }
 }
@@ -597,59 +569,7 @@ void AppState::send_combat_end_encounter() {
         std::lock_guard<std::mutex> lock(m_combat_mutex);
         m_engine.end_encounter(meter::EncounterEndReason::Manual);
     }
-    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::EndEncounter, 0);
-}
-
-void AppState::send_combat_show_bars(bool show) {
-    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::SetShowBars, show ? 1 : 0);
-}
-
-void AppState::send_combat_hide_inactive(bool hide) {
-    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::SetHideInactive, hide ? 1 : 0);
-}
-
-void AppState::send_combat_refresh_interval(uint32_t ms) {
-    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::SetRefreshInterval, ms);
-}
-
-void AppState::send_combat_column_share(bool show) {
-    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::SetColumnShare, show ? 1 : 0);
-}
-
-void AppState::send_combat_column_crit(bool show) {
-    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::SetColumnCrit, show ? 1 : 0);
-}
-
-void AppState::send_combat_column_dh(bool show) {
-    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::SetColumnDh, show ? 1 : 0);
-}
-
-void AppState::send_combat_column_cdh(bool show) {
-    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::SetColumnCdh, show ? 1 : 0);
-}
-
-void AppState::send_combat_overlay_metric(uint32_t metric) {
-    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::SetMeterMetric, metric);
-}
-
-void AppState::send_combat_dps_metric(uint32_t metric) {
-    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::SetDpsMetric, metric);
-}
-
-void AppState::send_combat_track_vitals(bool enabled) {
-    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::SetVitalsTracking, enabled ? 1 : 0);
-}
-
-void AppState::send_combat_reset_stats() {
-    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::ResetStats, 0);
-}
-
-void AppState::send_combat_reset_overlay_geometry() {
-    m_pipe_server.send_command(PluginId::CombatMeter, CommandId::ResetOverlayGeometry, 0);
-}
-
-void AppState::send_network_ping(float ping_ms) {
-    m_pipe_server.send_command(PluginId::LatencyMitigator, CommandId::UpdateNetworkPing, 0, ping_ms);
+    send_command(PluginId::CombatMeter, CommandId::EndEncounter);
 }
 
 } // namespace hub::app

@@ -1,21 +1,32 @@
 #include "common/ui/overlay_config.hpp"
 
-#include "common/config/json.hpp"
+#include "common/config/key_table.hpp"
 
 namespace hub::ui {
 
+namespace {
+
+using config::field;
+
+/// The keys every overlay persists, alongside its plugin's own.
+constexpr config::ConfigKey<OverlayConfig> OVERLAY_KEYS[] = {
+    field<OverlayConfig, &OverlayConfig::visible>("overlay_visible"),
+    field<OverlayConfig, &OverlayConfig::locked>("overlay_locked"),
+    field<OverlayConfig, &OverlayConfig::click_through>("overlay_click_through"),
+    field<OverlayConfig, &OverlayConfig::opacity>("overlay_opacity"),
+    field<OverlayConfig, &OverlayConfig::scale>("overlay_scale"),
+    field<OverlayConfig, &OverlayConfig::x>("overlay_x"),
+    field<OverlayConfig, &OverlayConfig::y>("overlay_y"),
+    field<OverlayConfig, &OverlayConfig::width>("overlay_width"),
+    field<OverlayConfig, &OverlayConfig::height>("overlay_height"),
+    field<OverlayConfig, &OverlayConfig::hide_conditions>("overlay_hide_conditions"),
+    field<OverlayConfig, &OverlayConfig::hide_after_combat_s>("overlay_hide_after_combat_seconds"),
+};
+
+} // namespace
+
 void serialize_overlay(const OverlayConfig& cfg, config::JsonValue& out) {
-    out["overlay_visible"] = config::JsonValue(cfg.visible);
-    out["overlay_locked"] = config::JsonValue(cfg.locked);
-    out["overlay_click_through"] = config::JsonValue(cfg.click_through);
-    out["overlay_opacity"] = config::JsonValue(static_cast<double>(cfg.opacity));
-    out["overlay_scale"] = config::JsonValue(static_cast<double>(cfg.scale));
-    out["overlay_x"] = config::JsonValue(static_cast<double>(cfg.x));
-    out["overlay_y"] = config::JsonValue(static_cast<double>(cfg.y));
-    out["overlay_width"] = config::JsonValue(static_cast<double>(cfg.width));
-    out["overlay_height"] = config::JsonValue(static_cast<double>(cfg.height));
-    out["overlay_hide_conditions"] = config::JsonValue(cfg.hide_conditions);
-    out["overlay_hide_after_combat_seconds"] = config::JsonValue(static_cast<double>(cfg.hide_after_combat_s));
+    config::write_keys<OverlayConfig>(OVERLAY_KEYS, cfg, out);
 }
 
 void store_overlay_geometry(config::JsonValue& section,
@@ -28,29 +39,7 @@ void store_overlay_geometry(config::JsonValue& section,
 
 OverlayConfig deserialize_overlay(const config::JsonValue& in, const OverlayConfig& defaults) {
     OverlayConfig cfg = defaults;
-    if (!in.is_object()) return cfg;
-
-    const auto read_bool = [&](const char* key, bool& field) {
-        if (in.contains(key)) field = in[key].as_bool(field);
-    };
-    const auto read_float = [&](const char* key, float& field) {
-        if (in.contains(key)) field = static_cast<float>(in[key].as_double(field));
-    };
-
-    read_bool("overlay_visible", cfg.visible);
-    read_bool("overlay_locked", cfg.locked);
-    read_bool("overlay_click_through", cfg.click_through);
-    read_float("overlay_opacity", cfg.opacity);
-    read_float("overlay_scale", cfg.scale);
-    read_float("overlay_x", cfg.x);
-    read_float("overlay_y", cfg.y);
-    read_float("overlay_width", cfg.width);
-    read_float("overlay_height", cfg.height);
-    if (in.contains("overlay_hide_conditions")) {
-        cfg.hide_conditions = static_cast<uint32_t>(
-            in["overlay_hide_conditions"].as_int(static_cast<int>(cfg.hide_conditions)));
-    }
-    read_float("overlay_hide_after_combat_seconds", cfg.hide_after_combat_s);
+    config::read_keys<OverlayConfig>(OVERLAY_KEYS, in, cfg);
     return cfg;
 }
 

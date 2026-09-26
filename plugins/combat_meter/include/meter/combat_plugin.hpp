@@ -137,6 +137,9 @@ private:
     /// The overlay shows only while the plugin is on and the app is listening.
     void refresh_overlay_suppression() noexcept;
 
+    /// The settings in effect now, from the overlay and the atomics where they live.
+    [[nodiscard]] CombatConfig live_config() const;
+
     /// Attribution statuses read for one actor.
     struct StatusSnapshot {
         static constexpr size_t kCapacity = 32;

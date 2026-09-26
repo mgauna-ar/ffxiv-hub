@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common/ipc/protocol.hpp"
+#include "common/config/json.hpp"
 #include <atomic>
 
 namespace hub::meter {
@@ -27,6 +28,14 @@ struct CommandDispatchTargets {
     /// existed the only way to unload was killing the game.
     std::atomic<bool>* shutdown_requested{nullptr};
 };
+
+/// The defaults the payload's ConfigManager starts from: each plugin's section,
+/// written from that plugin's key table.
+[[nodiscard]] config::JsonValue plugin_config_defaults();
+
+/// Serializes each plugin into its section and saves. Only those sections reach
+/// the file (ConfigManager::set_owned_sections). A null plugin is skipped.
+bool save_plugin_config(hub::meter::CombatPlugin* combat, hub::mitigator::LatencyPlugin* latency);
 
 /// Routes an incoming CommandPayload (received from the desktop app over the
 /// named pipe) to the targeted plugin/overlay. Extracted from dllmain.cpp so it

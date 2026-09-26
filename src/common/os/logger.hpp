@@ -1,5 +1,6 @@
 #pragma once
 
+#include <filesystem>
 #include <string>
 #include <string_view>
 #include <cstdint>
@@ -18,7 +19,9 @@ enum class LogLevel : uint8_t {
  */
 class Logger {
 public:
-    static bool init(const std::string& custom_path = "", bool rotate = true);
+    /// Paths are std::filesystem::path end to end, so a user folder outside the
+    /// ANSI code page is opened as itself on Windows.
+    static bool init(const std::filesystem::path& custom_path = {}, bool rotate = true);
     static void log(LogLevel level, std::string_view message);
 
     static void debug(std::string_view message) { log(LogLevel::Debug, message); }
@@ -26,9 +29,9 @@ public:
     static void warn(std::string_view message)  { log(LogLevel::Warning, message); }
     static void error(std::string_view message) { log(LogLevel::Error, message); }
 
-    [[nodiscard]] static std::string log_file_path();
-    [[nodiscard]] static std::string previous_log_path(const std::string& current_path = "");
-    [[nodiscard]] static std::string default_log_path();
+    [[nodiscard]] static std::filesystem::path log_file_path();
+    [[nodiscard]] static std::filesystem::path previous_log_path(const std::filesystem::path& current_path = {});
+    [[nodiscard]] static std::filesystem::path default_log_path();
 
     static void open_log_file();
     /// Folder holding the log file in use, which a custom log path can move.

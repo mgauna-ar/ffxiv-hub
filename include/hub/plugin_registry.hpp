@@ -36,6 +36,10 @@ inline constexpr PluginDescriptor LATENCY_MITIGATOR{
     "latency_mitigator",
 };
 
+/// Key of every plugin's master switch in its config section. Deliberately absent
+/// from the defaults: see ConfigManager::set_defaults and the meter's legacy key.
+inline constexpr const char* MASTER_SWITCH_KEY = "plugin_enabled";
+
 /// Every plugin, in the order the app lists them. Not the payload's hook dispatch
 /// order, which dllmain.cpp's registration sets.
 inline constexpr std::array ALL{COMBAT_METER, LATENCY_MITIGATOR};

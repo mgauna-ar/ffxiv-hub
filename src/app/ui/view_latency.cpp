@@ -360,30 +360,41 @@ void render_plugin_section(AppState& app_state) {
     if (setting_toggle("Enable animation lock mitigation",
                        "Master switch for every memory write this plugin makes.", &enabled)) {
         cfg_store(MITI, "enabled", enabled);
-        app_state.send_mitigator_enabled(enabled);
+        app_state.send_command(PluginId::LatencyMitigator, CommandId::SetMitigationEnabled, enabled ? 1 : 0);
     }
 
+    // The sliders below reach the payload and the file on release: nothing
+    // in-game previews them, and a drag would otherwise save on every frame.
     float target_ping = cfg_get(MITI, "target_ping_ms", 15.0f);
     begin_setting_row("Target ping", "Round-trip time the compensation aims for.");
     if (ImGui::SliderFloat("##target_ping", &target_ping, 10.0f, 40.0f, "%.1f ms")) {
-        cfg_store(MITI, "target_ping_ms", target_ping);
-        app_state.send_mitigator_target_ping(target_ping);
+        cfg_set(MITI, "target_ping_ms", target_ping);
+    }
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        cfg_save();
+        app_state.send_command(PluginId::LatencyMitigator, CommandId::SetTargetPing, 0, target_ping);
     }
     end_setting_row();
 
     float min_lock = cfg_get(MITI, "min_animation_lock_ms", 25.0f);
     begin_setting_row("Safety floor", "Animation lock is never reduced below this.");
     if (ImGui::SliderFloat("##min_lock", &min_lock, 25.0f, 100.0f, "%.1f ms")) {
-        cfg_store(MITI, "min_animation_lock_ms", min_lock);
-        app_state.send_mitigator_min_lock(min_lock);
+        cfg_set(MITI, "min_animation_lock_ms", min_lock);
+    }
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        cfg_save();
+        app_state.send_command(PluginId::LatencyMitigator, CommandId::SetMinLock, 0, min_lock);
     }
     end_setting_row();
 
     float spike_mult = cfg_get(MITI, "spike_multiplier", 2.5f);
     begin_setting_row("Spike multiplier", "How far above the average an RTT is discarded.");
     if (ImGui::SliderFloat("##spike_mult", &spike_mult, 2.0f, 4.0f, "%.1fx")) {
-        cfg_store(MITI, "spike_multiplier", spike_mult);
-        app_state.send_mitigator_spike_multiplier(spike_mult);
+        cfg_set(MITI, "spike_multiplier", spike_mult);
+    }
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        cfg_save();
+        app_state.send_command(PluginId::LatencyMitigator, CommandId::SetSpikeMultiplier, 0, spike_mult);
     }
     end_setting_row();
 
@@ -391,7 +402,7 @@ void render_plugin_section(AppState& app_state) {
     if (setting_toggle("Dry-run mode",
                        "Measure and report only; performs zero memory edits.", &dry_run)) {
         cfg_store(MITI, "dry_run", dry_run);
-        app_state.send_mitigator_dry_run(dry_run);
+        app_state.send_command(PluginId::LatencyMitigator, CommandId::ToggleDryRun, dry_run ? 1 : 0);
     }
 
     end_settings_card();
@@ -427,7 +438,7 @@ void render_display_section(AppState& app_state) {
     begin_setting_row("HUD layout", "How much the in-game HUD shows at a glance.");
     if (ImGui::Combo("##hud_layout", &hud_mode, hud_mode_names, 3)) {
         cfg_store(MITI, "overlay_mode", hud_mode);
-        app_state.send_mitigator_hud_display_mode(static_cast<uint32_t>(hud_mode));
+        app_state.send_command(PluginId::LatencyMitigator, CommandId::SetOverlayMode, static_cast<uint32_t>(hud_mode));
     }
     end_setting_row();
 
@@ -438,11 +449,11 @@ void render_maintenance_section(AppState& app_state) {
     begin_settings_card("##MitiMaintenanceCard", ICON_WRENCH, "MAINTENANCE", colors::Warning);
 
     if (button(ICON_MOVE "  Reset HUD position", ButtonKind::Secondary, ButtonSize::Large)) {
-        app_state.send_mitigator_reset_overlay_geometry();
+        app_state.send_command(PluginId::LatencyMitigator, CommandId::ResetOverlayGeometry);
     }
     ImGui::Dummy(ImVec2(0.0f, m(6.0f)));
     if (button(ICON_RESET "  Reset statistics", ButtonKind::Danger, ButtonSize::Large)) {
-        app_state.send_mitigator_reset_stats();
+        app_state.send_command(PluginId::LatencyMitigator, CommandId::ResetStats);
         app_state.clear_mitigator_stats();
     }
 
