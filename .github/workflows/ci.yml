@@ -8,10 +8,54 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+# Read-only by default; only the release job may write to the repository.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
+  build-linux:
+    name: Linux ${{ matrix.cxx }} Build & Test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cxx: [ clang++, g++ ]
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Show Compiler
+        run: ${{ matrix.cxx }} --version
+
+      # The unit tests with -Werror, then the check-ui syntax pass over the desktop UI.
+      - name: Build & Test (make)
+        run: make -j"$(nproc)" CXX=${{ matrix.cxx }}
+
+  sanitizers:
+    name: Linux ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ThreadSanitizer
+            target: tsan
+          - name: AddressSanitizer + UBSan
+            target: asan
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      # The runner's 32-bit mmap ASLR entropy breaks the LLVM 18 sanitizer runtimes'
+      # shadow memory mapping ("unexpected memory mapping").
+      - name: Lower mmap ASLR Entropy
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
+
+      - name: Build & Test (make ${{ matrix.target }})
+        run: make -j"$(nproc)" CXX=clang++ ${{ matrix.target }}
+
   build-windows:
     name: Windows MSVC Build, Test & Package
     runs-on: windows-latest
@@ -51,8 +95,32 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Publish GitHub Release
+      - name: Upload Release Package
         if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v7
+        with:
+          name: ffxiv-hub-release
+          path: |
+            ffxiv-hub-windows-x64.zip
+            ffxiv-hub-windows-x64.zip.sha256
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [ build-windows, build-linux, sanitizers ]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download Release Package
+        uses: actions/download-artifact@v8
+        with:
+          name: ffxiv-hub-release
+
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           files: |

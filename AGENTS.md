@@ -268,20 +268,32 @@ make
 Builds and runs the unit test suite on macOS, Linux or Windows, then syntax-checks the
 desktop UI with the ImGui bodies enabled. The UI lives behind `#ifdef _WIN32` +
 `HAVE_IMGUI`, so without that second pass a missing include there would only surface in
-CI.
+CI. It uses clang++ unless `CXX` is given (`make CXX=g++`). The build is incremental:
+one object and dependency file per source under `build/test/`, one syntax-check stamp
+per UI file under `build/check-ui/`, and a change of compiler or flags rebuilds them all.
+`make clean` removes them.
 
-Directly with Clang, without the UI pass:
+```bash
+make tsan    # the suite under ThreadSanitizer, into build/tsan/
+make asan    # the suite under AddressSanitizer + UndefinedBehaviorSanitizer, into build/asan/
+```
+
+CI runs `make` with clang++ and with g++, and both sanitizer targets, on every pull
+request, next to the Windows MSVC build.
+
+Directly with Clang, without the UI pass or the incremental build:
 
 ```bash
 clang++ -std=c++20 -Wall -Wextra -Wpedantic -Werror \
   -Iinclude -Isrc -Itests -Iplugins -Iplugins/latency_mitigator/include -Iplugins/combat_meter/include \
-  src/common/*.cpp src/common/ipc/*.cpp src/common/config/*.cpp src/common/os/*.cpp \
-  plugins/latency_mitigator/src/*.cpp plugins/combat_meter/src/*.cpp tests/*.cpp \
+  src/common/*.cpp src/common/ipc/*.cpp src/common/config/*.cpp src/common/os/*.cpp src/common/ui/*.cpp \
+  plugins/latency_mitigator/src/*.cpp plugins/combat_meter/src/*.cpp src/payload/*.cpp \
+  src/app/app_state.cpp src/app/ui/*.cpp tests/*.cpp \
   -o hub_test_runner && ./hub_test_runner
 ```
 
-For the ThreadSanitizer run that proves `EncounterEngine` locking, see the `tsan-check`
-skill. For the MSVC build, packaging and CI, see `release-windows`.
+For when to run the ThreadSanitizer check that proves `EncounterEngine` locking, see the
+`tsan-check` skill. For the MSVC build, packaging and CI, see `release-windows`.
 
 ```bash
 make screenshots

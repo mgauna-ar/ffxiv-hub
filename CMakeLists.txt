@@ -57,7 +57,7 @@ include_directories(
 )
 
 # Common Library & Plugins
-file(GLOB COMMON_SOURCES
+file(GLOB COMMON_SOURCES CONFIGURE_DEPENDS
     src/common/*.cpp
     src/common/ipc/*.cpp
     src/common/config/*.cpp
@@ -91,7 +91,7 @@ target_include_directories(hub_common PUBLIC
 # Unit Tests Target (cross-platform runnable on macOS, Linux, Windows)
 if(BUILD_TESTS)
     enable_testing()
-    file(GLOB TEST_SOURCES tests/*.cpp)
+    file(GLOB TEST_SOURCES CONFIGURE_DEPENDS tests/*.cpp)
     add_executable(hub_test_runner ${TEST_SOURCES})
     target_link_libraries(hub_test_runner PRIVATE hub_common)
     add_test(NAME AllTests COMMAND hub_test_runner)

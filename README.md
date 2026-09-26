@@ -424,16 +424,25 @@ ffxiv-hub/
 
 ### Tests (macOS, Linux or Windows)
 
-You need a C++20 compiler and `make`. Plain `make` uses make's own default compiler
-(`g++`, which is Apple clang on macOS); `make CXX=clang++` picks clang. g++ 13 and
-clang 18 to 20 all build it with warnings as errors.
+You need a C++20 compiler and GNU `make`. `make` uses `clang++`; `make CXX=g++` picks
+g++. g++ 13 and clang 18 to 20 all build it with warnings as errors, and CI builds it
+with both.
 
 ```bash
 make
 ```
 
 This builds and runs the unit test suite, then syntax-checks the desktop UI code with
-Dear ImGui enabled.
+Dear ImGui enabled. The build is incremental: objects go to `build/test/`, so after an
+edit only the files it affects recompile. `make clean` removes the build outputs.
+
+The same suite also runs under the sanitizers, each built into its own folder under
+`build/`. Clang needs its sanitizer runtime for these (`libclang-rt-18-dev` on Ubuntu):
+
+```bash
+make tsan    # ThreadSanitizer
+make asan    # AddressSanitizer + UndefinedBehaviorSanitizer
+```
 
 ### README screenshots (macOS or Linux)
 
