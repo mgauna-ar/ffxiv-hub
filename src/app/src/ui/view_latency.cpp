@@ -137,7 +137,7 @@ void render_rtt_graph(const std::vector<ipc::MitigatorTelemetryPayload>& samples
             text_colored_u32(colors::TextMuted, "Jitter: +/- %.1f ms", s.jitter_ms);
             text_colored_u32(colors::SuccessLight, "Delay reduced: %.1f ms", s.delay_reduced_ms);
             if (s.spike_filtered) text_colored_u32(colors::Warning, ICON_WARNING "  Spike filtered");
-            if (s.clamped_floor)  text_colored_u32(colors::Danger, ICON_SHIELD "  Floor clamped (%.0f ms)", floor_ms);
+            if (s.clamped_floor)  text_colored_u32(colors::Violet, ICON_SHIELD "  At floor (%.0f ms)", floor_ms);
             ImGui::EndTooltip();
         }
     }
@@ -212,27 +212,73 @@ void render_metric_tiles(AppState& app_state, const AppState::MitigatorMetrics& 
     stat_tile_row(tiles, std::size(tiles));
 }
 
-void render_action_feed(const std::vector<ipc::MitigatorTelemetryPayload>& telemetry) {
+/// What happened to the lock, then what shaped the trim. A spike or the floor
+/// only changes how much was taken off, so it never replaces "Mitigated".
+void render_status_cell(const ipc::MitigatorTelemetryPayload& s, float floor_ms) {
+    ImGui::BeginGroup();
+    if (s.dry_run) {
+        text_colored_u32(colors::Violet, ICON_FLASK "  Dry-run (not applied)");
+    } else if (s.cast_active) {
+        text_colored_u32(colors::Violet, ICON_HOURGLASS "  Cast - skipped");
+    } else if (s.applied) {
+        text_colored_u32(colors::SuccessLight, ICON_CHECK "  Mitigated");
+    } else {
+        text_colored_u32(colors::TextFaint, "No change");
+    }
+    if (s.spike_filtered) {
+        ImGui::SameLine(0.0f, m(10.0f));
+        text_colored_u32(colors::Warning, ICON_WARNING " spike filtered");
+    }
+    if (s.cold_start_guard) {
+        ImGui::SameLine(0.0f, m(10.0f));
+        text_colored_u32(colors::Warning, ICON_TIMER " cold start");
+    }
+    if (s.clamped_floor) {
+        ImGui::SameLine(0.0f, m(10.0f));
+        text_colored_u32(colors::Violet, ICON_SHIELD " at floor");
+    }
+    ImGui::EndGroup();
+
+    if (!(s.spike_filtered || s.cold_start_guard || s.clamped_floor) || !ImGui::IsItemHovered()) {
+        return;
+    }
+    ImGui::BeginTooltip();
+    if (s.spike_filtered) {
+        text_colored_u32(colors::Warning, ICON_WARNING "  Spike filtered");
+        text_colored_u32(colors::TextMuted, "This round trip was a spike, so the median set the trim.");
+    }
+    if (s.cold_start_guard) {
+        text_colored_u32(colors::Warning, ICON_TIMER "  Cold start");
+        text_colored_u32(colors::TextMuted, "Fewer than five samples so far, so the round trip was capped.");
+    }
+    if (s.clamped_floor) {
+        text_colored_u32(colors::Violet, ICON_SHIELD "  At floor");
+        text_colored_u32(colors::TextMuted, "Stopped at the safety floor (%.0f ms).", floor_ms);
+    }
+    ImGui::EndTooltip();
+}
+
+void render_action_feed(const std::vector<ipc::MitigatorTelemetryPayload>& telemetry, float floor_ms) {
     if (telemetry.empty()) {
         empty_state(ICON_CHECKLIST, "No actions recorded yet",
                     "Every ability the client sends shows up here as it happens.");
         return;
     }
 
-    const auto sizing = table_sizing(720.0f, 8, ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY |
+    const auto sizing = table_sizing(740.0f, 8, ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY |
                                                 ImGuiTableFlags_BordersInnerV);
     if (!ImGui::BeginTable("##RecentActionsTable", 8, sizing.flags, ImVec2(0.0f, fill_h(0.0f)))) {
         return;
     }
 
     ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthFixed, m(66.0f));
-    ImGui::TableSetupColumn("Action", sizing.flex_flags(), sizing.flex_width(150.0f, 2.0f));
+    ImGui::TableSetupColumn("Action", sizing.flex_flags(), sizing.flex_width(150.0f, 1.5f));
     ImGui::TableSetupColumn("Seq", ImGuiTableColumnFlags_WidthFixed, m(45.0f));
     ImGui::TableSetupColumn("RTT", ImGuiTableColumnFlags_WidthFixed, m(56.0f));
     ImGui::TableSetupColumn("Raw lock", ImGuiTableColumnFlags_WidthFixed, m(68.0f));
     ImGui::TableSetupColumn("Adj lock", ImGuiTableColumnFlags_WidthFixed, m(68.0f));
     ImGui::TableSetupColumn("Reduced", ImGuiTableColumnFlags_WidthFixed, m(65.0f));
-    ImGui::TableSetupColumn("Status", sizing.flex_flags(), sizing.flex_width(160.0f, 1.6f));
+    ImGui::TableSetupColumn("Status", sizing.flex_flags(), sizing.flex_width(220.0f, 2.2f));
     ImGui::TableSetupScrollFreeze(0, 1);
 
     ImGui::PushStyleColor(ImGuiCol_Text, v4(colors::TextDim));
@@ -283,21 +329,7 @@ void render_action_feed(const std::vector<ipc::MitigatorTelemetryPayload>& telem
         }
 
         ImGui::TableSetColumnIndex(7);
-        if (it->dry_run) {
-            text_colored_u32(colors::Violet, ICON_FLASK "  Dry-run (not applied)");
-        } else if (it->spike_filtered) {
-            text_colored_u32(colors::Warning, ICON_WARNING "  Spike filtered");
-        } else if (it->clamped_floor) {
-            text_colored_u32(colors::Danger, ICON_SHIELD "  Clamped to floor");
-        } else if (it->cast_active) {
-            text_colored_u32(colors::Violet, ICON_HOURGLASS "  Cast - skipped");
-        } else if (it->cold_start_guard) {
-            text_colored_u32(colors::Warning, ICON_TIMER "  Cold start guard");
-        } else if (it->applied) {
-            text_colored_u32(colors::SuccessLight, ICON_CHECK "  Mitigated");
-        } else {
-            text_colored_u32(colors::TextFaint, "No change");
-        }
+        render_status_cell(*it, floor_ms);
     }
 
     ImGui::EndTable();
@@ -329,15 +361,15 @@ void render_live_tab(AppState& app_state, const AppState::MitigatorMetrics& metr
     measured.reserve(telemetry.size());
     std::copy_if(telemetry.begin(), telemetry.end(), std::back_inserter(measured),
                  [](const ipc::MitigatorTelemetryPayload& s) { return s.measured_rtt_ms > 0.0f; });
-    render_rtt_graph(measured, cfg_get(MITI, "target_ping_ms", 15.0f),
-                     cfg_get(MITI, "min_animation_lock_ms", 25.0f), fill_h(0.0f));
+    const float floor_ms = cfg_get(MITI, "min_animation_lock_ms", 25.0f);
+    render_rtt_graph(measured, cfg_get(MITI, "target_ping_ms", 15.0f), floor_ms, fill_h(0.0f));
     end_card();
 
     ImGui::Dummy(ImVec2(0.0f, m(2.0f)));
 
     begin_card("##ActionFeedCard", ImVec2(0.0f, fill_h(0.0f)));
     section_header(ICON_CHECKLIST, "RECENT ACTION TELEMETRY", colors::Violet);
-    render_action_feed(telemetry);
+    render_action_feed(telemetry, floor_ms);
     end_card();
 }
 

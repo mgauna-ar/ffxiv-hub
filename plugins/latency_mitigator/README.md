@@ -174,17 +174,23 @@ Below it are two tabs.
 - **Recent action telemetry.** Every ability the client sends, newest first, with the
   columns Time, Action, Seq, RTT, Raw lock, Adj lock, Reduced and Status. The raw and
   adjusted locks sit side by side, so you can see exactly what was changed. The status
-  is one of:
+  names what happened to the lock:
 
   | Status | Meaning |
   |---|---|
   | Mitigated | The lock was shortened. |
-  | Clamped to floor | The lock was shortened, but stopped at the floor. |
-  | Spike filtered | This action's RTT sample was a spike, so the median took its place, both in this action's trim and in the EMA. |
-  | Cold start guard | There are fewer than five samples so far, so the sample was capped. |
   | Cast - skipped | A cast lock, left alone to protect slide-casting. |
   | Dry-run (not applied) | Calculated, but not written. |
   | No change | Nothing was trimmed, for one of these reasons: the round trip was already under the target; the lock was at or under the floor, or over the ceiling; the response matched no recorded action; or *Enable animation lock mitigation* is off. |
+
+  After it come any of these, which change how much was taken off, never whether it was.
+  Hover the status for the explanation.
+
+  | Note | Meaning |
+  |---|---|
+  | spike filtered | This action's RTT sample was a spike, so the median took its place, both in this action's trim and in the EMA. |
+  | cold start | There are fewer than five samples so far, so the sample was capped. |
+  | at floor | The trim stopped at the *Safety floor*. |
 
 **Settings**
 
