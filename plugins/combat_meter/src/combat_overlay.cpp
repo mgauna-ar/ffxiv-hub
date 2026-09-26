@@ -442,19 +442,20 @@ void CombatOverlay::render() {
     }
 
     const ImGuiCond geom_cond = consume_geometry_restore() ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
-    if (has_saved_position()) {
+    const Rect geom = get_geometry();
+    if (is_saved_position(geom)) {
         // Keep a title-bar-sized grab handle on screen so a window saved on a
         // since-unplugged monitor can still be dragged back.
-        float x = m_pos_x;
-        float y = m_pos_y;
+        float x = geom.x;
+        float y = geom.y;
         const ImVec2 display = ImGui::GetIO().DisplaySize;
         if (display.x > 100.0f && display.y > 100.0f) {
-            x = std::clamp(x, -m_width + 120.0f, display.x - 120.0f);
+            x = std::clamp(x, -geom.width + 120.0f, display.x - 120.0f);
             y = std::clamp(y, 0.0f, display.y - 40.0f);
         }
         ImGui::SetNextWindowPos(ImVec2(x, y), geom_cond);
     }
-    ImGui::SetNextWindowSize(ImVec2(m_width, m_height), geom_cond);
+    ImGui::SetNextWindowSize(ImVec2(geom.width, geom.height), geom_cond);
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 10.0f));
@@ -470,10 +471,7 @@ void CombatOverlay::render() {
         ImGui::SetWindowFontScale(scaled_font.residual);
         const ImVec2 cur_pos = ImGui::GetWindowPos();
         const ImVec2 cur_size = ImGui::GetWindowSize();
-        m_pos_x = cur_pos.x;
-        m_pos_y = cur_pos.y;
-        m_width = cur_size.x;
-        m_height = cur_size.y;
+        store_window_geometry(Rect{cur_pos.x, cur_pos.y, cur_size.x, cur_size.y});
 
         if (m_engine) {
             const auto now = std::chrono::steady_clock::now();

@@ -7,11 +7,15 @@
 #include "meter/encounter_engine.hpp"
 #include "mitigator/latency_plugin.hpp"
 #include "payload/command_dispatcher.hpp"
+#include "payload/command_queue.hpp"
 #include "meter/combat_plugin.hpp"
 #include "common/config/json.hpp"
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <optional>
+#include <string>
+#include <thread>
 #include "hub/game_definitions.hpp"
 
 using namespace hub;
@@ -1080,4 +1084,125 @@ TEST_CASE(Payload, HotDotKindDecidesDamageOrHeal) {
     for (const uint32_t kind : {0u, 11u, 14u, 30u}) {
         TEST_ASSERT_FALSE(payload::hot_dot_is_heal(kind).has_value());
     }
+}
+
+TEST_CASE(Payload, CommandQueueCarriesReaderCommandsToTheLoopInOrder) {
+    // The pipe reader thread only pushes; the orchestration loop drains and
+    // dispatches. Under -fsanitize=thread (tsan-check) this also proves the
+    // reader and the loop never touch the overlay at the same time.
+    constexpr uint32_t kCommands = 20000;
+    payload::CommandQueue queue(64);
+    meter::CombatOverlay overlay;
+    payload::CommandDispatchTargets targets;
+    targets.combat_overlay = &overlay;
+
+    std::atomic<bool> abort{false};
+    std::thread reader([&] {
+        for (uint32_t i = 0; i < kCommands; ++i) {
+            ipc::CommandPayload cmd{};
+            cmd.target_plugin_id = static_cast<uint32_t>(PluginId::CombatMeter);
+            cmd.command_id = static_cast<uint32_t>(CommandId::SetOverlayPosition);
+            cmd.param_float = static_cast<float>(i);
+            cmd.param_float2 = static_cast<float>(i);
+            while (!queue.push(cmd)) {
+                if (abort.load()) return;
+                std::this_thread::yield();
+            }
+        }
+    });
+
+    // Failures are recorded, not thrown, while the reader is still joinable.
+    uint32_t next = 0;
+    std::string error;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (next < kCommands && error.empty()) {
+        queue.drain([&](const ipc::CommandPayload& cmd) {
+            if (cmd.param_float != static_cast<float>(next) && error.empty()) {
+                error = "command " + std::to_string(next) + " arrived out of order";
+            }
+            ++next;
+            payload::dispatch_command(targets, cmd);
+        });
+        if (std::chrono::steady_clock::now() > deadline) error = "timed out";
+        std::this_thread::yield();
+    }
+    abort.store(true);
+    reader.join();
+
+    TEST_ASSERT(error.empty());
+    TEST_ASSERT_EQ(next, kCommands);
+    const Rect geom = overlay.get_geometry();
+    TEST_ASSERT_NEAR(geom.x, static_cast<float>(kCommands - 1), 0.01f);
+}
+
+TEST_CASE(Payload, CommandQueueDropsWhenFullAndStillUnloads) {
+    payload::CommandQueue queue(2);
+    ipc::CommandPayload cmd{};
+    cmd.target_plugin_id = static_cast<uint32_t>(PluginId::Core);
+    cmd.command_id = static_cast<uint32_t>(CommandId::UnhookAndExit);
+    TEST_ASSERT(queue.push(cmd));
+    TEST_ASSERT(queue.push(cmd));
+    TEST_ASSERT_FALSE(queue.push(cmd));
+    TEST_ASSERT_EQ(queue.dropped(), 1u);
+
+    // UnhookAndExit dispatched from the queue on the loop's thread still unloads.
+    std::atomic<bool> shutdown{false};
+    payload::CommandDispatchTargets targets;
+    targets.shutdown_requested = &shutdown;
+    const size_t ran = queue.drain([&](const ipc::CommandPayload& c) { payload::dispatch_command(targets, c); });
+    TEST_ASSERT_EQ(ran, 2u);
+    TEST_ASSERT(shutdown.load());
+
+    // Drained means empty: room again, and nothing runs twice.
+    TEST_ASSERT_EQ(queue.drain([](const ipc::CommandPayload&) {}), 0u);
+    TEST_ASSERT(queue.push(cmd));
+}
+
+TEST_CASE(Payload, OverlayGeometryIsAConsistentSnapshotAcrossThreads) {
+    // The render thread writes the geometry every frame while the orchestration
+    // thread reads it for the geometry push and the autosave. A reader must
+    // never see half of one write and half of another.
+    meter::CombatOverlay overlay;
+    overlay.set_geometry(Rect{0.0f, 0.0f, 0.0f, 0.0f});
+    std::atomic<bool> done{false};
+    std::thread writer([&] {
+        for (int i = 1; i <= 20000; ++i) {
+            const float v = static_cast<float>(i);
+            overlay.set_geometry(Rect{v, v, v, v});
+        }
+        done.store(true);
+    });
+
+    bool torn = false;
+    while (!done.load()) {
+        const Rect g = overlay.get_geometry();
+        if (g.x != g.y || g.x != g.width || g.x != g.height) torn = true;
+    }
+    writer.join();
+
+    TEST_ASSERT_FALSE(torn);
+    TEST_ASSERT_NEAR(overlay.get_geometry().x, 20000.0f, 0.01f);
+}
+
+TEST_CASE(Payload, Dx11DrainWaitsForInFlightCalls) {
+    // uninstall() releases the device and destroys the ImGui context only once
+    // no Present, ResizeBuffers or WndProc call is inside.
+    TEST_ASSERT(payload::Dx11Hook::drain_in_flight(std::chrono::milliseconds(0)));
+
+    std::atomic<bool> entered{false};
+    std::atomic<bool> release{false};
+    std::thread frame([&] {
+        payload::Dx11Hook::CallScope scope;
+        entered.store(true);
+        while (!release.load()) std::this_thread::yield();
+    });
+    while (!entered.load()) std::this_thread::yield();
+
+    const bool drained_while_inside = payload::Dx11Hook::drain_in_flight(std::chrono::milliseconds(30));
+    release.store(true);
+    frame.join();
+
+    TEST_ASSERT_FALSE(drained_while_inside);
+    TEST_ASSERT(payload::Dx11Hook::drain_in_flight(std::chrono::milliseconds(1000)));
+    TEST_ASSERT_EQ(payload::Dx11Hook::in_flight_calls(), 0);
 }

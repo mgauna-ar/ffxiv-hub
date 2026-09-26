@@ -8,6 +8,7 @@
 #include <atomic>
 #include <chrono>
 #include <limits>
+#include <mutex>
 
 namespace hub::ui {
 
@@ -25,15 +26,18 @@ public:
     void set_suppressed(bool suppressed) noexcept { m_suppressed.store(suppressed); }
     [[nodiscard]] bool is_suppressed() const noexcept { return m_suppressed.load(); }
 
+    /// A consistent snapshot: the render thread writes the geometry every frame
+    /// while the orchestration thread reads it for the geometry push and autosave.
     Rect get_geometry() const noexcept override {
-        return Rect{m_pos_x, m_pos_y, m_width, m_height};
+        std::lock_guard<std::mutex> lock(m_geometry_mutex);
+        return m_geometry;
     }
 
     void set_geometry(const Rect& rect) noexcept override {
-        m_pos_x = rect.x;
-        m_pos_y = rect.y;
-        m_width = rect.width;
-        m_height = rect.height;
+        {
+            std::lock_guard<std::mutex> lock(m_geometry_mutex);
+            m_geometry = rect;
+        }
         m_needs_geometry_restore.store(true);
     }
 
@@ -52,7 +56,13 @@ public:
 
     /// Negative means never positioned: use the overlay's own default placement.
     [[nodiscard]] bool has_saved_position() const noexcept {
-        return m_pos_x >= 0.0f && m_pos_y >= 0.0f;
+        return is_saved_position(get_geometry());
+    }
+
+    /// The same test on a snapshot already taken, so a frame decides and places
+    /// from one consistent geometry.
+    [[nodiscard]] static constexpr bool is_saved_position(const Rect& geom) noexcept {
+        return geom.x >= 0.0f && geom.y >= 0.0f;
     }
 
     void set_locked(bool locked) noexcept { m_locked.store(locked); }
@@ -131,6 +141,13 @@ public:
     }
 
 protected:
+    /// Where the window actually is after a frame, from render(). Unlike
+    /// set_geometry it does not ask the next frame to re-apply it.
+    void store_window_geometry(const Rect& rect) noexcept {
+        std::lock_guard<std::mutex> lock(m_geometry_mutex);
+        m_geometry = rect;
+    }
+
     [[nodiscard]] bool combat_ended_within(std::chrono::steady_clock::time_point now) const noexcept {
         const auto last = m_last_in_combat.load();
         if (last == kNeverInCombat) return false;
@@ -157,10 +174,9 @@ protected:
 
     const GameStateProvider* m_game_state{nullptr};
 
-    float m_pos_x{0.0f};
-    float m_pos_y{0.0f};
-    float m_width{0.0f};
-    float m_height{0.0f};
+private:
+    mutable std::mutex m_geometry_mutex;
+    Rect m_geometry{0.0f, 0.0f, 0.0f, 0.0f};
 };
 
 } // namespace hub::ui
