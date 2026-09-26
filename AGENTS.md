@@ -337,8 +337,10 @@ make tsan    # the suite under ThreadSanitizer, into build/tsan/
 make asan    # the suite under AddressSanitizer + UndefinedBehaviorSanitizer, into build/asan/
 ```
 
-CI runs `make` with clang++ and with g++, and both sanitizer targets, on every pull
-request, next to the Windows MSVC build, where a warning in our code fails the build.
+CI runs `make` with clang++ and with g++ (then builds the screenshot tool), both
+sanitizer targets, and the CMake build with clang++ on Linux, on every pull request,
+next to the Windows MSVC build, where a warning in our code fails the build. macOS has
+no LeakSanitizer, so `make asan` runs there without leak detection.
 
 Directly with Clang, without the UI pass, the per-layer include roots or the incremental
 build:

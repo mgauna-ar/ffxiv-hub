@@ -29,7 +29,7 @@ REPO = os.path.dirname(HERE)
 HEADER = os.path.join(REPO, "include", "hub", "game_definitions.hpp")
 SOURCES = [
     os.path.join(HERE, "sigcheck", "sigcheck.cpp"),
-    os.path.join(REPO, "src", "common", "sigscan.cpp"),
+    os.path.join(REPO, "src", "common", "src", "sigscan.cpp"),
 ]
 
 # constexpr std::string_view NAME =\n    "AA BB ? ...";
@@ -98,7 +98,7 @@ def main():
     text_va = img.base + text_rva
 
     binary = os.path.join(os.environ.get("TMPDIR", "/tmp"), "ffxiv_hub_sigcheck")
-    build = [args.cxx, "-std=c++20", "-O2", f"-I{REPO}/include", f"-I{REPO}/src",
+    build = [args.cxx, "-std=c++20", "-O2", f"-I{REPO}/include", f"-I{REPO}/src/common/include",
              *SOURCES, "-o", binary]
     if subprocess.call(build) != 0:
         sys.exit("failed to build the signature checker")

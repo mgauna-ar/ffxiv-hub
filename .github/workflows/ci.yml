@@ -39,6 +39,38 @@ jobs:
       - name: Build & Test (make)
         run: make -j"$(nproc)" CXX=${{ matrix.cxx }}
 
+      # Only the binary: rendering docs/images is a local step (make screenshots).
+      - name: Install zlib
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends zlib1g-dev
+
+      - name: Build Screenshot Tool
+        run: make -j"$(nproc)" CXX=${{ matrix.cxx }} build/screenshots/hub_screenshots
+
+  # The CMake build off Windows, the non-MSVC branch of hub_warnings (-Werror)
+  # included, which the Makefile jobs never configure.
+  build-linux-cmake:
+    name: Linux CMake Build & Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Configure CMake
+        run: >
+          cmake -B build -S .
+          -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_C_COMPILER=clang
+          -DCMAKE_BUILD_TYPE=Release
+          -DBUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Run Unit Tests (CTest)
+        run: ctest --test-dir build --output-on-failure
+
   sanitizers:
     name: Linux ${{ matrix.name }}
     runs-on: ubuntu-latest
@@ -112,7 +144,7 @@ jobs:
   release:
     name: Publish GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [ build-windows, build-linux, sanitizers ]
+    needs: [ build-windows, build-linux, build-linux-cmake, sanitizers ]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
