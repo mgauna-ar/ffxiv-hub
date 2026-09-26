@@ -222,5 +222,9 @@ set(CPACK_PACKAGE_VERSION_MINOR ${PROJECT_VERSION_MINOR})
 set(CPACK_PACKAGE_VERSION_PATCH ${PROJECT_VERSION_PATCH})
 set(CPACK_GENERATOR "ZIP")
 set(CPACK_PACKAGE_FILE_NAME "ffxiv-hub-windows-x64")
+# The binaries sit at the root of the archive, with a SHA256 sidecar next to it. CI
+# publishes exactly what this writes, so a local cpack run matches the release.
+set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY OFF)
+set(CPACK_PACKAGE_CHECKSUM SHA256)
 include(CPack)
 

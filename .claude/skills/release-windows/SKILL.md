@@ -36,7 +36,9 @@ cpack -G ZIP -C Release
 ```
 
 Produces `ffxiv-hub-windows-x64.zip` containing **only the two binaries**, `ffxiv-hub.exe`
-and `hub_payload.dll`. Documentation is not packaged - it lives in the repository, and a
+and `hub_payload.dll`, at the root of the archive (`CPACK_INCLUDE_TOPLEVEL_DIRECTORY OFF`),
+and its checksum `ffxiv-hub-windows-x64.zip.sha256` (`CPACK_PACKAGE_CHECKSUM`, in the
+`sha256sum -c` format). Documentation is not packaged - it lives in the repository, and a
 copy in the archive would go stale against the release it shipped with.
 
 The equivalent by hand:
@@ -56,10 +58,10 @@ Both binaries must stay in the same directory when extracted: the desktop app re
   CMake):
   - Builds Release `/MT` binaries with warnings as errors.
   - Executes the full CTest suite.
-  - Stages `dist/`, compresses `ffxiv-hub-windows-x64.zip` and writes a SHA256 sidecar
-    (`ffxiv-hub-windows-x64.zip.sha256`, which is uploaded alongside the archive).
-  - Uploads the build artifacts, and on a tag also the archive and sidecar for the
-    release job.
+  - Packages with `cpack --config build/CPackConfig.cmake -G ZIP -C Release -B dist`,
+    the same zip and `.sha256` as the local run above.
+  - Uploads the two loose binaries as the build artifact, and on a tag also the archive
+    and its `.sha256` for the release job.
 - **Linux clang++ / g++ Build & Test** (`build-linux`, `ubuntu-latest`): `make` with
   each compiler, so the `-Werror` build, the unit tests, the `check-ui` syntax pass
   over the `HAVE_IMGUI` desktop UI and the `check-headers` pass all run off
@@ -69,10 +71,17 @@ Both binaries must stay in the same directory when extracted: the desktop app re
   `vm.mmap_rnd_bits` to 28 first, which the LLVM 18 sanitizer runtimes need on the
   runner's kernel.
 - **Publish GitHub Release** (`release`): only on tags matching `v*.*.*`, after every
-  job above has passed. It downloads the archive and sidecar and publishes them.
+  job above has passed. It first checks that the tag, less its `v`, equals
+  `HUB_VERSION_STRING` in `include/hub/version.hpp`, and fails the release otherwise.
+  Then it downloads the archive and its `.sha256` and publishes them.
+
+Every job has a `timeout-minutes` (20 for the builds and sanitizers, 5 for the release),
+so a test that deadlocks fails in minutes instead of holding the runner for six hours. A
+newer push to the same branch or pull request cancels the run it supersedes; tag runs
+are never cancelled.
 
 Before tagging, set the release's number in `include/hub/version.hpp`, the only place it
-is written, and tag the same number. CMake parses `HUB_VERSION_MAJOR`/`MINOR`/`PATCH` from
+is written, and tag the same number; the release job refuses a tag that disagrees. CMake parses `HUB_VERSION_MAJOR`/`MINOR`/`PATCH` from
 it for `project(VERSION)` and CPack, `app.rc` includes it for the executable's version
 resource, and the sidebar, the plugins and the payload's status report read it too.
 `HUB_VERSION_STRING` must spell the same three numbers; a `static_assert` there fails the
@@ -81,6 +90,7 @@ build otherwise.
 The workflow's token is `contents: read`; only the `release` job gets `contents: write`.
 A new job that needs to write gets its own `permissions:` block, never a wider default.
 
-The CI staging step and the CPack file list are two separate definitions of the archive
-contents - `.github/workflows/ci.yml` and the `install()` rules in `CMakeLists.txt`. Change
-one and check the other, or a release will disagree with a local `cpack` run.
+The `install()` rules in `CMakeLists.txt` are the only definition of the archive's
+contents: CI packages with CPack rather than copying files itself, so a release and a
+local `cpack` run are the same zip. A file the release should ship is an `install()` rule,
+never a copy step in the workflow.
