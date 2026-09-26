@@ -35,6 +35,17 @@ std::filesystem::path app_data_dir() {
 #endif
 }
 
+std::filesystem::path executable_dir() {
+#ifdef _WIN32
+    wchar_t exe_path_buf[MAX_PATH];
+    const DWORD len = GetModuleFileNameW(nullptr, exe_path_buf, MAX_PATH);
+    if (len == 0 || len >= MAX_PATH) return {};
+    return std::filesystem::path(exe_path_buf).parent_path();
+#else
+    return {};
+#endif
+}
+
 std::string to_utf8(const std::filesystem::path& path) {
     const std::u8string utf8 = path.u8string();
     return std::string(reinterpret_cast<const char*>(utf8.data()), utf8.size());

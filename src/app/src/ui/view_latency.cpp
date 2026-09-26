@@ -1,5 +1,6 @@
 #include "app/ui/view_latency.hpp"
 #include "app/ui/config_binding.hpp"
+#include "common/os/local_time.hpp"
 #include "common/ui/icons.hpp"
 #include "app/ui/overlay_settings.hpp"
 #include "app/ui/plugin_page.hpp"
@@ -243,12 +244,7 @@ void render_action_feed(const std::vector<ipc::MitigatorTelemetryPayload>& telem
 
         ImGui::TableSetColumnIndex(0);
         const std::time_t secs = static_cast<std::time_t>(it->timestamp_ms / 1000);
-        std::tm tm_buf{};
-#ifdef _WIN32
-        localtime_s(&tm_buf, &secs);
-#else
-        localtime_r(&secs, &tm_buf);
-#endif
+        const std::tm tm_buf = os::local_time(secs);
         text_colored_u32(colors::TextDim, "%02d:%02d:%02d", tm_buf.tm_hour, tm_buf.tm_min, tm_buf.tm_sec);
 
         ImGui::TableSetColumnIndex(1);

@@ -394,9 +394,9 @@ The in-game overlay stays a damage or healing table; the other views are desktop
 The desktop tables have no settings here: the Damage tab picks its own rate above its
 table.
 
-Job colours are per-job, not per-role, and live in `src/common/ui/job_style.cpp` as the
-single source of truth. The in-game meter's other colours come from
-`src/common/ui/overlay_palette.hpp`, shared with the ping HUD.
+Job colours are per-job, not per-role, and live in `src/common/src/ui/job_style.cpp`
+as the single source of truth. The in-game meter's other colours come from
+`src/common/include/common/ui/overlay_palette.hpp`, shared with the ping HUD.
 
 ---
 

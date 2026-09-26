@@ -438,6 +438,10 @@ ffxiv-hub/
                                  README screenshots
 ```
 
+Each part under `src/` and `plugins/` keeps its headers in `include/<name>/` and its
+sources in `src/`. A part is built against only its own `include/` folder and those of
+the parts it may use, so a plugin cannot include the payload's or the app's headers.
+
 ---
 
 ## 🔨 Building from source
@@ -452,8 +456,9 @@ with both.
 make
 ```
 
-This builds and runs the unit test suite, then syntax-checks the desktop UI code with
-Dear ImGui enabled. The build is incremental: objects go to `build/test/`, so after an
+This builds and runs the unit test suite, syntax-checks the desktop UI code with Dear
+ImGui enabled, and compiles every header on its own to check that it only includes what
+its part may use. The build is incremental: objects go to `build/test/`, so after an
 edit only the files it affects recompile. `make clean` removes the build outputs.
 
 The same suite also runs under the sanitizers, each built into its own folder under
@@ -481,7 +486,7 @@ its numbers and the boss HP are invented; the source is in `tools/screenshots/`.
 
 ### Windows binaries
 
-You need Visual Studio 2022 with *Desktop development with C++*, and CMake 3.20+:
+You need Visual Studio 2022 with *Desktop development with C++*, and CMake 3.22+:
 
 ```cmd
 cmake -B build -S . -A x64
@@ -490,6 +495,8 @@ ctest --test-dir build -C Release --output-on-failure
 ```
 
 The build writes `build/bin/Release/ffxiv-hub.exe` and `build/bin/Release/hub_payload.dll`.
+It treats warnings in the project's own code as errors (`/W4 /WX`); the vendored ImGui and
+MinHook keep their own warning levels.
 To produce the portable ZIP:
 
 ```cmd
@@ -523,8 +530,9 @@ Bundled third-party code:
 
 - **Dear ImGui** (MIT), vendored under `src/third_party/imgui/`.
 - **MinHook** (BSD-2-Clause), vendored under `src/third_party/minhook/`.
-- **Lucide icons** (ISC). A subset is embedded in `src/common/ui/icons_font.inl`;
-  regenerate it with `tools/embed_icon_font.py`.
+- **Lucide icons** (ISC). A subset is embedded in
+  `src/common/include/common/ui/icons_font.inl`; regenerate it with
+  `tools/embed_icon_font.py`.
 
 FINAL FANTASY XIV © SQUARE ENIX CO., LTD. FINAL FANTASY is a registered trademark of
 Square Enix Holdings Co., Ltd. FFXIV Hub is an independent project and is not affiliated

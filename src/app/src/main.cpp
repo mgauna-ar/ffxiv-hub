@@ -28,8 +28,8 @@
 
 #include "common/ui/imgui_guard.hpp"
 #ifdef HAVE_IMGUI
-#include "third_party/imgui/backends/imgui_impl_win32.h"
-#include "third_party/imgui/backends/imgui_impl_dx11.h"
+#include "backends/imgui_impl_win32.h"
+#include "backends/imgui_impl_dx11.h"
 #endif
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);

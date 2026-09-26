@@ -6,6 +6,7 @@
 #include "app/ui/combat_timeline.hpp"
 #include "app/ui/combat_view_common.hpp"
 #include "app/ui/config_binding.hpp"
+#include "common/os/local_time.hpp"
 #include "common/ui/icons.hpp"
 #include "common/ui/job_style.hpp"
 #include "app/ui/overlay_settings.hpp"
@@ -49,12 +50,7 @@ std::optional<size_t> find_pull_index(const std::vector<meter::PullHistoryEntry>
 std::string format_clock_time(uint64_t unix_seconds) {
     if (unix_seconds == 0) return "--:--";
     const auto t = static_cast<std::time_t>(unix_seconds);
-    std::tm tm{};
-#ifdef _WIN32
-    localtime_s(&tm, &t);
-#else
-    localtime_r(&t, &tm);
-#endif
+    const std::tm tm = os::local_time(t);
     char buf[8];
     std::snprintf(buf, sizeof(buf), "%02d:%02d", tm.tm_hour, tm.tm_min);
     return buf;

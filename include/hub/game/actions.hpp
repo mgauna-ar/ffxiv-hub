@@ -9,7 +9,7 @@
 namespace hub::game {
 
 /// Name from the game's Action sheet.
-/// Empty when the sheet carries no such row. Defined in src/common/game_tables.cpp,
+/// Empty when the sheet carries no such row. Defined in src/common/src/game_tables.cpp,
 /// so including this header does not pull the table into every translation unit.
 [[nodiscard]] std::string_view action_sheet_name(uint32_t id) noexcept;
 
@@ -26,7 +26,7 @@ struct GcdTiming {
     uint16_t cast_100ms{0};
 };
 
-/// Defined in src/common/game_tables.cpp, like the two below.
+/// Defined in src/common/src/game_tables.cpp, like the two below.
 [[nodiscard]] GcdTiming gcd_timing(uint32_t id) noexcept;
 
 /// True for a player action on the global cooldown (cooldown group 58, as its

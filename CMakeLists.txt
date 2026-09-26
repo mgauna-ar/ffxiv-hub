@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.22)
 # The version is written once, in include/hub/version.hpp, which the Makefile build
 # and app.rc read too.
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/include/hub/version.hpp" HUB_VERSION_DEFINES
@@ -32,11 +32,11 @@ endforeach()
 option(BUILD_TESTS "Build unit test runner" ON)
 option(ENABLE_ASAN "Enable AddressSanitizer (Clang/GCC)" OFF)
 
-# Common compiler options
+# Common compiler options. Warnings are set per target by hub_warnings below, so the
+# vendored libraries keep their own levels.
 if(MSVC)
     add_compile_options(
         /std:c++20
-        /W4
         /permissive-
         /MP
         /utf-8
@@ -46,73 +46,35 @@ if(MSVC)
     # Statically link C/C++ runtime for zero-dependency portability
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 else()
-    add_compile_options(
-        -std=c++20
-        -Wall
-        -Wextra
-        -Wpedantic
-    )
+    add_compile_options(-std=c++20)
     if(ENABLE_ASAN)
         add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
         add_link_options(-fsanitize=address)
     endif()
 endif()
 
-# Core include directories
-include_directories(
-    include
-    src
-    plugins
-    plugins/latency_mitigator/include
-    plugins/combat_meter/include
-)
-
-# Common Library & Plugins
-file(GLOB COMMON_SOURCES CONFIGURE_DEPENDS
-    src/common/*.cpp
-    src/common/ipc/*.cpp
-    src/common/config/*.cpp
-    src/common/os/*.cpp
-    src/common/ui/*.cpp
-    src/payload/overlay_host.cpp
-    src/payload/dx11_hook.cpp
-    src/payload/wndproc_hook.cpp
-    src/payload/hook_manager.cpp
-    src/payload/object_reader.cpp
-    src/payload/game_state_reader.cpp
-    src/payload/command_dispatcher.cpp
-    plugins/latency_mitigator/src/*.cpp
-    plugins/combat_meter/src/*.cpp
-    src/app/app_state.cpp
-    src/app/ui/*.cpp
-)
-
-add_library(hub_common STATIC ${COMMON_SOURCES})
-target_include_directories(hub_common PUBLIC
-    include
-    src
-    plugins
-    plugins/latency_mitigator/include
-    plugins/combat_meter/include
-    src/third_party/imgui
-    src/third_party/imgui/backends
-    src/third_party/minhook/include
-)
-
-# Unit Tests Target (cross-platform runnable on macOS, Linux, Windows)
-if(BUILD_TESTS)
-    enable_testing()
-    file(GLOB TEST_SOURCES CONFIGURE_DEPENDS tests/*.cpp)
-    add_executable(hub_test_runner ${TEST_SOURCES})
-    target_link_libraries(hub_test_runner PRIVATE hub_common)
-    add_test(NAME AllTests COMMAND hub_test_runner)
+# Warnings as errors for every target of ours. Linked PRIVATE, so it never reaches
+# the vendored libraries.
+add_library(hub_warnings INTERFACE)
+if(MSVC)
+    target_compile_options(hub_warnings INTERFACE /W4 /WX)
+else()
+    target_compile_options(hub_warnings INTERFACE -Wall -Wextra -Wpedantic -Werror)
 endif()
 
-# Windows-specific targets (In-Game Payload DLL and Desktop Manager GUI)
 if(WIN32 OR CYGWIN OR MSYS OR MINGW)
+    set(HUB_WINDOWS ON)
+else()
+    set(HUB_WINDOWS OFF)
+endif()
+
+# -----------------------------------------------------------------------------
+# Vendored libraries (Windows only). Their headers are SYSTEM includes, so our
+# warnings-as-errors does not apply to them.
+# -----------------------------------------------------------------------------
+if(HUB_WINDOWS)
     message(STATUS "Configuring Windows targets for ffxiv-hub...")
 
-    # 1. MinHook Embedded Library
     set(MINHOOK_SOURCES
         src/third_party/minhook/src/buffer.c
         src/third_party/minhook/src/hook.c
@@ -125,13 +87,13 @@ if(WIN32 OR CYGWIN OR MSYS OR MINGW)
     endif()
 
     add_library(minhook STATIC ${MINHOOK_SOURCES})
-    target_include_directories(minhook PUBLIC src/third_party/minhook/include)
+    target_include_directories(minhook SYSTEM PUBLIC src/third_party/minhook/include)
     if(MSVC)
         target_compile_options(minhook PRIVATE /W3 /wd4201 /wd4244 /wd4310)
         set_property(TARGET minhook PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     endif()
 
-    # 2. Dear ImGui Embedded Library (Core + Win32 + DX11)
+    # Dear ImGui (core + Win32 + DX11 backends)
     set(IMGUI_SOURCES
         src/third_party/imgui/imgui.cpp
         src/third_party/imgui/imgui_draw.cpp
@@ -142,7 +104,7 @@ if(WIN32 OR CYGWIN OR MSYS OR MINGW)
     )
 
     add_library(imgui STATIC ${IMGUI_SOURCES})
-    target_include_directories(imgui PUBLIC
+    target_include_directories(imgui SYSTEM PUBLIC
         src/third_party/imgui
         src/third_party/imgui/backends
     )
@@ -151,50 +113,79 @@ if(WIN32 OR CYGWIN OR MSYS OR MINGW)
         target_compile_options(imgui PRIVATE /W3 /wd4244 /wd4267)
         set_property(TARGET imgui PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     endif()
+endif()
 
-    # 3. In-Game Unified Payload DLL
-    add_library(hub_payload SHARED
-        src/payload/dllmain.cpp
-    )
+# -----------------------------------------------------------------------------
+# Layers (AGENTS.md): plugins depend on common; payload and app depend on the
+# plugins and common; nothing depends on the payload or the app. Each layer keeps
+# its headers under its own include/ root and publishes only that root, so an
+# #include across a layer does not compile.
+# -----------------------------------------------------------------------------
+file(GLOB_RECURSE HUB_COMMON_SOURCES CONFIGURE_DEPENDS src/common/src/*.cpp)
+add_library(hub_common STATIC ${HUB_COMMON_SOURCES})
+target_include_directories(hub_common PUBLIC include src/common/include)
+target_link_libraries(hub_common PRIVATE hub_warnings)
+if(HUB_WINDOWS)
+    # The shared overlay code in common/ui draws with ImGui.
+    target_link_libraries(hub_common PUBLIC imgui)
+endif()
 
-    target_include_directories(hub_payload PRIVATE
-        include
-        src
-        plugins
-        plugins/latency_mitigator/include
-        plugins/combat_meter/include
-        src/third_party/minhook/include
-        src/third_party/imgui
-        src/third_party/imgui/backends
-    )
+file(GLOB HUB_METER_SOURCES CONFIGURE_DEPENDS plugins/combat_meter/src/*.cpp)
+add_library(hub_meter STATIC ${HUB_METER_SOURCES})
+target_include_directories(hub_meter PUBLIC plugins/combat_meter/include)
+target_link_libraries(hub_meter PUBLIC hub_common PRIVATE hub_warnings)
 
-    target_link_libraries(hub_payload PRIVATE
-        hub_common
-        minhook
-        imgui
-        d3d11
-        dxgi
-    )
+file(GLOB HUB_MITIGATOR_SOURCES CONFIGURE_DEPENDS plugins/latency_mitigator/src/*.cpp)
+add_library(hub_mitigator STATIC ${HUB_MITIGATOR_SOURCES})
+target_include_directories(hub_mitigator PUBLIC plugins/latency_mitigator/include)
+target_link_libraries(hub_mitigator PUBLIC hub_common PRIVATE hub_warnings)
 
-    # 4. Desktop Manager Executable (ffxiv-hub.exe)
+add_library(hub_plugins INTERFACE)
+target_link_libraries(hub_plugins INTERFACE hub_meter hub_mitigator)
+
+# The payload less its DllMain, so the tests link it too.
+file(GLOB HUB_PAYLOAD_SOURCES CONFIGURE_DEPENDS src/payload/src/*.cpp)
+list(REMOVE_ITEM HUB_PAYLOAD_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/payload/src/dllmain.cpp")
+add_library(hub_payload_core STATIC ${HUB_PAYLOAD_SOURCES})
+target_include_directories(hub_payload_core PUBLIC src/payload/include)
+target_link_libraries(hub_payload_core PUBLIC hub_plugins PRIVATE hub_warnings)
+if(HUB_WINDOWS)
+    target_link_libraries(hub_payload_core PUBLIC minhook imgui d3d11 dxgi)
+endif()
+
+# The desktop manager less its wWinMain.
+file(GLOB HUB_APP_UI_SOURCES CONFIGURE_DEPENDS src/app/src/ui/*.cpp)
+add_library(hub_app_core STATIC src/app/src/app_state.cpp ${HUB_APP_UI_SOURCES})
+target_include_directories(hub_app_core PUBLIC src/app/include)
+target_link_libraries(hub_app_core PUBLIC hub_plugins PRIVATE hub_warnings)
+if(HUB_WINDOWS)
+    target_link_libraries(hub_app_core PUBLIC imgui)
+endif()
+
+# Unit Tests Target (cross-platform runnable on macOS, Linux, Windows)
+if(BUILD_TESTS)
+    enable_testing()
+    file(GLOB TEST_SOURCES CONFIGURE_DEPENDS tests/*.cpp)
+    add_executable(hub_test_runner ${TEST_SOURCES})
+    target_include_directories(hub_test_runner PRIVATE tests)
+    target_link_libraries(hub_test_runner PRIVATE hub_payload_core hub_app_core hub_warnings)
+    add_test(NAME AllTests COMMAND hub_test_runner)
+endif()
+
+# Windows-specific targets (In-Game Payload DLL and Desktop Manager GUI)
+if(HUB_WINDOWS)
+    # In-Game Unified Payload DLL
+    add_library(hub_payload SHARED src/payload/src/dllmain.cpp)
+    target_link_libraries(hub_payload PRIVATE hub_payload_core hub_warnings)
+
+    # Desktop Manager Executable (ffxiv-hub.exe)
     add_executable(ffxiv-hub WIN32
-        src/app/main.cpp
+        src/app/src/main.cpp
         src/app/resources/app.rc
     )
-
-    target_include_directories(ffxiv-hub PRIVATE
-        include
-        src
-        plugins
-        plugins/latency_mitigator/include
-        plugins/combat_meter/include
-        src/third_party/imgui
-        src/third_party/imgui/backends
-    )
-
     target_link_libraries(ffxiv-hub PRIVATE
-        hub_common
-        imgui
+        hub_app_core
+        hub_warnings
         d3d11
         dxgi
         comctl32
@@ -211,11 +202,7 @@ if(WIN32 OR CYGWIN OR MSYS OR MINGW)
         target_link_options(ffxiv-hub PRIVATE "/MANIFEST:NO")
     endif()
 
-    if(BUILD_TESTS)
-        target_link_libraries(hub_test_runner PRIVATE minhook imgui d3d11 dxgi comctl32 dwmapi uxtheme)
-    endif()
-
-    # 5. Installation Rules for Windows Distribution
+    # Installation Rules for Windows Distribution
     # Binaries only. Documentation stays in the repository so it cannot go stale
     # against the release it shipped with.
     install(TARGETS ffxiv-hub hub_payload

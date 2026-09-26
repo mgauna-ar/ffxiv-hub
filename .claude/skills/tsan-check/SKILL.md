@@ -1,6 +1,6 @@
 ---
 name: tsan-check
-description: Build and run the test suite under ThreadSanitizer to prove EncounterEngine locking and the multi-producer IPC ring buffer are intact. Use after touching any EncounterEngine, CombatantRegistry or MetricsAccumulator entry point, when changing what locks the combat meter takes, or when touching src/common/ipc/ring_buffer.hpp or adding a thread that pushes outbound packets - a race there is invisible to a normal `make test` and only reports under TSan.
+description: Build and run the test suite under ThreadSanitizer to prove EncounterEngine locking and the multi-producer IPC ring buffer are intact. Use after touching any EncounterEngine, CombatantRegistry or MetricsAccumulator entry point, when changing what locks the combat meter takes, or when touching src/common/include/common/ipc/ring_buffer.hpp or adding a thread that pushes outbound packets - a race there is invisible to a normal `make test` and only reports under TSan.
 ---
 
 # Checking `EncounterEngine` Locking
@@ -18,8 +18,8 @@ This builds the same sources as `make` with `-fsanitize=thread -g -O1` into
 `halt_on_error=1`, so the first race fails the target. CI runs it on every pull request
 (the *Linux ThreadSanitizer* job), but run it locally after touching any
 `EncounterEngine`, `CombatantRegistry` or `MetricsAccumulator` entry point,
-`src/common/ipc/ring_buffer.hpp`, or the set of threads that push outbound packets. It
-must report zero data races.
+`src/common/include/common/ipc/ring_buffer.hpp`, or the set of threads that push
+outbound packets. It must report zero data races.
 
 Clang needs its sanitizer runtime (`libclang-rt-<version>-dev` on Debian and Ubuntu); a
 link error naming `libclang_rt.tsan` means it is missing. On a kernel with 32-bit mmap
