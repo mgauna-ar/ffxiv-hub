@@ -12,10 +12,17 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same branch or pull request cancels the run it supersedes. Tag
+# runs build and publish a release, so they are never cancelled.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
   build-linux:
     name: Linux ${{ matrix.cxx }} Build & Test
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -35,6 +42,7 @@ jobs:
   sanitizers:
     name: Linux ${{ matrix.name }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -59,6 +67,7 @@ jobs:
   build-windows:
     name: Windows MSVC Build, Test & Package
     runs-on: windows-latest
+    timeout-minutes: 20
 
     steps:
       - name: Checkout Repository
@@ -76,22 +85,18 @@ jobs:
       - name: Run Unit Tests (CTest)
         run: ctest --test-dir build -C Release --output-on-failure
 
-      - name: Stage & Compress Distribution Package
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Path dist -Force
-          Copy-Item build/bin/Release/ffxiv-hub.exe dist/
-          Copy-Item build/bin/Release/hub_payload.dll dist/
-          Compress-Archive -Path dist/* -DestinationPath ffxiv-hub-windows-x64.zip -Force
-          $hash = (Get-FileHash -Algorithm SHA256 ffxiv-hub-windows-x64.zip).Hash
-          "$hash  ffxiv-hub-windows-x64.zip" | Out-File -Encoding utf8 ffxiv-hub-windows-x64.zip.sha256
-          Copy-Item ffxiv-hub-windows-x64.zip.sha256 dist/
+      # The archive's contents are the install() rules in CMakeLists.txt, the same
+      # package a local cpack run writes.
+      - name: Package (CPack)
+        run: cpack --config build/CPackConfig.cmake -G ZIP -C Release -B dist
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v7
         with:
           name: ffxiv-hub-windows-x64
-          path: dist/*
+          path: |
+            build/bin/Release/ffxiv-hub.exe
+            build/bin/Release/hub_payload.dll
           if-no-files-found: error
           retention-days: 14
 
@@ -100,9 +105,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: ffxiv-hub-release
-          path: |
-            ffxiv-hub-windows-x64.zip
-            ffxiv-hub-windows-x64.zip.sha256
+          path: dist/ffxiv-hub-windows-x64.zip
           if-no-files-found: error
           retention-days: 1
 
@@ -111,10 +114,24 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [ build-windows, build-linux, sanitizers ]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: write
 
     steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      # include/hub/version.hpp is the one place the version is written; a tag that
+      # disagrees would publish binaries reporting another version.
+      - name: Check Tag Matches Version
+        run: |
+          version=$(sed -n 's/^#define HUB_VERSION_STRING "\(.*\)"$/\1/p' include/hub/version.hpp)
+          if [ "${GITHUB_REF_NAME#v}" != "$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match HUB_VERSION_STRING \"$version\" in include/hub/version.hpp"
+            exit 1
+          fi
+
       - name: Download Release Package
         uses: actions/download-artifact@v8
         with:
@@ -123,7 +140,5 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          files: |
-            ffxiv-hub-windows-x64.zip
-            ffxiv-hub-windows-x64.zip.sha256
+          files: ffxiv-hub-windows-x64.zip
           generate_release_notes: true
