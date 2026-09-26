@@ -431,7 +431,7 @@ ffxiv-hub/
 ├── plugins/combat_meter/        Combat Meter: analytics core, in-game table, plugin glue
 ├── plugins/latency_mitigator/   Latency Mitigator: RTT tracking, lock math, ping HUD
 ├── tests/                       Unit tests, runnable on Windows, macOS and Linux
-└── tools/, scripts/             Table generators, signature checks, game-client inspection,
+└── tools/                       Table generators, signature checks, game-client inspection,
                                  README screenshots
 ```
 
