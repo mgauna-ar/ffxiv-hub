@@ -1,6 +1,7 @@
 #pragma once
 
 #include "hub/types.hpp"
+#include "app/connection_state.hpp"
 #include "common/config/config_manager.hpp"
 #include "common/ipc/pipe_server.hpp"
 #include "common/os/network_monitor.hpp"
@@ -22,13 +23,6 @@ enum class DesktopView : uint8_t {
     CombatMeter,
     LatencyMitigator,
     Settings
-};
-
-enum class ConnectionState : uint8_t {
-    WaitingForGame,
-    Injecting,
-    InjectedWaitingPipe,
-    Connected
 };
 
 struct RegisteredPluginInfo {
@@ -172,7 +166,9 @@ public:
     /// own copy and overwrites hand edits on its next autosave.
     void send_reload_config();
 
-    /// Asks the payload to unhook and unload without killing the game.
+    /// Asks the payload to unhook and go dormant without killing the game. Its
+    /// DLL stays mapped, so it cannot be attached again until the game restarts;
+    /// the supervisor reports ConnectionState::Unloaded once the pipe drops.
     void send_unhook_and_exit();
 
     /// Independent ICMP ping to the game server, measured from the desktop process
@@ -217,6 +213,9 @@ private:
     std::atomic<uint32_t> m_game_pid{0};
     std::atomic<bool> m_access_denied{false};
     std::atomic<bool> m_hooks_installed{false};
+    /// PID the payload was unloaded from, 0 if none. Keyed by PID so a restarted
+    /// game is attached again without anyone clearing it.
+    std::atomic<uint32_t> m_unloaded_pid{0};
     std::atomic<uint32_t> m_game_state_flags{0};
     std::atomic<uint64_t> m_last_heartbeat_ms{0};
     mutable std::mutex m_status_mutex;

@@ -110,6 +110,19 @@ payload once the game window is ready, and shows a notification.
 
 - The sidebar and the dashboard read **Hooked & active**.
 - Hovering the tray icon shows **Connected (PID …)**.
+
+The sidebar badge is the short form of the connection status; hover it for the full line.
+
+| Badge | Full status | Means |
+|---|---|---|
+| Searching for game | Searching for FFXIV... | The game is not running, or its window is not up yet. |
+| Injecting | Injecting Payload... | The payload is being loaded into the game. |
+| Connecting | Connecting Pipe... | The payload is loaded and has not answered yet. |
+| Hooked & active | Connected (PID …) | Attached and working. |
+| Hooks missing | Connected, hooks not installed (PID …) | The payload answered but could not hook the game, usually after a patch. |
+| Reconnecting | Reconnecting to payload (PID …)... | The connection dropped while the game runs. The payload retries every 2 seconds on its own. |
+| Unloaded | Payload unloaded. Restart the game to attach again. | You used **Unload payload**. A tray notification says the same. |
+| Access denied | Access Denied (Run as Admin) | Windows refused access to the game. Run the Hub as administrator. |
 - The combat meter and the ping badge appear in game. The badge's RTT reading fills in
   after your first ability, and the meter fills once you start fighting.
 
@@ -303,7 +316,10 @@ is closed it only keeps the combat meter counting, and reconnects within a secon
 you open the Hub again.
 
 To switch it off for the rest of the session, use **Hub Settings → Unload payload**. Its
-hooks become pass-throughs, and it stays off until the game restarts.
+hooks become pass-throughs and it stops talking to the Hub, which then reads **Payload
+unloaded**. The DLL itself stays in the game's memory, for the same reason as above, so
+the Hub cannot attach again until you restart the game; after the restart it attaches as
+usual.
 
 To uninstall, delete the folder you extracted. Settings live in `%APPDATA%/ffxiv-hub/`;
 delete that too if you want no trace left.

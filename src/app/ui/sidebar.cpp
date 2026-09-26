@@ -101,6 +101,8 @@ StatusBadge status_badge_for(const AppState& app_state) {
                                                : StatusBadge{ "Hooks missing", colors::Danger };
         case ConnectionState::Injecting:           return { "Injecting", colors::WarningLight };
         case ConnectionState::InjectedWaitingPipe: return { "Connecting", colors::WarningLight };
+        case ConnectionState::Reconnecting:        return { "Reconnecting", colors::WarningLight };
+        case ConnectionState::Unloaded:            return { "Unloaded", colors::TextDim };
         case ConnectionState::WaitingForGame:      break;
     }
     return { "Searching for game", colors::TextDim };

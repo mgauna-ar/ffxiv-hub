@@ -2,6 +2,7 @@
 #include "common/ui/overlay_config.hpp"
 #include "common/os/process_finder.hpp"
 #include "common/os/injector.hpp"
+#include "common/os/unique_handle.hpp"
 #include "common/os/logger.hpp"
 #include "common/os/auto_start.hpp"
 #include <algorithm>
@@ -320,21 +321,29 @@ void AppState::check_game_process() {
     m_last_process_check = now;
 
     auto proc = os::ProcessFinder::find_process();
+    // Owns the handle find_process opened, on every path out of here.
+    const os::UniqueHandle process_handle(proc ? proc->handle : nullptr);
     const uint32_t pid = proc ? proc->pid : 0;
     if (pid != m_game_pid.load()) {
         m_network_monitor.set_target_pid(pid);
     }
     m_game_pid.store(pid);
 
-    if (pid == 0) {
-        m_connection_state.store(ConnectionState::WaitingForGame);
-        m_access_denied.store(false);
-        return;
+    ConnectionObservation seen{};
+    seen.process_alive = pid != 0;
+    seen.handle_opened = proc && proc->handle != nullptr;
+    seen.pipe_connected = m_pipe_server.is_connected();
+    seen.unload_requested = pid != 0 && m_unloaded_pid.load() == pid;
+
+    if (!seen.pipe_connected) {
+        // Only a live payload reports its hooks; the next one reports afresh.
+        m_hooks_installed.store(false);
     }
 
-    // Check if OpenProcess failed (e.g. Access Denied / privilege mismatch)
-    if (!proc->handle) {
-        m_connection_state.store(ConnectionState::WaitingForGame);
+    if (!seen.process_alive) {
+        m_access_denied.store(false);
+    } else if (!seen.handle_opened) {
+        // OpenProcess failed (e.g. Access Denied / privilege mismatch)
         if (proc->last_error == 5) { // ERROR_ACCESS_DENIED
             m_access_denied.store(true);
             static uint32_t last_warned_pid = 0;
@@ -352,80 +361,71 @@ void AppState::check_game_process() {
                     ") but OpenProcess failed with Win32 Error " + std::to_string(proc->last_error) + ".");
             }
         }
-        return;
-    }
-    m_access_denied.store(false);
-
-    if (m_pipe_server.is_connected()) {
-        m_connection_state.store(ConnectionState::Connected);
-#ifdef _WIN32
-        CloseHandle(static_cast<HANDLE>(proc->handle));
-#endif
-        return;
+    } else {
+        m_access_denied.store(false);
     }
 
-    // Process is running, but not connected yet
-    auto current_state = m_connection_state.load();
-    if (current_state == ConnectionState::WaitingForGame) {
+    const auto window_ready = [&]() {
 #ifdef _WIN32
-        // Window Readiness Guard: Ensure the main game window (FFXIVGAME) is created
-        // before injecting. If injected too early on process spawn, DirectX 11 device creation hasn't
-        // occurred yet or the hook binds to transient pre-boot swapchains.
+        // Only the main game window (FFXIVGAME) of this very process counts.
         HWND h_game_wnd = FindWindowW(L"FFXIVGAME", nullptr);
-        bool window_ready = false;
-        if (h_game_wnd != nullptr) {
-            DWORD wnd_pid = 0;
-            GetWindowThreadProcessId(h_game_wnd, &wnd_pid);
-            if (wnd_pid == pid) {
-                window_ready = true;
-            }
-        }
-        if (!window_ready) {
-            CloseHandle(static_cast<HANDLE>(proc->handle));
-            return;
-        }
+        if (h_game_wnd == nullptr) return false;
+        DWORD wnd_pid = 0;
+        GetWindowThreadProcessId(h_game_wnd, &wnd_pid);
+        return wnd_pid == pid;
+#else
+        return true;
 #endif
+    };
+    const auto payload_loaded = [&]() { return os::DllInjector::is_payload_already_loaded(*proc); };
 
-        if (os::DllInjector::is_payload_already_loaded(*proc)) {
-            m_connection_state.store(ConnectionState::InjectedWaitingPipe);
-            os::Logger::info("hub_payload.dll is already resident in FFXIV (PID: " + std::to_string(pid) + "). Awaiting IPC handshake...");
-#ifdef _WIN32
-            CloseHandle(static_cast<HANDLE>(proc->handle));
-#endif
-            return;
-        }
+    const ConnectionState previous = m_connection_state.load();
+    const ConnectionDecision decision = decide_connection(previous, seen, window_ready, payload_loaded);
+    m_connection_state.store(decision.next);
 
-        m_connection_state.store(ConnectionState::Injecting);
-        os::Logger::info("FFXIV detected (PID: " + std::to_string(pid) + "). Injecting hub_payload.dll...");
-
-        std::filesystem::path dll_path = "hub_payload.dll";
-#ifdef _WIN32
-        wchar_t exe_path_buf[MAX_PATH];
-        DWORD len = GetModuleFileNameW(nullptr, exe_path_buf, MAX_PATH);
-        if (len > 0 && len < MAX_PATH) {
-            std::filesystem::path exe_dir = std::filesystem::path(exe_path_buf).parent_path();
-            std::filesystem::path candidate = exe_dir / "hub_payload.dll";
-            std::error_code ec;
-            if (std::filesystem::exists(candidate, ec)) {
-                dll_path = candidate;
-            }
-        }
-#endif
-
-        os::DllInjector injector;
-        bool ok = injector.inject(*proc, dll_path);
-        if (ok) {
-            m_connection_state.store(ConnectionState::InjectedWaitingPipe);
-            os::Logger::info("hub_payload.dll injected successfully from " + dll_path.string() + ". Awaiting IPC handshake...");
-        } else {
-            m_connection_state.store(ConnectionState::WaitingForGame);
-            os::Logger::warn("Failed to inject hub_payload.dll: " + injector.last_error());
+    if (decision.next != previous) {
+        if (decision.next == ConnectionState::Reconnecting) {
+            os::Logger::warn("IPC pipe to the payload dropped (PID: " + std::to_string(pid) + "). Waiting for it to reconnect...");
+        } else if (decision.next == ConnectionState::Unloaded) {
+            os::Logger::info("hub_payload.dll unloaded from FFXIV (PID: " + std::to_string(pid) +
+                "). It stays mapped until the game restarts.");
         }
     }
 
+    switch (decision.action) {
+        case ConnectionAction::None:
+            break;
+        case ConnectionAction::AdoptResident:
+            os::Logger::info("hub_payload.dll is already resident in FFXIV (PID: " + std::to_string(pid) + "). Awaiting IPC handshake...");
+            break;
+        case ConnectionAction::Inject: {
+            os::Logger::info("FFXIV detected (PID: " + std::to_string(pid) + "). Injecting hub_payload.dll...");
+
+            std::filesystem::path dll_path = "hub_payload.dll";
 #ifdef _WIN32
-    CloseHandle(static_cast<HANDLE>(proc->handle));
+            wchar_t exe_path_buf[MAX_PATH];
+            DWORD len = GetModuleFileNameW(nullptr, exe_path_buf, MAX_PATH);
+            if (len > 0 && len < MAX_PATH) {
+                std::filesystem::path exe_dir = std::filesystem::path(exe_path_buf).parent_path();
+                std::filesystem::path candidate = exe_dir / "hub_payload.dll";
+                std::error_code ec;
+                if (std::filesystem::exists(candidate, ec)) {
+                    dll_path = candidate;
+                }
+            }
 #endif
+
+            os::DllInjector injector;
+            const bool ok = injector.inject(*proc, dll_path);
+            m_connection_state.store(after_injection(ok));
+            if (ok) {
+                os::Logger::info("hub_payload.dll injected successfully from " + dll_path.string() + ". Awaiting IPC handshake...");
+            } else {
+                os::Logger::warn("Failed to inject hub_payload.dll: " + injector.last_error());
+            }
+            break;
+        }
+    }
 }
 
 bool AppState::is_connected() const noexcept {
@@ -443,6 +443,10 @@ std::string AppState::connection_status_string() const {
             return "Injecting Payload...";
         case ConnectionState::InjectedWaitingPipe:
             return "Connecting Pipe...";
+        case ConnectionState::Reconnecting:
+            return "Reconnecting to payload (PID: " + std::to_string(m_game_pid.load()) + ")...";
+        case ConnectionState::Unloaded:
+            return "Payload unloaded. Restart the game to attach again.";
         case ConnectionState::Connected:
             // The pipe being up says nothing about whether the detours took.
             if (!m_hooks_installed.load()) {
@@ -587,7 +591,9 @@ void AppState::send_reload_config() {
 }
 
 void AppState::send_unhook_and_exit() {
-    m_pipe_server.send_command(PluginId::Core, CommandId::UnhookAndExit, 0);
+    if (m_pipe_server.send_command(PluginId::Core, CommandId::UnhookAndExit, 0)) {
+        m_unloaded_pid.store(m_game_pid.load());
+    }
 }
 
 void AppState::send_combat_end_encounter() {

@@ -54,6 +54,14 @@ AttachStatus attach_status(AppState& app_state) {
         return { "Access denied (error 5)", colors::Danger,
                  "Injection was refused. Run FFXIV Hub as administrator.", colors::Warning };
     }
+    if (app_state.connection_state() == ConnectionState::Unloaded) {
+        return { "Payload unloaded", colors::TextMuted,
+                 "Payload unloaded. Restart the game to attach again.", colors::TextDim };
+    }
+    if (app_state.connection_state() == ConnectionState::Reconnecting) {
+        return { "Reconnecting", colors::Warning,
+                 "The IPC pipe dropped; the payload retries every 2 seconds.", colors::TextDim };
+    }
     if (!app_state.is_connected()) {
         return { "Injected, awaiting handshake", colors::Warning,
                  "hub_payload.dll is resident; the IPC pipe has not answered yet.",

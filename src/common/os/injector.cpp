@@ -1,4 +1,6 @@
 #include "common/os/injector.hpp"
+#include "common/os/logger.hpp"
+#include "common/os/unique_handle.hpp"
 #include <filesystem>
 
 #ifdef _WIN32
@@ -21,6 +23,32 @@ namespace {
         WideCharToMultiByte(CP_UTF8, 0, wstr.data(), static_cast<int>(wstr.size()), str.data(), size_needed, nullptr, nullptr);
         return str;
     }
+
+    /// Memory committed in another process, released with VirtualFreeEx when the
+    /// guard goes out of scope unless leak() was called.
+    class RemoteAllocation {
+    public:
+        RemoteAllocation(HANDLE process, LPVOID address) noexcept
+            : m_process(process), m_address(address) {}
+        ~RemoteAllocation() {
+            if (m_address) {
+                VirtualFreeEx(m_process, m_address, 0, MEM_RELEASE);
+            }
+        }
+
+        RemoteAllocation(const RemoteAllocation&) = delete;
+        RemoteAllocation& operator=(const RemoteAllocation&) = delete;
+
+        [[nodiscard]] LPVOID get() const noexcept { return m_address; }
+        [[nodiscard]] explicit operator bool() const noexcept { return m_address != nullptr; }
+
+        /// Keeps the memory allocated for the life of the target process.
+        void leak() noexcept { m_address = nullptr; }
+
+    private:
+        HANDLE m_process;
+        LPVOID m_address;
+    };
 } // namespace
 
 bool DllInjector::inject(const ProcessInfo& proc, const std::filesystem::path& dll_path) {
@@ -42,30 +70,28 @@ bool DllInjector::inject(const ProcessInfo& proc, const std::filesystem::path& d
 
     const size_t path_size_bytes = (full_path_w.length() + 1) * sizeof(wchar_t);
 
-    LPVOID p_remote_path = VirtualAllocEx(
+    RemoteAllocation remote_path(h_process, VirtualAllocEx(
         h_process,
         nullptr,
         path_size_bytes,
         MEM_COMMIT | MEM_RESERVE,
         PAGE_READWRITE
-    );
-    if (!p_remote_path) {
+    ));
+    if (!remote_path) {
         m_last_error = "VirtualAllocEx failed (Win32 Error: " + std::to_string(GetLastError()) + ")";
         return false;
     }
 
     SIZE_T bytes_written = 0;
-    if (!WriteProcessMemory(h_process, p_remote_path, full_path_w.c_str(), path_size_bytes, &bytes_written) ||
+    if (!WriteProcessMemory(h_process, remote_path.get(), full_path_w.c_str(), path_size_bytes, &bytes_written) ||
         bytes_written != path_size_bytes) {
         m_last_error = "WriteProcessMemory failed (Win32 Error: " + std::to_string(GetLastError()) + ")";
-        VirtualFreeEx(h_process, p_remote_path, 0, MEM_RELEASE);
         return false;
     }
 
     HMODULE h_kernel32 = GetModuleHandleW(L"kernel32.dll");
     if (!h_kernel32) {
         m_last_error = "GetModuleHandleW(kernel32.dll) failed (Win32 Error: " + std::to_string(GetLastError()) + ")";
-        VirtualFreeEx(h_process, p_remote_path, 0, MEM_RELEASE);
         return false;
     }
 
@@ -74,53 +100,47 @@ bool DllInjector::inject(const ProcessInfo& proc, const std::filesystem::path& d
     );
     if (!pfn_load_library) {
         m_last_error = "GetProcAddress(LoadLibraryW) failed (Win32 Error: " + std::to_string(GetLastError()) + ")";
-        VirtualFreeEx(h_process, p_remote_path, 0, MEM_RELEASE);
         return false;
     }
 
     DWORD thread_id = 0;
-    HANDLE h_remote_thread = CreateRemoteThread(
+    const UniqueHandle remote_thread(CreateRemoteThread(
         h_process,
         nullptr,
         0,
         pfn_load_library,
-        p_remote_path,
+        remote_path.get(),
         0,
         &thread_id
-    );
-
-    if (!h_remote_thread) {
+    ));
+    if (!remote_thread) {
         m_last_error = "CreateRemoteThread failed (Win32 Error: " + std::to_string(GetLastError()) + ").";
-        VirtualFreeEx(h_process, p_remote_path, 0, MEM_RELEASE);
         return false;
     }
 
-    const DWORD wait_res = WaitForSingleObject(h_remote_thread, INJECTION_THREAD_TIMEOUT_MS);
+    const DWORD wait_res = WaitForSingleObject(remote_thread.get(), INJECTION_THREAD_TIMEOUT_MS);
     if (wait_res != WAIT_OBJECT_0) {
+        // LoadLibraryW may still be reading the path. Freeing it under the remote
+        // thread would crash the game, so the few hundred bytes stay allocated.
+        remote_path.leak();
         m_last_error = "Remote thread execution timed out or failed (wait result: " + std::to_string(wait_res) + ")";
-        CloseHandle(h_remote_thread);
-        VirtualFreeEx(h_process, p_remote_path, 0, MEM_RELEASE);
+        Logger::warn("Injection thread did not finish within " + std::to_string(INJECTION_THREAD_TIMEOUT_MS) +
+                     " ms; leaving its " + std::to_string(path_size_bytes) +
+                     "-byte path buffer allocated in the game process.");
         return false;
     }
 
     DWORD remote_exit_code = 0;
-    if (!GetExitCodeThread(h_remote_thread, &remote_exit_code)) {
+    if (!GetExitCodeThread(remote_thread.get(), &remote_exit_code)) {
         m_last_error = "GetExitCodeThread failed (Win32 Error: " + std::to_string(GetLastError()) + ")";
-        CloseHandle(h_remote_thread);
-        VirtualFreeEx(h_process, p_remote_path, 0, MEM_RELEASE);
         return false;
     }
 
     if (remote_exit_code == 0 || remote_exit_code == STILL_ACTIVE) {
         m_last_error = "LoadLibraryW failed in game process (remote exit code: 0). Target path: " +
                        wstring_to_utf8(full_path_w);
-        CloseHandle(h_remote_thread);
-        VirtualFreeEx(h_process, p_remote_path, 0, MEM_RELEASE);
         return false;
     }
-
-    CloseHandle(h_remote_thread);
-    VirtualFreeEx(h_process, p_remote_path, 0, MEM_RELEASE);
 
     m_remote_hmodule = static_cast<uintptr_t>(remote_exit_code);
     m_last_error = "OK";
@@ -128,8 +148,8 @@ bool DllInjector::inject(const ProcessInfo& proc, const std::filesystem::path& d
 }
 
 bool DllInjector::is_payload_already_loaded(const ProcessInfo& proc) {
-    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, proc.pid);
-    if (snap == INVALID_HANDLE_VALUE) {
+    const UniqueHandle snap(CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, proc.pid));
+    if (!snap) {
         return false;
     }
 
@@ -137,7 +157,7 @@ bool DllInjector::is_payload_already_loaded(const ProcessInfo& proc) {
     me.dwSize = sizeof(MODULEENTRY32W);
     bool found = false;
 
-    if (Module32FirstW(snap, &me)) {
+    if (Module32FirstW(snap.get(), &me)) {
         do {
             std::wstring mod = me.szModule;
             for (auto& c : mod) {
@@ -147,10 +167,9 @@ bool DllInjector::is_payload_already_loaded(const ProcessInfo& proc) {
                 found = true;
                 break;
             }
-        } while (Module32NextW(snap, &me));
+        } while (Module32NextW(snap.get(), &me));
     }
 
-    CloseHandle(snap);
     return found;
 }
 

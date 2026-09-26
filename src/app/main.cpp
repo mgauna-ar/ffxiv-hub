@@ -366,7 +366,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     ShowWindow(hwnd, SW_SHOWDEFAULT);
     UpdateWindow(hwnd);
 
-    bool s_was_connected = false;
+    auto s_last_state = hub::app::ConnectionState::WaitingForGame;
     bool s_was_access_denied = false;
 
     MSG msg{};
@@ -385,21 +385,16 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
 
         // Balloons on transition only. The app closes to tray by default, so
         // without these a failed injection reports nowhere the user is looking.
+        // Driven by the supervisor's state rather than the pipe, which cannot
+        // tell a closed game from an unload or a reconnect.
         const bool connected_now = app_state.is_connected();
         const bool denied_now = app_state.is_access_denied();
-        if (connected_now != s_was_connected) {
-            if (connected_now) {
-                tray_manager.show_notification(
-                    "FFXIV Hub",
-                    "Attached to Final Fantasy XIV (PID " +
-                        std::to_string(app_state.game_pid()) + ").");
-            } else {
-                tray_manager.show_notification(
-                    "FFXIV Hub",
-                    "Final Fantasy XIV closed. Waiting for the game to start.");
-            }
-            s_was_connected = connected_now;
+        const auto state_now = app_state.connection_state();
+        if (const auto message = hub::app::connection_notification(s_last_state, state_now,
+                                                                   app_state.game_pid())) {
+            tray_manager.show_notification("FFXIV Hub", *message);
         }
+        s_last_state = state_now;
         if (denied_now && !s_was_access_denied) {
             tray_manager.show_notification(
                 "FFXIV Hub - Access Denied",
