@@ -3,16 +3,6 @@
 #include <cstdint>
 #include <utility>
 
-#ifdef _WIN32
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#endif
-
 namespace hub::os {
 
 /**
@@ -62,29 +52,32 @@ private:
     pointer m_handle{Traits::empty()};
 };
 
+/// CloseHandle, or nothing on the mock OS layer, which hands out no real handles.
+/// Out of line so this header, which the pipe headers include, needs no <windows.h>.
+void close_win32_handle(void* handle) noexcept;
+
 /// A kernel object HANDLE, typed as `void*` so headers need no <windows.h>.
-/// Both nullptr and INVALID_HANDLE_VALUE count as empty, since Win32 APIs fail
-/// with one or the other.
+/// Both nullptr and INVALID_HANDLE_VALUE (all bits set) count as empty, since
+/// Win32 APIs fail with one or the other.
 struct Win32HandleTraits {
     using pointer = void*;
     static pointer empty() noexcept { return nullptr; }
     static bool is_valid(pointer handle) noexcept {
-#ifdef _WIN32
-        return handle != nullptr && handle != INVALID_HANDLE_VALUE;
-#else
         return handle != nullptr && handle != reinterpret_cast<pointer>(static_cast<std::intptr_t>(-1));
-#endif
     }
-    static void close(pointer handle) noexcept {
-#ifdef _WIN32
-        CloseHandle(static_cast<HANDLE>(handle));
-#else
-        // The mock OS layer hands out no real handles, so there is nothing to close.
-        (void)handle;
-#endif
-    }
+    static void close(pointer handle) noexcept { close_win32_handle(handle); }
+};
+
+/// Memory a Win32 API allocated with LocalAlloc and hands back to be LocalFree'd,
+/// such as a security descriptor or a string SID.
+struct LocalMemoryTraits {
+    using pointer = void*;
+    static pointer empty() noexcept { return nullptr; }
+    static bool is_valid(pointer memory) noexcept { return memory != nullptr; }
+    static void close(pointer memory) noexcept;
 };
 
 using UniqueHandle = BasicUniqueHandle<Win32HandleTraits>;
+using UniqueLocalMemory = BasicUniqueHandle<LocalMemoryTraits>;
 
 } // namespace hub::os

@@ -1,8 +1,10 @@
 #include "common/ipc/pipe_server.hpp"
 #include "common/ipc/frame_reader.hpp"
+#include "common/os/logger.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <string>
 #include <type_traits>
 
 #ifdef _WIN32
@@ -35,28 +37,56 @@ void deliver(std::span<const uint8_t> bytes, const Callback& callback) {
     deliver_versioned<T>(bytes, sizeof(T), callback);
 }
 
+#ifdef _WIN32
+/// A security descriptor whose DACL grants the pipe to this process's user alone.
+/// The game runs as the same user whether either side is elevated or not (UAC
+/// elevation keeps the user SID), so that is everyone the payload can be; every
+/// other account on the machine, and anything running as another user, is refused.
+///
+/// There is no mandatory label. An unlabelled object reads as medium integrity,
+/// and the payload is a medium or high integrity client, so an elevated app is
+/// reachable from a game that is not: integrity only blocks a lower-integrity
+/// writer, and the low label the pipe used to carry only let low-integrity
+/// (sandboxed) processes in. Empty on failure, with GetLastError() set.
+os::UniqueLocalMemory current_user_only_descriptor() {
+    HANDLE raw_token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw_token)) return {};
+    const os::UniqueHandle token(raw_token);
+
+    DWORD size = 0;
+    GetTokenInformation(token.get(), TokenUser, nullptr, 0, &size);
+    if (size == 0) return {};
+    std::vector<uint8_t> user_buffer(size);
+    if (!GetTokenInformation(token.get(), TokenUser, user_buffer.data(), size, &size)) return {};
+    const auto* user = reinterpret_cast<const TOKEN_USER*>(user_buffer.data());
+
+    LPWSTR raw_sid = nullptr;
+    if (!ConvertSidToStringSidW(user->User.Sid, &raw_sid)) return {};
+    const os::UniqueLocalMemory sid(raw_sid);
+
+    // Protected DACL (no inherited ACEs) with one ACE: full access for the user.
+    const std::wstring sddl = L"D:P(A;;GA;;;" + std::wstring(raw_sid) + L")";
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1, &descriptor, nullptr)) {
+        return {};
+    }
+    return os::UniqueLocalMemory(descriptor);
+}
+#endif
+
 } // namespace
 
 PipeServer::PipeServer(const char* pipe_name)
     : m_pipe_name(pipe_name ? pipe_name : DEFAULT_PIPE_NAME) {
 #ifdef _WIN32
-    m_stop_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    m_write_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    m_stop_event.reset(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+    m_write_event.reset(CreateEventW(nullptr, TRUE, FALSE, nullptr));
 #endif
 }
 
+// The events close after this body, once stop() has joined the worker waiting on them.
 PipeServer::~PipeServer() {
     stop();
-#ifdef _WIN32
-    if (m_stop_event) {
-        CloseHandle(static_cast<HANDLE>(m_stop_event));
-        m_stop_event = nullptr;
-    }
-    if (m_write_event) {
-        CloseHandle(static_cast<HANDLE>(m_write_event));
-        m_write_event = nullptr;
-    }
-#endif
 }
 
 bool PipeServer::start() {
@@ -65,7 +95,7 @@ bool PipeServer::start() {
     m_running.store(true);
 #ifdef _WIN32
     if (m_stop_event) {
-        ResetEvent(static_cast<HANDLE>(m_stop_event));
+        ResetEvent(m_stop_event.get());
     }
     m_worker_thread = std::thread(&PipeServer::server_worker_thread, this);
 #endif
@@ -79,7 +109,7 @@ void PipeServer::stop() {
 
 #ifdef _WIN32
     if (m_stop_event) {
-        SetEvent(static_cast<HANDLE>(m_stop_event));
+        SetEvent(m_stop_event.get());
     }
 
     // Only cancel here. The worker thread owns the handle's lifetime; closing
@@ -149,7 +179,7 @@ bool PipeServer::send_packet(
     }
 
     OVERLAPPED ov_write{};
-    ov_write.hEvent = static_cast<HANDLE>(m_write_event);
+    ov_write.hEvent = m_write_event.get();
     ResetEvent(ov_write.hEvent);
 
     DWORD written = 0;
@@ -157,7 +187,7 @@ bool PipeServer::send_packet(
     if (!ok && GetLastError() == ERROR_IO_PENDING) {
         // Wait on the stop event too: a write issued after stop()'s CancelIoEx
         // would otherwise block on a client that is not reading.
-        HANDLE wait_events[2] = { ov_write.hEvent, static_cast<HANDLE>(m_stop_event) };
+        HANDLE wait_events[2] = { ov_write.hEvent, m_stop_event.get() };
         if (WaitForMultipleObjects(2, wait_events, FALSE, INFINITE) != WAIT_OBJECT_0) {
             CancelIoEx(h_pipe, &ov_write);
             GetOverlappedResult(h_pipe, &ov_write, &written, TRUE); // ov_write lives on this stack
@@ -216,7 +246,9 @@ bool PipeServer::process_raw_packet(std::span<const uint8_t> data) {
     // Common messages
     switch (msg_type) {
         case MessageType::Heartbeat:       deliver<HeartbeatPayload>(p, m_on_heartbeat); break;
-        case MessageType::Status:          deliver<StatusPayload>(p, m_on_status); break;
+        // A payload loaded before this app may send the status without its flags;
+        // they read as 0, and the app falls back to the message text.
+        case MessageType::Status:          deliver_versioned<StatusPayload>(p, STATUS_V1_SIZE, m_on_status); break;
         case MessageType::OverlayGeometry: deliver<OverlayGeometryPayload>(p, m_on_overlay_geometry); break;
         // A payload loaded before this app may send flags alone; its client_flags
         // read as 0, which the meter takes as "unknown".
@@ -242,33 +274,20 @@ void PipeServer::detach_pipe_handle() {
 }
 
 void PipeServer::server_worker_thread() {
-    const auto h_stop = static_cast<HANDLE>(m_stop_event);
+    const auto h_stop = m_stop_event.get();
+
+    // Built once: the same user owns every instance of the pipe.
+    const os::UniqueLocalMemory security_descriptor = current_user_only_descriptor();
+    if (!security_descriptor) {
+        os::Logger::warn("PipeServer: could not build the current-user DACL (Win32 error " +
+                         std::to_string(GetLastError()) + "); the pipe gets the default security");
+    }
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength = sizeof(SECURITY_ATTRIBUTES);
+    sa.bInheritHandle = FALSE;
+    sa.lpSecurityDescriptor = security_descriptor.get();
 
     while (m_running.load()) {
-        SECURITY_ATTRIBUTES sa{};
-        sa.nLength = sizeof(SECURITY_ATTRIBUTES);
-        sa.bInheritHandle = FALSE;
-
-        SECURITY_DESCRIPTOR sd{};
-        InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION);
-        SetSecurityDescriptorDacl(&sd, TRUE, nullptr, FALSE);
-
-        PSECURITY_DESCRIPTOR p_ml_sd = nullptr;
-        if (ConvertStringSecurityDescriptorToSecurityDescriptorA(
-                "S:(ML;;NW;;;LW)",
-                SDDL_REVISION_1,
-                &p_ml_sd,
-                nullptr)) {
-            PACL p_sacl = nullptr;
-            BOOL sacl_present = FALSE;
-            BOOL sacl_defaulted = FALSE;
-            if (GetSecurityDescriptorSacl(p_ml_sd, &sacl_present, &p_sacl, &sacl_defaulted) && sacl_present && p_sacl) {
-                SetSecurityDescriptorSacl(&sd, TRUE, p_sacl, FALSE);
-            }
-        }
-
-        sa.lpSecurityDescriptor = &sd;
-
         HANDLE hPipe = CreateNamedPipeA(
             m_pipe_name.c_str(),
             PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
@@ -277,12 +296,8 @@ void PipeServer::server_worker_thread() {
             65536,
             65536,
             1000,
-            &sa
+            security_descriptor ? &sa : nullptr
         );
-
-        if (p_ml_sd) {
-            LocalFree(p_ml_sd);
-        }
 
         if (hPipe == INVALID_HANDLE_VALUE) {
             if (!m_running.load()) break;
@@ -292,9 +307,10 @@ void PipeServer::server_worker_thread() {
 
         publish_pipe_handle(hPipe);
 
+        const os::UniqueHandle connect_event(CreateEventW(nullptr, TRUE, FALSE, nullptr));
         OVERLAPPED ov_connect{};
-        ov_connect.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-        if (!ov_connect.hEvent) {
+        ov_connect.hEvent = connect_event.get();
+        if (!connect_event) {
             detach_pipe_handle();
             CloseHandle(hPipe);
             break;
@@ -317,7 +333,6 @@ void PipeServer::server_worker_thread() {
                 }
             }
         }
-        CloseHandle(ov_connect.hEvent);
 
         if (!connected || !m_running.load()) {
             detach_pipe_handle();
@@ -328,8 +343,9 @@ void PipeServer::server_worker_thread() {
 
         m_connected.store(true);
 
+        const os::UniqueHandle read_event(CreateEventW(nullptr, TRUE, FALSE, nullptr));
         OVERLAPPED ov_read{};
-        ov_read.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        ov_read.hEvent = read_event.get();
 
         // One overlapped ReadFile that also wakes on the stop event, in the shape
         // read_frame() wants: bytes read, 0 once the client closed, -1 on failure.
@@ -355,13 +371,9 @@ void PipeServer::server_worker_thread() {
         // over inside read_frame(), and a bad header cannot be resynchronised.
         std::vector<uint8_t> frame;
         frame.reserve(sizeof(PacketHeader) + MAX_PAYLOAD_SIZE);
-        while (m_running.load() && m_connected.load() && ov_read.hEvent) {
+        while (m_running.load() && m_connected.load() && read_event) {
             if (read_frame(read_some, frame) != FrameResult::Frame) break;
             process_raw_packet(frame);
-        }
-
-        if (ov_read.hEvent) {
-            CloseHandle(ov_read.hEvent);
         }
 
         m_connected.store(false);

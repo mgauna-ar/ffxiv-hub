@@ -8,11 +8,14 @@
 #include "mitigator/latency_plugin.hpp"
 #include "payload/command_dispatcher.hpp"
 #include "payload/command_queue.hpp"
+#include "payload/periodic.hpp"
+#include "payload/status_report.hpp"
 #include "meter/combat_plugin.hpp"
 #include "common/config/json.hpp"
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cstring>
 #include <optional>
 #include <string>
 #include <thread>
@@ -1205,4 +1208,74 @@ TEST_CASE(Payload, Dx11DrainWaitsForInFlightCalls) {
     TEST_ASSERT_FALSE(drained_while_inside);
     TEST_ASSERT(payload::Dx11Hook::drain_in_flight(std::chrono::milliseconds(1000)));
     TEST_ASSERT_EQ(payload::Dx11Hook::in_flight_calls(), 0);
+}
+
+TEST_CASE(Payload, PeriodicRunsOncePerInterval) {
+    using namespace std::chrono_literals;
+    const auto start = payload::Periodic::Clock::time_point{} + 1h;
+    payload::Periodic job(250ms, start);
+
+    TEST_ASSERT(!job.fire(start));
+    TEST_ASSERT(!job.fire(start + 200ms));
+    TEST_ASSERT(job.fire(start + 250ms));
+    // Counted from when it ran, not from when it was due: no catch-up burst.
+    TEST_ASSERT(!job.fire(start + 400ms));
+    TEST_ASSERT(job.fire(start + 2s));
+    TEST_ASSERT(!job.fire(start + 2s + 100ms));
+
+    // due() alone does not consume the period; mark() does.
+    TEST_ASSERT(job.due(start + 3s));
+    TEST_ASSERT(job.due(start + 3s));
+    job.mark(start + 3s);
+    TEST_ASSERT(!job.due(start + 3s + 100ms));
+
+    // A job last run at the epoch is due at once.
+    payload::Periodic immediate(std::chrono::minutes(1), payload::Periodic::Clock::time_point{});
+    TEST_ASSERT(immediate.fire(start));
+    TEST_ASSERT(!immediate.fire(start + 30s));
+}
+
+TEST_CASE(Payload, StatusReportCarriesFlagsAndTheOldWording) {
+    payload::StatusFacts facts{};
+    facts.game_pid = 1234;
+    facts.hooks_installed = true;
+    facts.hook_detail = "3/3";
+    facts.game_state_ok = true;
+    facts.status_reads_enabled = true;
+    facts.combat_meter_enabled = true;
+    facts.latency_mitigator_enabled = false;
+
+    auto status = payload::build_status(facts);
+    TEST_ASSERT_EQ(status.game_pid, 1234u);
+    TEST_ASSERT_EQ(status.flags, ipc::to_bits(ipc::PayloadStatusFlag::Reported) |
+                                 ipc::to_bits(ipc::PayloadStatusFlag::HooksInstalled));
+    TEST_ASSERT_EQ(status.active_plugins_mask, ipc::plugin_mask_bit(PluginId::CombatMeter));
+    TEST_ASSERT(std::string_view(status.status_message) == "Hooks installed (3/3)");
+    TEST_ASSERT(ipc::reports_hooks_installed(status));
+
+    facts.hooks_installed = false;
+    facts.hook_detail = "ReceiveActionEffect not found";
+    facts.game_state_ok = false;
+    facts.game_state_error = "Conditions missing";
+    facts.status_reads_enabled = false;
+    facts.combat_meter_enabled = false;
+    facts.latency_mitigator_enabled = true;
+    status = payload::build_status(facts);
+    TEST_ASSERT_EQ(status.flags, ipc::to_bits(ipc::PayloadStatusFlag::Reported) |
+                                 ipc::to_bits(ipc::PayloadStatusFlag::GameStateMissing) |
+                                 ipc::to_bits(ipc::PayloadStatusFlag::StatusReadsOff));
+    TEST_ASSERT_EQ(status.active_plugins_mask, ipc::plugin_mask_bit(PluginId::LatencyMitigator));
+    TEST_ASSERT(!ipc::reports_hooks_installed(status));
+
+    // An app older than the flags reads the first 76 bytes and matches the text.
+    ipc::StatusPayload as_old_app_sees_it{};
+    std::memcpy(static_cast<void*>(&as_old_app_sees_it), &status, ipc::STATUS_V1_SIZE);
+    TEST_ASSERT_EQ(as_old_app_sees_it.flags, 0u);
+    TEST_ASSERT(!ipc::reports_hooks_installed(as_old_app_sees_it));
+    TEST_ASSERT(std::string_view(status.status_message).starts_with("Hooks NOT installed: "));
+
+    // A long detail is cut to the field and stays terminated.
+    facts.hook_detail = std::string(200, 'x');
+    status = payload::build_status(facts);
+    TEST_ASSERT_EQ(std::strlen(status.status_message), sizeof(status.status_message) - 1);
 }

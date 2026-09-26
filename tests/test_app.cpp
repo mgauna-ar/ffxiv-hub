@@ -11,6 +11,7 @@
 #include "hub/plugin_registry.hpp"
 #include "hub/version.hpp"
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 
@@ -224,6 +225,71 @@ TEST_CASE(PipeServer, GameStateFromAnOlderPayload) {
     TEST_ASSERT(server.process_raw_packet(ipc::serialize_typed_packet(
         PluginId::Core, MessageType::GameState, 2, gs)));
     TEST_ASSERT_EQ(received.client_flags, gs.client_flags);
+}
+
+TEST_CASE(PipeServer, StatusFromAnOlderPayload) {
+    // A payload loaded before the status flags sends the 76-byte status. It must
+    // still arrive, flags 0, and the hooks badge falls back to the message text.
+    ipc::PipeServer server;
+    ipc::StatusPayload received{};
+    int calls = 0;
+    server.set_status_callback([&](const ipc::StatusPayload& status) {
+        received = status;
+        ++calls;
+    });
+
+    ipc::StatusPayload status{};
+    status.game_pid = 4242;
+    status.flags = ipc::to_bits(ipc::PayloadStatusFlag::Reported);
+    std::snprintf(status.status_message, sizeof(status.status_message), "%s",
+                  "Hooks NOT installed: ReceiveActionEffect signature not found");
+    const auto* bytes = reinterpret_cast<const uint8_t*>(&status);
+    TEST_ASSERT(server.process_raw_packet(ipc::serialize_packet(
+        PluginId::Core, MessageType::Status, 1,
+        std::span<const uint8_t>(bytes, ipc::STATUS_V1_SIZE))));
+    TEST_ASSERT_EQ(calls, 1);
+    TEST_ASSERT_EQ(received.game_pid, 4242u);
+    TEST_ASSERT_EQ(received.flags, 0u);
+    TEST_ASSERT(!ipc::reports_hooks_installed(received));
+
+    std::snprintf(status.status_message, sizeof(status.status_message), "%s", "Hooks installed (OK)");
+    TEST_ASSERT(server.process_raw_packet(ipc::serialize_packet(
+        PluginId::Core, MessageType::Status, 2,
+        std::span<const uint8_t>(bytes, ipc::STATUS_V1_SIZE))));
+    TEST_ASSERT(ipc::reports_hooks_installed(received));
+
+    // The full packet carries the flags, which win over any wording.
+    TEST_ASSERT(server.process_raw_packet(ipc::serialize_typed_packet(
+        PluginId::Core, MessageType::Status, 3, status)));
+    TEST_ASSERT_EQ(received.flags, ipc::to_bits(ipc::PayloadStatusFlag::Reported));
+    TEST_ASSERT(!ipc::reports_hooks_installed(received));
+}
+
+TEST_CASE(PipeServer, StatusFlagsDecideTheHooksBadge) {
+    ipc::StatusPayload status{};
+    status.flags = ipc::to_bits(ipc::PayloadStatusFlag::Reported) |
+                   ipc::to_bits(ipc::PayloadStatusFlag::HooksInstalled);
+    // Reworded text no longer moves the badge.
+    std::snprintf(status.status_message, sizeof(status.status_message), "%s", "Hooks NOT installed (reworded, but the flags say otherwise)");
+    TEST_ASSERT(ipc::reports_hooks_installed(status));
+
+    status.flags = ipc::to_bits(ipc::PayloadStatusFlag::Reported);
+    std::snprintf(status.status_message, sizeof(status.status_message), "%s", "Hooks installed (OK)");
+    TEST_ASSERT(!ipc::reports_hooks_installed(status));
+
+    // A message filling all 64 bytes has no terminator; the text fallback stops at the field.
+    status.flags = 0;
+    std::memset(status.status_message, 'x', sizeof(status.status_message));
+    TEST_ASSERT(ipc::reports_hooks_installed(status));
+}
+
+TEST_CASE(Protocol, PluginMaskBitsAreDistinct) {
+    // PluginId values are not powers of two, so OR-ing them raw would alias.
+    const uint32_t meter = ipc::plugin_mask_bit(PluginId::CombatMeter);
+    const uint32_t mitigator = ipc::plugin_mask_bit(PluginId::LatencyMitigator);
+    TEST_ASSERT(meter != 0 && mitigator != 0);
+    TEST_ASSERT_EQ(meter & mitigator, 0u);
+    TEST_ASSERT_EQ(ipc::plugin_mask_bit(PluginId::Core) & (meter | mitigator), 0u);
 }
 
 TEST_CASE(PipeServer, RoutesEnemyHp) {

@@ -101,6 +101,8 @@ int main(int argc, char** argv) {
 
     hub::ipc::StatusPayload status{};
     status.game_pid = kGamePid;
+    status.flags = hub::ipc::to_bits(hub::ipc::PayloadStatusFlag::Reported) |
+                   hub::ipc::to_bits(hub::ipc::PayloadStatusFlag::HooksInstalled);
     std::snprintf(status.status_message, sizeof(status.status_message), "Hooks installed (OK)");
     app.pipe_server().process_raw_packet(
         hub::ipc::serialize_typed_packet(hub::PluginId::Core, hub::MessageType::Status, 1, status));

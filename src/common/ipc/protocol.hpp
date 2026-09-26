@@ -8,6 +8,8 @@
 #include <vector>
 #include <span>
 #include <optional>
+#include <string_view>
+#include <cstring>
 
 namespace hub::ipc {
 
@@ -85,15 +87,58 @@ struct CommandPayload {
 };
 static_assert(sizeof(CommandPayload) == 24, "CommandPayload must be 24 bytes");
 
+/// StatusPayload::flags bits. The message text is for people; these are what the
+/// app acts on.
+enum class PayloadStatusFlag : uint32_t {
+    /// Set by every payload that fills the field. Without it the field came zeroed
+    /// from a payload older than it, and says nothing.
+    Reported         = 1u << 0,
+    /// Every game-function hook is installed (HookManager::is_installed()).
+    HooksInstalled   = 1u << 1,
+    /// The Conditions array was not resolved, so overlays see no game state.
+    GameStateMissing = 1u << 2,
+    /// ObjectReader reads no status lists (their layout check failed).
+    StatusReadsOff   = 1u << 3,
+};
+
+[[nodiscard]] constexpr uint32_t to_bits(PayloadStatusFlag flag) noexcept {
+    return static_cast<uint32_t>(flag);
+}
+
+/// StatusPayload::active_plugins_mask bit for `id`.
+[[nodiscard]] constexpr uint32_t plugin_mask_bit(PluginId id) noexcept {
+    return 1u << static_cast<uint16_t>(id);
+}
+
 /// 0x0006: Status Notification payload
 struct StatusPayload {
     uint32_t game_pid{0};
+    /// plugin_mask_bit() of every plugin whose master switch is on.
     uint32_t active_plugins_mask{0};
     uint16_t version_major{VERSION_MAJOR};  // The payload build's hub/version.hpp
     uint16_t version_minor{VERSION_MINOR};
     char     status_message[64]{0};
+    /// PayloadStatusFlag bits.
+    uint32_t flags{0};
 };
-static_assert(sizeof(StatusPayload) == 76, "StatusPayload must be 76 bytes");
+static_assert(sizeof(StatusPayload) == 80, "StatusPayload must be 80 bytes");
+/// What a payload from before `flags` sends. Its missing field has no Reported
+/// bit, so the app falls back to reading the message text.
+constexpr size_t STATUS_V1_SIZE = 76;
+static_assert(offsetof(StatusPayload, flags) == STATUS_V1_SIZE, "flags must follow the old layout");
+
+/// Whether the payload reporting `status` has its game hooks installed. Read from
+/// the flags; a payload older than them is judged by the wording it has always
+/// used ("Hooks installed (...)" / "Hooks NOT installed: ..."), which new code
+/// must not rely on.
+[[nodiscard]] inline bool reports_hooks_installed(const StatusPayload& status) noexcept {
+    if ((status.flags & to_bits(PayloadStatusFlag::Reported)) != 0) {
+        return (status.flags & to_bits(PayloadStatusFlag::HooksInstalled)) != 0;
+    }
+    const std::string_view message(status.status_message,
+                                   strnlen(status.status_message, sizeof(status.status_message)));
+    return message.find("NOT installed") == std::string_view::npos;
+}
 
 /// Shared Overlay Geometry payload for bidirectional position synchronization
 struct OverlayGeometryPayload {
