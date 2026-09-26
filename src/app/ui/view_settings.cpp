@@ -113,8 +113,16 @@ void render_config_card(AppState& app_state) {
     }
     ImGui::EndDisabled();
     // A disabled item reports no hover without this flag.
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !app_state.is_connected()) {
-        ImGui::SetTooltip("No payload is currently attached.");
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        if (app_state.is_connected()) {
+            // The DLL stays mapped with passthrough hooks, which blocks re-injection.
+            ImGui::SetTooltip("Turns the payload off for the rest of this game session.\n"
+                              "It can't be attached again until the game restarts.");
+        } else if (app_state.connection_state() == ConnectionState::Unloaded) {
+            ImGui::SetTooltip("The payload is unloaded. Restart the game to attach again.");
+        } else {
+            ImGui::SetTooltip("No payload is currently attached.");
+        }
     }
 
     if (ImGui::BeginPopupModal("##ConfirmResetDefaults", nullptr,
