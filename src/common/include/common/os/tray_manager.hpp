@@ -41,8 +41,9 @@ public:
     /// Destroys message window and removes tray icon
     void shutdown();
 
-    /// Updates connection state and tooltip
-    void set_game_connected(bool connected, uint32_t pid = 0);
+    /// The tooltip's status line, as the app words it. The tray re-draws the tooltip
+    /// only when the text changes, so it can be called every frame.
+    void set_status(std::string status);
 
     /// Auto-start toggle state in menu
     void set_auto_start(bool enabled) noexcept { m_auto_start = enabled; }
@@ -80,8 +81,7 @@ private:
     [[maybe_unused]] uint32_t m_activation_msg_id{0};
     bool m_initialized{false};
 
-    bool m_connected{false};
-    uint32_t m_game_pid{0};
+    std::string m_status;
 
     bool m_auto_start{false};
     bool m_notifications_enabled{true};

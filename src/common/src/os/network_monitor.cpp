@@ -94,7 +94,11 @@ void NetworkMonitor::set_mock_ping(double ping_ms) noexcept {
 
 void NetworkMonitor::worker_loop() {
     while (m_running.load()) {
-        probe_once();
+        if (const uint32_t pid = m_target_pid.load(); pid != 0) {
+            probe_target(pid);
+        } else {
+            m_current_ping_ms.store(-1.0);
+        }
 
         const uint32_t interval = m_probe_interval_ms.load();
         const uint32_t step = kSleepStepMs;
@@ -106,12 +110,7 @@ void NetworkMonitor::worker_loop() {
 
 #ifdef _WIN32
 
-bool NetworkMonitor::probe_once() {
-    const uint32_t pid = m_target_pid.load();
-    if (pid == 0) {
-        m_current_ping_ms.store(-1.0);
-        return false;
-    }
+bool NetworkMonitor::probe_target(uint32_t pid) {
 
     // 1. Locate active game TCP connection via GetExtendedTcpTable
     DWORD dwSize = 0;
@@ -196,13 +195,7 @@ bool NetworkMonitor::probe_once() {
 
 #else // !_WIN32
 
-bool NetworkMonitor::probe_once() {
-    const uint32_t pid = m_target_pid.load();
-    if (pid == 0) {
-        m_current_ping_ms.store(-1.0);
-        return false;
-    }
-
+bool NetworkMonitor::probe_target(uint32_t) {
     // If a mock ping was manually set, maintain it, otherwise default to 32.0ms mock
     double current = m_current_ping_ms.load();
     if (current < 0.0) {

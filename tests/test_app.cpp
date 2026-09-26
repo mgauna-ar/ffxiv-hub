@@ -283,6 +283,29 @@ TEST_CASE(PipeServer, StatusFlagsDecideTheHooksBadge) {
     TEST_ASSERT(ipc::reports_hooks_installed(status));
 }
 
+TEST_CASE(PipeServer, OtherIpcVersionIsCountedNotDelivered) {
+    ipc::PipeServer server;
+    bool delivered = false;
+    server.set_heartbeat_callback([&](const ipc::HeartbeatPayload&) { delivered = true; });
+
+    auto bytes = ipc::serialize_typed_packet(PluginId::Core, MessageType::Heartbeat, 1, ipc::HeartbeatPayload{});
+    ipc::PacketHeader hdr{};
+    std::memcpy(&hdr, bytes.data(), sizeof(hdr));
+    hdr.version = static_cast<uint16_t>(ipc::IPC_VERSION + 1);
+    std::memcpy(bytes.data(), &hdr, sizeof(hdr));
+
+    TEST_ASSERT(!server.process_raw_packet(bytes));
+    TEST_ASSERT(!server.process_raw_packet(bytes));
+    TEST_ASSERT(!delivered);
+    TEST_ASSERT_EQ(server.version_mismatches(), 2u);
+
+    // A bad magic is a broken stream, not a version.
+    hdr.magic = 0;
+    std::memcpy(bytes.data(), &hdr, sizeof(hdr));
+    TEST_ASSERT(!server.process_raw_packet(bytes));
+    TEST_ASSERT_EQ(server.version_mismatches(), 2u);
+}
+
 TEST_CASE(Protocol, PluginMaskBitsAreDistinct) {
     // PluginId values are not powers of two, so OR-ing them raw would alias.
     const uint32_t meter = ipc::plugin_mask_bit(PluginId::CombatMeter);
@@ -633,7 +656,10 @@ TEST_CASE(TrayManager, PluginAgnosticCommands) {
     tray.handle_command(os::TrayManager::CommandId::OpenLogs);
     TEST_ASSERT(logs_opened);
 
-    tray.set_game_connected(true, 1234);
+    // The app's own wording, whatever the state: the tray knows none of them.
+    tray.set_status("Payload unloaded. Restart the game to attach again.");
+    TEST_ASSERT(tray.status_string() == "FFXIV Hub [Payload unloaded. Restart the game to attach again.]");
+    tray.set_status("Connected (PID: 1234)");
     TEST_ASSERT(tray.status_string().find("1234") != std::string::npos);
 
     tray.shutdown();

@@ -66,7 +66,7 @@ bool DllInjector::inject(const ProcessInfo& proc, const std::filesystem::path& d
     }
 
     const std::wstring full_path_w = abs_path.wstring();
-    const auto h_process = static_cast<HANDLE>(proc.handle);
+    const auto h_process = static_cast<HANDLE>(proc.handle.get());
 
     const size_t path_size_bytes = (full_path_w.length() + 1) * sizeof(wchar_t);
 

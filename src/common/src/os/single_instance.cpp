@@ -34,10 +34,9 @@ SingleInstance::~SingleInstance() {
 
 SingleInstance::SingleInstance(SingleInstance&& other) noexcept
     : m_name(std::move(other.m_name)),
-      m_handle(other.m_handle),
+      m_handle(std::move(other.m_handle)),
       m_is_primary(other.m_is_primary),
       m_activation_msg_id(other.m_activation_msg_id) {
-    other.m_handle = nullptr;
     other.m_is_primary = false;
 }
 
@@ -45,10 +44,9 @@ SingleInstance& SingleInstance::operator=(SingleInstance&& other) noexcept {
     if (this != &other) {
         release();
         m_name = std::move(other.m_name);
-        m_handle = other.m_handle;
+        m_handle = std::move(other.m_handle);
         m_is_primary = other.m_is_primary;
         m_activation_msg_id = other.m_activation_msg_id;
-        other.m_handle = nullptr;
         other.m_is_primary = false;
     }
     return *this;
@@ -59,19 +57,16 @@ bool SingleInstance::try_acquire() {
 
 #ifdef _WIN32
     std::string full_name = "Local\\" + m_name;
-    m_handle = CreateMutexA(nullptr, TRUE, full_name.c_str());
+    HANDLE created = CreateMutexA(nullptr, TRUE, full_name.c_str());
+    const DWORD error = GetLastError();
 
-    if (m_handle == nullptr) {
+    if (created == nullptr || error == ERROR_ALREADY_EXISTS) {
+        // Failed, or another instance owns the mutex: only drop our handle to it.
+        const UniqueHandle discard(created);
         m_is_primary = false;
         return false;
     }
-
-    if (GetLastError() == ERROR_ALREADY_EXISTS) {
-        CloseHandle(static_cast<HANDLE>(m_handle));
-        m_handle = nullptr;
-        m_is_primary = false;
-        return false;
-    }
+    m_handle.reset(created);
 
     m_is_primary = true;
     return true;
@@ -96,13 +91,12 @@ void SingleInstance::notify_existing_instance() {
 }
 
 void SingleInstance::release() {
-    if (!m_is_primary && m_handle == nullptr) return;
+    if (!m_is_primary && !m_handle) return;
 
 #ifdef _WIN32
-    if (m_handle != nullptr) {
-        ReleaseMutex(static_cast<HANDLE>(m_handle));
-        CloseHandle(static_cast<HANDLE>(m_handle));
-        m_handle = nullptr;
+    if (m_handle) {
+        ReleaseMutex(static_cast<HANDLE>(m_handle.get()));
+        m_handle.reset();
     }
 #else
     std::lock_guard<std::mutex> lock(g_mock_mutex);

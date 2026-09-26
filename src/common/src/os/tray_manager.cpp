@@ -1,5 +1,4 @@
 #include "common/os/tray_manager.hpp"
-#include <sstream>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -68,7 +67,7 @@ bool TrayManager::initialize(uint32_t activation_msg_id) {
         hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(101));
     }
     if (!hIcon) {
-        hIcon = LoadIconW(nullptr, MAKEINTRESOURCEW(32512));
+        hIcon = LoadIconW(nullptr, IDI_APPLICATION);
     }
     m_icon = hIcon;
 
@@ -80,7 +79,8 @@ bool TrayManager::initialize(uint32_t activation_msg_id) {
     nid.uCallbackMessage = WM_HUB_TRAYICON;
     nid.hIcon = static_cast<HICON>(m_icon);
 
-    std::wstring tip = L"FFXIV Hub (Searching for game...)";
+    const std::string status = status_string();
+    const std::wstring tip(status.begin(), status.end());
     wcsncpy_s(nid.szTip, tip.c_str(), _TRUNCATE);
 
     Shell_NotifyIconW(NIM_ADD, &nid);
@@ -112,22 +112,14 @@ void TrayManager::shutdown() {
     m_initialized = false;
 }
 
-void TrayManager::set_game_connected(bool connected, uint32_t pid) {
-    m_connected = connected;
-    m_game_pid = pid;
+void TrayManager::set_status(std::string status) {
+    if (status == m_status) return;
+    m_status = std::move(status);
     update_tray_icon();
 }
 
 std::string TrayManager::status_string() const {
-    std::ostringstream ss;
-    ss << "FFXIV Hub [";
-    if (m_connected) {
-        ss << "Connected (PID: " << m_game_pid << ")";
-    } else {
-        ss << "Searching for game...";
-    }
-    ss << "]";
-    return ss.str();
+    return m_status.empty() ? std::string("FFXIV Hub") : "FFXIV Hub [" + m_status + "]";
 }
 
 void TrayManager::update_tray_icon() {

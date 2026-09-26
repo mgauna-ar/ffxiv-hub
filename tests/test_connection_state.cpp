@@ -34,8 +34,9 @@ ConnectionObservation running(bool pipe_connected, bool unload_requested = false
 }
 
 ConnectionDecision decide(ConnectionState current, const ConnectionObservation& seen,
-                          bool window_ready, bool payload_loaded) {
-    return decide_connection(current, seen, [=] { return window_ready; }, [=] { return payload_loaded; });
+                          bool window_ready, bool payload_loaded, bool payload_unloaded = false) {
+    return decide_connection(current, seen, [=] { return window_ready; }, [=] { return payload_loaded; },
+                             [=] { return payload_unloaded; });
 }
 
 constexpr ConnectionDecision stay(ConnectionState state) { return { state, ConnectionAction::None }; }
@@ -46,7 +47,7 @@ TEST_CASE(Connection, NoProcessWaitsFromEveryState) {
     for (auto state : { ConnectionState::WaitingForGame, ConnectionState::Injecting,
                         ConnectionState::InjectedWaitingPipe, ConnectionState::Connected,
                         ConnectionState::Reconnecting, ConnectionState::Unloaded }) {
-        const auto d = decide_connection(state, ConnectionObservation{}, MustNotProbe{}, MustNotProbe{});
+        const auto d = decide_connection(state, ConnectionObservation{}, MustNotProbe{}, MustNotProbe{}, MustNotProbe{});
         TEST_ASSERT(d == stay(ConnectionState::WaitingForGame));
     }
 }
@@ -54,14 +55,14 @@ TEST_CASE(Connection, NoProcessWaitsFromEveryState) {
 TEST_CASE(Connection, UnopenedHandleWaitsWithoutInjecting) {
     ConnectionObservation seen = running(false);
     seen.handle_opened = false;
-    const auto d = decide_connection(ConnectionState::WaitingForGame, seen, MustNotProbe{}, MustNotProbe{});
+    const auto d = decide_connection(ConnectionState::WaitingForGame, seen, MustNotProbe{}, MustNotProbe{}, MustNotProbe{});
     TEST_ASSERT(d == stay(ConnectionState::WaitingForGame));
 }
 
 TEST_CASE(Connection, WaitsForTheGameWindowBeforeInjecting) {
     int module_probes = 0;
     const auto d = decide_connection(ConnectionState::WaitingForGame, running(false),
-                                     [] { return false; }, Probe{ false, &module_probes });
+                                     [] { return false; }, Probe{ false, &module_probes }, MustNotProbe{});
     TEST_ASSERT(d == stay(ConnectionState::WaitingForGame));
     TEST_ASSERT_EQ(module_probes, 0);
 }
@@ -78,51 +79,64 @@ TEST_CASE(Connection, AdoptsAResidentPayloadInsteadOfInjecting) {
     TEST_ASSERT(d == (ConnectionDecision{ ConnectionState::InjectedWaitingPipe, ConnectionAction::AdoptResident }));
 }
 
+TEST_CASE(Connection, AnAppStartedAfterAnUnloadReadsThePayloadsMark) {
+    // The app that sent the unload is gone, so only the mark says the resident DLL
+    // will never answer; adopting it would wait on the pipe forever.
+    const auto d = decide(ConnectionState::WaitingForGame, running(false), true, true, true);
+    TEST_ASSERT(d == stay(ConnectionState::Unloaded));
+}
+
+TEST_CASE(Connection, TheUnloadMarkIsOnlyReadForAResidentPayload) {
+    const auto d = decide_connection(ConnectionState::WaitingForGame, running(false),
+                                     [] { return true; }, [] { return false; }, MustNotProbe{});
+    TEST_ASSERT(d == (ConnectionDecision{ ConnectionState::Injecting, ConnectionAction::Inject }));
+}
+
 TEST_CASE(Connection, WaitsForThePipeAfterInjecting) {
     const auto d = decide_connection(ConnectionState::InjectedWaitingPipe, running(false),
-                                     MustNotProbe{}, MustNotProbe{});
+                                     MustNotProbe{}, MustNotProbe{}, MustNotProbe{});
     TEST_ASSERT(d == stay(ConnectionState::InjectedWaitingPipe));
 }
 
 TEST_CASE(Connection, PipeUpIsConnectedWithoutProbing) {
     for (auto state : { ConnectionState::WaitingForGame, ConnectionState::InjectedWaitingPipe,
                         ConnectionState::Connected, ConnectionState::Reconnecting }) {
-        const auto d = decide_connection(state, running(true), MustNotProbe{}, MustNotProbe{});
+        const auto d = decide_connection(state, running(true), MustNotProbe{}, MustNotProbe{}, MustNotProbe{});
         TEST_ASSERT(d == stay(ConnectionState::Connected));
     }
 }
 
 TEST_CASE(Connection, APipeDropWithoutUnloadReconnects) {
     // The pipe dropping while the game runs used to leave the state on Connected.
-    auto d = decide_connection(ConnectionState::Connected, running(false), MustNotProbe{}, MustNotProbe{});
+    auto d = decide_connection(ConnectionState::Connected, running(false), MustNotProbe{}, MustNotProbe{}, MustNotProbe{});
     TEST_ASSERT(d == stay(ConnectionState::Reconnecting));
-    d = decide_connection(ConnectionState::Reconnecting, running(false), MustNotProbe{}, MustNotProbe{});
+    d = decide_connection(ConnectionState::Reconnecting, running(false), MustNotProbe{}, MustNotProbe{}, MustNotProbe{});
     TEST_ASSERT(d == stay(ConnectionState::Reconnecting));
-    d = decide_connection(ConnectionState::Reconnecting, running(true), MustNotProbe{}, MustNotProbe{});
+    d = decide_connection(ConnectionState::Reconnecting, running(true), MustNotProbe{}, MustNotProbe{}, MustNotProbe{});
     TEST_ASSERT(d == stay(ConnectionState::Connected));
 }
 
 TEST_CASE(Connection, StaysConnectedUntilTheUnloadDropsThePipe) {
     const auto d = decide_connection(ConnectionState::Connected, running(true, true),
-                                     MustNotProbe{}, MustNotProbe{});
+                                     MustNotProbe{}, MustNotProbe{}, MustNotProbe{});
     TEST_ASSERT(d == stay(ConnectionState::Connected));
 }
 
 TEST_CASE(Connection, AnUnloadThenAPipeDropIsUnloaded) {
-    auto d = decide_connection(ConnectionState::Connected, running(false, true), MustNotProbe{}, MustNotProbe{});
+    auto d = decide_connection(ConnectionState::Connected, running(false, true), MustNotProbe{}, MustNotProbe{}, MustNotProbe{});
     TEST_ASSERT(d == stay(ConnectionState::Unloaded));
     // The DLL is still mapped: it must never be re-injected or adopted.
-    d = decide_connection(ConnectionState::Unloaded, running(false, true), MustNotProbe{}, MustNotProbe{});
+    d = decide_connection(ConnectionState::Unloaded, running(false, true), MustNotProbe{}, MustNotProbe{}, MustNotProbe{});
     TEST_ASSERT(d == stay(ConnectionState::Unloaded));
     ConnectionObservation no_handle = running(false, true);
     no_handle.handle_opened = false;
-    d = decide_connection(ConnectionState::Unloaded, no_handle, MustNotProbe{}, MustNotProbe{});
+    d = decide_connection(ConnectionState::Unloaded, no_handle, MustNotProbe{}, MustNotProbe{}, MustNotProbe{});
     TEST_ASSERT(d == stay(ConnectionState::Unloaded));
 }
 
 TEST_CASE(Connection, AGameRestartAfterAnUnloadAttachesAgain) {
     // The app keys the unload to the old PID, so the new process arrives without it.
-    auto d = decide_connection(ConnectionState::Unloaded, ConnectionObservation{}, MustNotProbe{}, MustNotProbe{});
+    auto d = decide_connection(ConnectionState::Unloaded, ConnectionObservation{}, MustNotProbe{}, MustNotProbe{}, MustNotProbe{});
     TEST_ASSERT(d == stay(ConnectionState::WaitingForGame));
     d = decide(ConnectionState::WaitingForGame, running(false), true, false);
     TEST_ASSERT(d == (ConnectionDecision{ ConnectionState::Injecting, ConnectionAction::Inject }));

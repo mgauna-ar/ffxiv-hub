@@ -1,5 +1,6 @@
 #include "common/os/process_finder.hpp"
 #include "common/os/unique_handle.hpp"
+#include <utility>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -42,11 +43,12 @@ constexpr DWORD kGameProcessAccess = PROCESS_CREATE_THREAD | PROCESS_QUERY_INFOR
 /// last_error says why OpenProcess refused.
 ProcessInfo open_game_process(DWORD pid, std::string_view process_name) {
     HANDLE h_process = OpenProcess(kGameProcessAccess, FALSE, pid);
+    const DWORD error = h_process ? 0 : GetLastError();
     return ProcessInfo{
         .pid = pid,
         .name = std::string(process_name),
-        .handle = h_process,
-        .last_error = h_process ? 0 : GetLastError()
+        .handle = UniqueHandle(h_process),
+        .last_error = error
     };
 }
 
@@ -64,12 +66,12 @@ std::optional<ProcessInfo> ProcessFinder::find_process(std::string_view process_
         do {
             if (_wcsicmp(entry.szExeFile, target_name_w.c_str()) == 0) {
                 ProcessInfo info = open_game_process(entry.th32ProcessID, process_name);
-                if (info.handle != nullptr) {
-                    return info;
+                if (info.handle) {
+                    return std::optional<ProcessInfo>(std::move(info));
                 }
 
                 if (!fallback_proc.has_value()) {
-                    fallback_proc = info;
+                    fallback_proc = std::move(info);
                 }
             }
         } while (Process32NextW(snapshot.get(), &entry));
@@ -77,18 +79,18 @@ std::optional<ProcessInfo> ProcessFinder::find_process(std::string_view process_
 
     // Fallback: If not found in snapshot or couldn't open process with valid handle,
     // search directly by window class "FFXIVGAME"
-    if (!fallback_proc.has_value() || fallback_proc->handle == nullptr) {
+    if (!fallback_proc.has_value() || !fallback_proc->handle) {
         HWND game_hwnd = FindWindowW(L"FFXIVGAME", nullptr);
         if (game_hwnd != nullptr) {
             DWORD win_pid = 0;
             GetWindowThreadProcessId(game_hwnd, &win_pid);
             if (win_pid != 0) {
                 ProcessInfo win_info = open_game_process(win_pid, process_name);
-                if (win_info.handle != nullptr) {
-                    return win_info;
+                if (win_info.handle) {
+                    return std::optional<ProcessInfo>(std::move(win_info));
                 }
                 if (!fallback_proc.has_value()) {
-                    fallback_proc = win_info;
+                    fallback_proc = std::move(win_info);
                 }
             }
         }
