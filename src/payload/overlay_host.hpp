@@ -7,17 +7,16 @@
 #include <string_view>
 #include <mutex>
 
-struct ImFont;
-
 namespace hub::payload {
 
 /**
  * @brief Central Dear ImGui Overlay Host.
  *
  * Coordinates lifetime, font loading, dark slate styling, and frame rendering
- * across all independent modular plugin overlays in hub_payload.dll.
+ * across all independent modular plugin overlays in hub_payload.dll. Each overlay
+ * reaches its fonts through the OverlayFonts this host lends it on registration.
  */
-class OverlayHost {
+class OverlayHost final : public OverlayFonts {
 public:
     static OverlayHost& instance() noexcept;
 
@@ -46,16 +45,9 @@ public:
     static constexpr float FONT_SIZE_MEDIUM = 18.0f;
     static constexpr float FONT_SIZE_LARGE = 22.0f;
 
-    struct ScaledFont {
-        ImFont* font{nullptr};   ///< Push this, or nothing when null.
-        float residual{1.0f};    ///< Pass to ImGui::SetWindowFontScale.
-    };
-
     /// Resolves a scale factor to the largest rasterized font that fits, plus the
-    /// leftover factor needed to reach the requested size exactly. Overlays share
-    /// one ImGui context here, so scaling has to stay per-window rather than going
-    /// through io.FontGlobalScale.
-    [[nodiscard]] ScaledFont font_for_scale(float scale, bool bold_base) const noexcept {
+    /// leftover factor needed to reach the requested size exactly.
+    [[nodiscard]] ScaledFont font_for_scale(float scale, bool bold_base) const noexcept override {
         const float desired = FONT_SIZE_BASE * scale;
         ImFont* font = bold_base ? m_font_bold : m_font_regular;
         float size = FONT_SIZE_BASE;

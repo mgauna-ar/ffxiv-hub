@@ -1,6 +1,6 @@
 #include "meter/combat_overlay.hpp"
-#include "payload/overlay_host.hpp"
 #include "common/ui/job_style.hpp"
+#include "common/ui/overlay_palette.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <string>
@@ -78,6 +78,9 @@ namespace hub::meter {
 
 namespace {
 
+namespace palette = hub::common::ui::overlay_colors;
+using hub::common::ui::rgba;
+
 /// The shared table already packs in IM_COL32 channel order; only alpha differs
 /// between the row tint and the name text.
 inline uint32_t style_color(const hub::common::ui::CombatantStyle& style, uint32_t alpha) {
@@ -100,11 +103,11 @@ void render_job_cell(const CombatantStats& c, const hub::common::ui::CombatantSt
     }
 }
 
-/// Table headers render in bold at the rows' own size tier; the base bold font
-/// left them smaller than the rows once the meter was scaled up. Returns whether
-/// it pushed, since above the base tier the rows are bold already.
-bool push_header_font(float scale) {
-    ImFont* bold = hub::payload::OverlayHost::instance().font_for_scale(scale, /*bold_base=*/true).font;
+/// Table headers render in bold at the rows' own size tier (`bold`, the bold
+/// font for the meter's scale); the base bold font left them smaller than the
+/// rows once the meter was scaled up. Returns whether it pushed, since above the
+/// base tier the rows are bold already.
+bool push_header_font(ImFont* bold) {
     if (bold == nullptr || bold == ImGui::GetFont()) return false;
     ImGui::PushFont(bold);
     return true;
@@ -186,9 +189,9 @@ bool begin_ranked_table(const char* table_id, int columns, float scale, float& l
 }
 
 /// Freezes the header row and draws it in the header font.
-void render_ranked_headers(float scale) {
+void render_ranked_headers(ImFont* header_font_for_scale) {
     ImGui::TableSetupScrollFreeze(0, 1);
-    const bool header_font = push_header_font(scale);
+    const bool header_font = push_header_font(header_font_for_scale);
     ImGui::TableHeadersRow();
     if (header_font) ImGui::PopFont();
 }
@@ -249,9 +252,9 @@ void CombatOverlay::render_top_bar(const EncounterSummary& current, float scale)
 
     // Status pill: whether the numbers below are still moving.
     if (m_engine && m_engine->in_combat()) {
-        ImGui::TextColored(ImVec4(0.95f, 0.30f, 0.35f, 1.0f), "LIVE");
+        ImGui::TextColored(rgba(palette::Live), "LIVE");
     } else {
-        ImGui::TextColored(ImVec4(0.55f, 0.60f, 0.70f, 1.0f), "IDLE");
+        ImGui::TextColored(rgba(palette::Muted), "IDLE");
     }
 
     ImGui::SameLine();
@@ -259,16 +262,16 @@ void CombatOverlay::render_top_bar(const EncounterSummary& current, float scale)
     ImGui::SameLine();
 
     const uint32_t total_sec = static_cast<uint32_t>(current.duration_seconds);
-    ImGui::TextColored(ImVec4(0.80f, 0.85f, 0.95f, 1.0f), "%02u:%02u", total_sec / 60, total_sec % 60);
+    ImGui::TextColored(rgba(palette::Timer), "%02u:%02u", total_sec / 60, total_sec % 60);
 
     ImGui::SameLine();
     char rate_buf[32];
     if (healing) {
         format_rate(rate_buf, sizeof(rate_buf), current.total_hps);
-        ImGui::TextColored(ImVec4(0.10f, 0.80f, 0.40f, 1.0f), "%s HPS", rate_buf);
+        ImGui::TextColored(rgba(palette::Hps), "%s HPS", rate_buf);
     } else {
         format_rate(rate_buf, sizeof(rate_buf), current.total_dps);
-        ImGui::TextColored(ImVec4(0.96f, 0.50f, 0.20f, 1.0f), "%s DPS", rate_buf);
+        ImGui::TextColored(rgba(palette::Dps), "%s DPS", rate_buf);
     }
 
     // Progressive disclosure: total damage next, zone name only when there is room.
@@ -277,7 +280,7 @@ void CombatOverlay::render_top_bar(const EncounterSummary& current, float scale)
         char dmg_buf[32];
         const uint64_t total = healing ? current.total_effective_healing : current.total_damage;
         format_number(dmg_buf, sizeof(dmg_buf), total);
-        ImGui::TextColored(ImVec4(0.70f, 0.75f, 0.85f, 1.0f), "%s", dmg_buf);
+        ImGui::TextColored(rgba(palette::TotalText), "%s", dmg_buf);
     }
     if (roomy) {
         const std::string zone = zone_label(current.zone_id, current.zone_name);
@@ -308,7 +311,7 @@ void CombatOverlay::render_damage_table(const EncounterSummary& summary, float s
         if (col_crit) ImGui::TableSetupColumn("Crit", ImGuiTableColumnFlags_WidthFixed, 50.0f * scale);
         if (col_dh) ImGui::TableSetupColumn("DH", ImGuiTableColumnFlags_WidthFixed, 46.0f * scale);
         if (col_cdh) ImGui::TableSetupColumn("CDH", ImGuiTableColumnFlags_WidthFixed, 48.0f * scale);
-        render_ranked_headers(scale);
+        render_ranked_headers(font_for_scale(scale, /*bold_base=*/true).font);
 
         const float row_h = row_height(scale);
         int rank = 1;
@@ -361,7 +364,7 @@ void CombatOverlay::render_healing_table(const EncounterSummary& summary, float 
         ImGui::TableSetupColumn("Overheal", ImGuiTableColumnFlags_WidthFixed, 70.0f * scale);
         ImGui::TableSetupColumn("OH%", ImGuiTableColumnFlags_WidthFixed, 56.0f * scale);
         if (col_crit) ImGui::TableSetupColumn("Crit", ImGuiTableColumnFlags_WidthFixed, 50.0f * scale);
-        render_ranked_headers(scale);
+        render_ranked_headers(font_for_scale(scale, /*bold_base=*/true).font);
 
         const float row_h = row_height(scale);
         int rank = 1;
@@ -386,7 +389,7 @@ void CombatOverlay::render_healing_table(const EncounterSummary& summary, float 
             next_cell(col, row_h);
             const double oh_pct = player->overheal_pct();
             if (oh_pct > 50.0) {
-                ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f), "%.1f%%", oh_pct);
+                ImGui::TextColored(rgba(palette::HighOverheal), "%.1f%%", oh_pct);
             } else {
                 ImGui::Text("%.1f%%", oh_pct);
             }
@@ -439,9 +442,9 @@ void CombatOverlay::render() {
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 10.0f));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.08f, 0.09f, 0.12f, opacity));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, rgba(palette::Background, opacity));
 
-    const auto scaled_font = hub::payload::OverlayHost::instance().font_for_scale(scale, /*bold_base=*/false);
+    const ScaledFont scaled_font = font_for_scale(scale, /*bold_base=*/false);
     const bool push_font = (scaled_font.font != nullptr && scaled_font.font != ImGui::GetFont());
     if (push_font) {
         ImGui::PushFont(scaled_font.font);

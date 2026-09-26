@@ -15,9 +15,6 @@ namespace hub::app::ui {
 #ifdef HAVE_IMGUI
 namespace {
 
-/// 0 = whoever is listed first.
-meter::EntityId s_selected_player = 0;
-
 std::string format_rate(double per_minute) {
     char buf[16];
     std::snprintf(buf, sizeof(buf), "%.1f", per_minute);
@@ -35,8 +32,8 @@ const char* action_kind(meter::ActionId action) {
     return game::is_gcd_action(action) ? "GCD" : "oGCD";
 }
 
-void render_player_table(const std::vector<const meter::CombatantStats*>& players, meter::EntityId shown,
-                         float height) {
+void render_player_table(CastsTabState& state, const std::vector<const meter::CombatantStats*>& players,
+                         meter::EntityId shown, float height) {
     const auto sizing = table_sizing(560.0f, 7, kCombatTableFlags);
     if (!ImGui::BeginTable("##CastPlayers", 7, sizing.flags, ImVec2(0.0f, height))) return;
     ImGui::TableSetupColumn("Job", ImGuiTableColumnFlags_WidthFixed, m(52.0f));
@@ -58,7 +55,7 @@ void render_player_table(const std::vector<const meter::CombatantStats*>& player
         ImGui::TableSetColumnIndex(1);
         const std::string label = p->name + "##Cast" + std::to_string(p->entity_id);
         if (ImGui::Selectable(label.c_str(), p->entity_id == shown, ImGuiSelectableFlags_SpanAllColumns)) {
-            s_selected_player = p->entity_id;
+            state.selected_player = p->entity_id;
         }
         ImGui::TableSetColumnIndex(2);
         text_colored_u32(colors::TextBody, "%u", p->casts);
@@ -124,7 +121,7 @@ void render_action_table(const meter::CombatantStats& player, double duration_s)
 
 } // namespace
 
-void render_casts(const meter::EncounterSummary& summary, float height) {
+void render_casts(CastsTabState& state, const meter::EncounterSummary& summary, float height) {
     std::vector<const meter::CombatantStats*> players;
     for (const meter::CombatantStats& c : summary.combatants) {
         if (c.casts > 0) players.push_back(&c);
@@ -140,12 +137,12 @@ void render_casts(const meter::EncounterSummary& summary, float height) {
 
     // A player who is not in this pull any more cannot stay selected.
     const auto selected = std::find_if(players.begin(), players.end(),
-        [](const meter::CombatantStats* p) { return p->entity_id == s_selected_player; });
+        [&state](const meter::CombatantStats* p) { return p->entity_id == state.selected_player; });
     const meter::CombatantStats& shown = selected != players.end() ? **selected : *players.front();
 
     const float players_h = std::min(height * 0.42f,
         (static_cast<float>(players.size()) + 1.5f) * (ImGui::GetTextLineHeight() + m(10.0f)));
-    render_player_table(players, shown.entity_id, players_h);
+    render_player_table(state, players, shown.entity_id, players_h);
     ImGui::Dummy(ImVec2(0.0f, m(6.0f)));
 
     section_header(ICON_BOLT, shown.name.c_str(), get_job_color_u32(shown.job));

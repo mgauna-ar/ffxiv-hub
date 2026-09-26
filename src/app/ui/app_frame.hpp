@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/app_state.hpp"
+#include "app/ui/view_combat.hpp"
 #include <string>
 
 namespace hub::app::ui {
@@ -15,9 +16,18 @@ namespace hub::app::ui {
 void setup_fonts_and_theme(const std::string& windows_dir, float dpi_scale);
 
 /**
- * @brief Draws one desktop frame between ImGui::NewFrame() and ImGui::Render():
- * the sidebar and the current view, filling the whole client area.
+ * @brief The desktop window's contents: the sidebar and the current view, and what
+ * each view remembers between frames. The views keep no state of their own, so two
+ * frames never share a selection or a cached snapshot.
  */
-void render_app_frame(AppState& app_state);
+class AppFrame {
+public:
+    /// Draws one frame between ImGui::NewFrame() and ImGui::Render(), filling the
+    /// whole client area.
+    void render(AppState& app_state);
+
+private:
+    CombatViewState m_combat;
+};
 
 } // namespace hub::app::ui

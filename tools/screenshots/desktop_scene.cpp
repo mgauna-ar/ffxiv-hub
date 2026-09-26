@@ -26,12 +26,14 @@ DesktopCapture capture_desktop(hub::app::AppState& app, hub::app::DesktopView vi
     capture.height = static_cast<int>(std::lround(height * dpi_scale));
 
     app.set_current_view(view);
+    // A frame of its own, so no selection or snapshot carries over from another shot.
+    hub::app::ui::AppFrame app_frame;
     // A few frames first: auto-height cards and tables settle over two or three.
     for (int i = 0; i < 4; ++i) {
         set_capture(i == 3 ? &capture.frame : nullptr);
         prepare_frame(static_cast<float>(capture.width), static_cast<float>(capture.height));
         ImGui::NewFrame();
-        hub::app::ui::render_app_frame(app);
+        app_frame.render(app);
         ImGui::Render();
         present();
     }

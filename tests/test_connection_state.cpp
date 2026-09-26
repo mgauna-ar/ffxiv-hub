@@ -1,4 +1,5 @@
 #include "test_framework.hpp"
+#include "app/connection_notifier.hpp"
 #include "app/connection_state.hpp"
 #include "common/os/unique_handle.hpp"
 
@@ -144,6 +145,43 @@ TEST_CASE(Connection, NotificationsFollowTheState) {
     TEST_ASSERT(!connection_notification(ConnectionState::Reconnecting, ConnectionState::Connected, 1));
     TEST_ASSERT(!connection_notification(ConnectionState::Connected, ConnectionState::Connected, 1));
     TEST_ASSERT(!connection_notification(ConnectionState::WaitingForGame, ConnectionState::InjectedWaitingPipe, 1));
+}
+
+TEST_CASE(Connection, NotifierRaisesTheAttachBalloonOnce) {
+    ConnectionNotifier notifier;
+    TEST_ASSERT(notifier.update(ConnectionState::WaitingForGame, false, 0).empty());
+    TEST_ASSERT(notifier.update(ConnectionState::Injecting, false, 0).empty());
+    TEST_ASSERT(notifier.update(ConnectionState::InjectedWaitingPipe, false, 42).empty());
+
+    const auto attached = notifier.update(ConnectionState::Connected, false, 42);
+    TEST_ASSERT_EQ(attached.size(), size_t{1});
+    TEST_ASSERT(attached[0].title == "FFXIV Hub");
+    TEST_ASSERT(attached[0].message.find("PID 42") != std::string::npos);
+
+    // Holding the state raises nothing more.
+    TEST_ASSERT(notifier.update(ConnectionState::Connected, false, 42).empty());
+    TEST_ASSERT(notifier.update(ConnectionState::Connected, false, 42).empty());
+}
+
+TEST_CASE(Connection, NotifierRaisesAccessDeniedOnEachRisingEdge) {
+    ConnectionNotifier notifier;
+    const auto denied = notifier.update(ConnectionState::WaitingForGame, true, 0);
+    TEST_ASSERT_EQ(denied.size(), size_t{1});
+    TEST_ASSERT(denied[0].title == "FFXIV Hub - Access Denied");
+    TEST_ASSERT(denied[0].message.find("administrator") != std::string::npos);
+
+    TEST_ASSERT(notifier.update(ConnectionState::WaitingForGame, true, 0).empty());
+    TEST_ASSERT(notifier.update(ConnectionState::WaitingForGame, false, 0).empty());
+    TEST_ASSERT_EQ(notifier.update(ConnectionState::WaitingForGame, true, 0).size(), size_t{1});
+}
+
+TEST_CASE(Connection, NotifierCanRaiseBothInOneFrame) {
+    ConnectionNotifier notifier;
+    (void)notifier.update(ConnectionState::Connected, false, 7);
+    const auto both = notifier.update(ConnectionState::WaitingForGame, true, 0);
+    TEST_ASSERT_EQ(both.size(), size_t{2});
+    TEST_ASSERT(both[0].message.find("closed") != std::string::npos);
+    TEST_ASSERT(both[1].title == "FFXIV Hub - Access Denied");
 }
 
 namespace {
