@@ -53,8 +53,7 @@ config::JsonValue AppState::default_config() {
     doc["hub"] = config::JsonValue::ObjectType{
         {"start_with_windows", config::JsonValue(false)},
         {"minimize_to_tray", config::JsonValue(true)},
-        {"show_notifications", config::JsonValue(true)},
-        {"refresh_interval_ms", config::JsonValue(500)}
+        {"show_notifications", config::JsonValue(true)}
     };
     // Each plugin's keys come from its own table. A plugin keeps its current value
     // for a key missing from the file, so a reset only takes in-game because

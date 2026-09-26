@@ -6,7 +6,7 @@
 namespace hub::meter {
 
 ActorType actor_type_from_object_kind(game::ObjectKind object_kind, uint32_t owner_id) noexcept {
-    if (object_kind == game::ObjectKind::Kind5 || owner_id != 0) return ActorType::Pet;
+    if (owner_id != 0) return ActorType::Pet;
     if (object_kind == game::ObjectKind::Player) return ActorType::Player;
     return ActorType::Monster;
 }

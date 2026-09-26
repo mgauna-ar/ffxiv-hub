@@ -206,17 +206,15 @@ namespace definitions {
 } // namespace definitions
 
 /// GameObject::ObjectKind, the byte at offsets::CHARACTER_OBJECT_KIND. Named as in
-/// Dalamud's ObjectKind, except 5.
+/// Dalamud's ObjectKind.
 enum class ObjectKind : uint8_t {
     None = 0,
     Player = 1,
     BattleNpc = 2,
     EventNpc = 3,
-    /// Classified as a pet since the meter was written, and the payload still does.
-    /// Unverified: Dalamud names 5 Aetheryte, and has pets as BattleNpcs with an
-    /// owner. Check it against the client with the inspect-game-client skill before
-    /// relying on it or renaming it.
-    Kind5 = 5,
+    /// Not a Character, so never a combatant or a pet: see AGENTS.md, "How the
+    /// client builds an aetheryte".
+    Aetheryte = 5,
 };
 
 /// Kinds whose object is a BattleChara, so it has HP and a StatusManager.

@@ -242,6 +242,9 @@ private:
                     case 'n': result.push_back('\n'); break;
                     case 'r': result.push_back('\r'); break;
                     case 't': result.push_back('\t'); break;
+                    case 'u':
+                        if (!parse_unicode_escape(result)) return std::nullopt;
+                        break;
                     default: result.push_back(esc); break;
                 }
             } else {
@@ -249,6 +252,65 @@ private:
             }
         }
         return std::nullopt;
+    }
+
+    /// Four hex digits at m_pos, advanced past them; nullopt when they are not.
+    std::optional<uint32_t> parse_hex4() {
+        if (m_src.size() - m_pos < 4) return std::nullopt;
+        uint32_t unit = 0;
+        for (int i = 0; i < 4; ++i) {
+            const char h = m_src[m_pos++];
+            unit <<= 4;
+            if (h >= '0' && h <= '9') unit |= static_cast<uint32_t>(h - '0');
+            else if (h >= 'a' && h <= 'f') unit |= static_cast<uint32_t>(h - 'a' + 10);
+            else if (h >= 'A' && h <= 'F') unit |= static_cast<uint32_t>(h - 'A' + 10);
+            else return std::nullopt;
+        }
+        return unit;
+    }
+
+    /// The four hex digits of a backslash-u escape (and the low half that follows a
+    /// high surrogate), as UTF-8. An unpaired surrogate becomes U+FFFD.
+    bool parse_unicode_escape(std::string& out) {
+        const auto unit = parse_hex4();
+        if (!unit) return false;
+        uint32_t cp = *unit;
+        if (cp >= 0xD800 && cp <= 0xDBFF) {
+            const size_t mark = m_pos;
+            std::optional<uint32_t> low;
+            if (m_src.substr(m_pos, 2) == "\\u") {
+                m_pos += 2;
+                low = parse_hex4();
+            }
+            if (low && *low >= 0xDC00 && *low <= 0xDFFF) {
+                cp = 0x10000 + ((cp - 0xD800) << 10) + (*low - 0xDC00);
+            } else {
+                m_pos = mark;
+                cp = 0xFFFD;
+            }
+        } else if (cp >= 0xDC00 && cp <= 0xDFFF) {
+            cp = 0xFFFD;
+        }
+        append_utf8(out, cp);
+        return true;
+    }
+
+    static void append_utf8(std::string& out, uint32_t cp) {
+        if (cp < 0x80) {
+            out.push_back(static_cast<char>(cp));
+        } else if (cp < 0x800) {
+            out.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+            out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        } else if (cp < 0x10000) {
+            out.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+            out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        } else {
+            out.push_back(static_cast<char>(0xF0 | (cp >> 18)));
+            out.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        }
     }
 
     std::optional<JsonValue> parse_string() {
@@ -313,6 +375,34 @@ private:
     int m_depth{0};
 };
 
+/// `text` as a quoted JSON string. Object keys go through here too, so a key with
+/// a quote or a control character still reads back.
+void write_string(std::ostringstream& ss, std::string_view text) {
+    ss << '"';
+    for (const char c : text) {
+        switch (c) {
+            case '"': ss << "\\\""; break;
+            case '\\': ss << "\\\\"; break;
+            case '\b': ss << "\\b"; break;
+            case '\f': ss << "\\f"; break;
+            case '\n': ss << "\\n"; break;
+            case '\r': ss << "\\r"; break;
+            case '\t': ss << "\\t"; break;
+            default:
+                if (static_cast<unsigned char>(c) < 0x20) {
+                    // A raw control character is not valid JSON; it would make the
+                    // whole file unreadable.
+                    constexpr char hex[] = "0123456789abcdef";
+                    ss << "\\u00" << hex[(c >> 4) & 0xF] << hex[c & 0xF];
+                } else {
+                    ss << c;
+                }
+                break;
+        }
+    }
+    ss << '"';
+}
+
 void stringify_internal(const JsonValue& val, std::ostringstream& ss, int indent_level, int indent_spaces) {
     const std::string ind(indent_level * indent_spaces, ' ');
     const std::string ind_next((indent_level + 1) * indent_spaces, ' ');
@@ -337,20 +427,7 @@ void stringify_internal(const JsonValue& val, std::ostringstream& ss, int indent
             break;
         }
         case JsonValue::Type::String:
-            ss << '"';
-            for (char c : val.as_string()) {
-                switch (c) {
-                    case '"': ss << "\\\""; break;
-                    case '\\': ss << "\\\\"; break;
-                    case '\b': ss << "\\b"; break;
-                    case '\f': ss << "\\f"; break;
-                    case '\n': ss << "\\n"; break;
-                    case '\r': ss << "\\r"; break;
-                    case '\t': ss << "\\t"; break;
-                    default: ss << c; break;
-                }
-            }
-            ss << '"';
+            write_string(ss, val.as_string());
             break;
         case JsonValue::Type::Array: {
             const auto& arr = val.as_array();
@@ -376,7 +453,9 @@ void stringify_internal(const JsonValue& val, std::ostringstream& ss, int indent
                 ss << "{\n";
                 size_t count = 0;
                 for (const auto& [k, v] : obj) {
-                    ss << ind_next << '"' << k << "\": ";
+                    ss << ind_next;
+                    write_string(ss, k);
+                    ss << ": ";
                     stringify_internal(v, ss, indent_level + 1, indent_spaces);
                     if (++count < obj.size()) ss << ',';
                     ss << '\n';

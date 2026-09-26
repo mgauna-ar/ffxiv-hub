@@ -241,10 +241,10 @@ TEST_CASE(MeterPlugin, MapsGameObjectKindToActorType) {
     TEST_ASSERT_EQ(enemy->actor_type, ActorType::Monster);
     TEST_ASSERT_FALSE(plugin.engine().registry_unlocked().is_friendly(0x40000123));
 
-    // ObjectKind 5 is classified as a pet, which ActorType spells 2.
+    // A pet is a BattleNpc with an owner, which ActorType spells 2.
     hub::game::CharacterObject pet{};
     pet.entity_id = 888;
-    pet.object_kind = hub::game::ObjectKind::Kind5;
+    pet.object_kind = hub::game::ObjectKind::BattleNpc;
     pet.owner_id = 777;
     pet.current_hp = 100;
     pet.max_hp = 100;
@@ -256,6 +256,8 @@ TEST_CASE(MeterPlugin, MapsGameObjectKindToActorType) {
     TEST_ASSERT_EQ(pet_actor->actor_type, ActorType::Pet);
     TEST_ASSERT_EQ(pet_actor->owner_id, 777u);
 
+    // Kind 5 is an aetheryte, not a pet: without an owner it is nobody's.
+    TEST_ASSERT(actor_type_from_object_kind(hub::game::ObjectKind::Aetheryte, 0) != ActorType::Pet);
 }
 
 TEST_CASE(MeterPlugin, ActorInfoExtractionIsShared) {

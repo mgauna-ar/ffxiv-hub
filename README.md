@@ -380,7 +380,6 @@ Hub keys:
 | `start_with_windows` | bool | `false` | Launch automatically on Windows logon. |
 | `minimize_to_tray` | bool | `true` | Closing the window hides it to the notification area instead of exiting. |
 | `show_notifications` | bool | `true` | Windows notifications on attach and detach. |
-| `refresh_interval_ms` | int | `500` | How often the desktop views refresh. |
 
 Plugin keys are documented in [Combat Meter](plugins/combat_meter/README.md#configuration)
 and [Latency Mitigator](plugins/latency_mitigator/README.md#configuration).
