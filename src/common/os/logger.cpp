@@ -1,5 +1,6 @@
 #include "common/os/logger.hpp"
 #include "common/config/config_manager.hpp"
+#include "common/os/paths.hpp"
 
 #include <fstream>
 #include <sstream>
@@ -8,21 +9,13 @@
 #include <filesystem>
 #include <mutex>
 
-#ifdef _WIN32
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-#include <shellapi.h>
-#endif
-
 namespace hub::os {
 
 namespace {
 
 std::mutex g_log_mutex;
 std::ofstream g_log_file;
-std::string g_active_path;
+std::filesystem::path g_active_path;
 
 std::string get_timestamp_string() {
     using namespace std::chrono;
@@ -55,7 +48,7 @@ const char* level_to_string(LogLevel level) noexcept {
 
 } // namespace
 
-bool Logger::init(const std::string& custom_path, bool rotate) {
+bool Logger::init(const std::filesystem::path& custom_path, bool rotate) {
     std::lock_guard<std::mutex> lock(g_log_mutex);
     if (g_log_file.is_open()) {
         g_log_file.close();
@@ -64,7 +57,7 @@ bool Logger::init(const std::string& custom_path, bool rotate) {
     g_active_path = custom_path.empty() ? default_log_path() : custom_path;
 
     try {
-        std::filesystem::path fspath(g_active_path);
+        const std::filesystem::path& fspath = g_active_path;
         if (fspath.has_parent_path()) {
             std::filesystem::create_directories(fspath.parent_path());
         }
@@ -73,7 +66,7 @@ bool Logger::init(const std::string& custom_path, bool rotate) {
             std::error_code ec;
             const auto file_size = std::filesystem::file_size(fspath, ec);
             if (!ec && file_size > 0) {
-                const std::string prev = previous_log_path(g_active_path);
+                const std::filesystem::path prev = previous_log_path(g_active_path);
                 std::filesystem::remove(prev, ec);
                 ec.clear();
                 std::filesystem::rename(fspath, prev, ec);
@@ -106,64 +99,40 @@ void Logger::log(LogLevel level, std::string_view message) {
     }
 }
 
-std::string Logger::log_file_path() {
+std::filesystem::path Logger::log_file_path() {
     std::lock_guard<std::mutex> lock(g_log_mutex);
     return g_active_path.empty() ? default_log_path() : g_active_path;
 }
 
-std::string Logger::previous_log_path(const std::string& current_path) {
-    std::string base = current_path;
-    if (base.empty()) {
-        base = log_file_path();
-    }
-    std::filesystem::path p(base);
-    const std::string stem = p.stem().string();
-    const std::string ext = p.extension().string();
-    if (p.has_parent_path()) {
-        return (p.parent_path() / (stem + ".prev" + ext)).string();
-    }
-    return stem + ".prev" + ext;
+std::filesystem::path Logger::previous_log_path(const std::filesystem::path& current_path) {
+    const std::filesystem::path base = current_path.empty() ? log_file_path() : current_path;
+    std::filesystem::path prev = base;
+    prev.replace_filename(base.stem());
+    prev += ".prev";
+    prev += base.extension();
+    return prev;
 }
 
-std::string Logger::default_log_path() {
+std::filesystem::path Logger::default_log_path() {
     const auto cfg_path = hub::config::ConfigManager::instance().get_config_path();
     if (cfg_path.has_parent_path()) {
-        return (cfg_path.parent_path() / "hub.log").string();
+        return cfg_path.parent_path() / "hub.log";
     }
-    return "./hub.log";
+    return "hub.log";
 }
 
 void Logger::open_log_file() {
-    const std::string path = log_file_path();
-#ifdef _WIN32
-    std::wstring wpath(path.begin(), path.end());
-    ShellExecuteW(nullptr, L"open", wpath.c_str(), nullptr, nullptr, SW_SHOW);
-#else
-    std::string cmd = "open \"" + path + "\" 2>/dev/null || xdg-open \"" + path + "\" 2>/dev/null &";
-    (void)std::system(cmd.c_str());
-#endif
+    open_with_default_app(log_file_path());
 }
-
-namespace {
-void open_folder(const std::string& folder) {
-#ifdef _WIN32
-    std::wstring wfolder(folder.begin(), folder.end());
-    ShellExecuteW(nullptr, L"open", wfolder.c_str(), nullptr, nullptr, SW_SHOW);
-#else
-    std::string cmd = "open \"" + folder + "\" 2>/dev/null || xdg-open \"" + folder + "\" 2>/dev/null &";
-    (void)std::system(cmd.c_str());
-#endif
-}
-} // namespace
 
 void Logger::open_log_folder() {
-    const std::filesystem::path log_path(log_file_path());
-    open_folder(log_path.has_parent_path() ? log_path.parent_path().string() : ".");
+    const std::filesystem::path log_path = log_file_path();
+    open_with_default_app(log_path.has_parent_path() ? log_path.parent_path() : std::filesystem::path("."));
 }
 
 void Logger::open_config_folder() {
     const auto cfg_path = hub::config::ConfigManager::instance().get_config_path();
-    open_folder(cfg_path.has_parent_path() ? cfg_path.parent_path().string() : ".");
+    open_with_default_app(cfg_path.has_parent_path() ? cfg_path.parent_path() : std::filesystem::path("."));
 }
 
 void Logger::shutdown() {

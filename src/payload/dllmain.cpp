@@ -45,9 +45,9 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
     //    corrupt it) so both sides of the handshake can be inspected independently.
     {
         const auto cfg_path = hub::config::ConfigManager::instance().get_config_path();
-        const std::string payload_log_path = cfg_path.has_parent_path()
-            ? (cfg_path.parent_path() / "hub_payload.log").string()
-            : "hub_payload.log";
+        const std::filesystem::path payload_log_path = cfg_path.has_parent_path()
+            ? cfg_path.parent_path() / "hub_payload.log"
+            : std::filesystem::path("hub_payload.log");
         hub::os::Logger::init(payload_log_path, /*rotate=*/true);
     }
     hub::os::Logger::info("Payload thread started. Waiting for FFXIVGAME window...");
@@ -94,10 +94,14 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
     // 3. Bootstrap plugin config from disk now that overlays are wired, so
     //    persisted desktop settings apply in-game without waiting for a live command.
     //    The payload writes back only its plugin sections; the rest belongs to the app.
-    hub::config::ConfigManager::instance().set_owned_sections(hub::plugins::config_sections());
-    hub::config::ConfigManager::instance().load();
-    combat_plugin->deserialize_config(hub::config::ConfigManager::instance().root()[hub::plugins::COMBAT_METER.config_section]);
-    latency_plugin->deserialize_config(hub::config::ConfigManager::instance().root()[hub::plugins::LATENCY_MITIGATOR.config_section]);
+    {
+        auto& config = hub::config::ConfigManager::instance();
+        config.set_owned_sections(hub::plugins::config_sections());
+        config.set_defaults(hub::payload::plugin_config_defaults());
+        config.load();
+        combat_plugin->deserialize_config(config.section(hub::plugins::COMBAT_METER.config_section));
+        latency_plugin->deserialize_config(config.section(hub::plugins::LATENCY_MITIGATOR.config_section));
+    }
 
     // 4. Connect to the desktop app's pipe before touching any game memory below,
     //    so a hook/sigscan failure still leaves the app able to report it.
@@ -437,10 +441,7 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
         // the game process can be killed outright on exit rather than reaching
         // the graceful teardown path below.
         if (now - last_config_save > intervals::CONFIG_AUTOSAVE) {
-            auto& config_mgr = hub::config::ConfigManager::instance();
-            combat_plugin->serialize_config(config_mgr.root()[hub::plugins::COMBAT_METER.config_section]);
-            latency_plugin->serialize_config(config_mgr.root()[hub::plugins::LATENCY_MITIGATOR.config_section]);
-            config_mgr.save();
+            hub::payload::save_plugin_config(combat_plugin.get(), latency_plugin.get());
             last_config_save = now;
         }
     }
@@ -458,12 +459,7 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
 
     // Graceful teardown when explicit unload is requested while the game keeps running
     hub::os::Logger::info("Payload shutting down.");
-    {
-        auto& config_mgr = hub::config::ConfigManager::instance();
-        combat_plugin->serialize_config(config_mgr.root()[hub::plugins::COMBAT_METER.config_section]);
-        latency_plugin->serialize_config(config_mgr.root()[hub::plugins::LATENCY_MITIGATOR.config_section]);
-        config_mgr.save();
-    }
+    hub::payload::save_plugin_config(combat_plugin.get(), latency_plugin.get());
     hook_mgr.uninstall();
     hub::payload::Dx11Hook::instance().uninstall();
     pipe_client->disconnect();

@@ -363,7 +363,8 @@ plugin:
 }
 ```
 
-- **Saving.** Changes are saved as you make them. The running game also saves overlay
+- **Saving.** Changes are saved as you make them; a slider is saved once, when you let go
+  of it. The running game also saves overlay
   state every few seconds, such as a HUD you just dragged. It writes only the plugin
   settings it uses, merged into the file as it is on disk, so it never reverts a Hub
   setting or one only the desktop app reads.

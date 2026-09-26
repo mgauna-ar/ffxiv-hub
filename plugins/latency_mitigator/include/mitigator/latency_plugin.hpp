@@ -3,6 +3,7 @@
 #include "hub/plugin_api.hpp"
 #include "hub/plugin_registry.hpp"
 #include "mitigator/animation_lock.hpp"
+#include "mitigator/latency_settings.hpp"
 #include "common/ipc/ring_buffer.hpp"
 #include <atomic>
 #include <memory>
@@ -75,12 +76,16 @@ private:
     /// The HUD shows only while the plugin is on and the app is listening.
     void refresh_overlay_suppression() noexcept;
 
+    /// The settings in effect now, from the mitigator and the HUD where they live.
+    [[nodiscard]] LatencySettings live_settings() const;
+
     AnimationLockMitigator m_mitigator;
     bool m_initialized{false};
     ipc::PacketRingBuffer* m_ring_buffer{nullptr};
     LatencyOverlay* m_overlay{nullptr};
     /// Last-loaded overlay state, used when no overlay instance is attached.
     ui::OverlayConfig m_overlay_config{default_overlay_config()};
+    OverlayDisplayMode m_overlay_mode{OverlayDisplayMode::CompactInline};
     std::atomic<void*> m_action_manager{nullptr};
     std::atomic<float> m_pre_lock_snapshot{0.0f};
     std::atomic<bool> m_connected{false};

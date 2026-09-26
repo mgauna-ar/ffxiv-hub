@@ -1,5 +1,6 @@
 #include "mitigator/latency_plugin.hpp"
 #include "mitigator/latency_overlay.hpp"
+#include "mitigator/latency_settings.hpp"
 #include "hub/game_definitions.hpp"
 #include "common/config/json.hpp"
 #include "common/ipc/protocol.hpp"
@@ -80,59 +81,43 @@ void LatencyPlugin::refresh_overlay_suppression() noexcept {
     }
 }
 
-void LatencyPlugin::serialize_config(config::JsonValue& out) const {
-    const auto cfg = m_mitigator.get_config();
-    out = config::JsonValue(config::JsonValue::ObjectType{});
-    out["plugin_enabled"] = config::JsonValue(m_plugin_enabled.load());
-    out["enabled"] = config::JsonValue(cfg.enabled);
-    out["dry_run"] = config::JsonValue(cfg.dry_run);
-    out["target_ping_ms"] = config::JsonValue(cfg.target_ping_ms);
-    out["min_animation_lock_ms"] = config::JsonValue(cfg.min_animation_lock_ms);
-    out["max_animation_lock_ms"] = config::JsonValue(cfg.max_animation_lock_ms);
-    out["rtt_sample_window"] = config::JsonValue(static_cast<uint32_t>(cfg.rtt_sample_window));
-    out["safety_margin_ms"] = config::JsonValue(cfg.safety_margin_ms);
-    out["spike_multiplier"] = config::JsonValue(cfg.spike_multiplier);
-
+LatencySettings LatencyPlugin::live_settings() const {
     // The overlay owns anything the player changes live in-game, so read the
     // live state back out whenever there is one.
-    ui::serialize_overlay(m_overlay ? m_overlay->capture_config() : m_overlay_config, out);
-    if (m_overlay) {
-        out["overlay_mode"] = config::JsonValue(static_cast<int>(m_overlay->display_mode()));
-    }
+    LatencySettings settings;
+    settings.mitigation = m_mitigator.get_config();
+    settings.overlay = m_overlay ? m_overlay->capture_config() : m_overlay_config;
+    settings.overlay_mode = m_overlay ? m_overlay->display_mode() : m_overlay_mode;
+    return settings;
+}
+
+void LatencyPlugin::serialize_config(config::JsonValue& out) const {
+    out = config::JsonValue(config::JsonValue::ObjectType{});
+    out[plugins::MASTER_SWITCH_KEY] = config::JsonValue(m_plugin_enabled.load());
+    write_settings(live_settings(), out);
 }
 
 void LatencyPlugin::deserialize_config(const config::JsonValue& in) {
     if (!in.is_object()) return;
-    auto cfg = m_mitigator.get_config();
 
-    if (in.contains("plugin_enabled")) {
-        m_plugin_enabled.store(in["plugin_enabled"].as_bool(m_plugin_enabled.load()));
+    if (in.contains(plugins::MASTER_SWITCH_KEY)) {
+        m_plugin_enabled.store(in[plugins::MASTER_SWITCH_KEY].as_bool(m_plugin_enabled.load()));
     }
-    if (in.contains("enabled")) cfg.enabled = in["enabled"].as_bool(cfg.enabled);
-    if (in.contains("dry_run")) cfg.dry_run = in["dry_run"].as_bool(cfg.dry_run);
-    if (in.contains("target_ping_ms")) cfg.target_ping_ms = in["target_ping_ms"].as_double(cfg.target_ping_ms);
-    if (in.contains("min_animation_lock_ms")) cfg.min_animation_lock_ms = in["min_animation_lock_ms"].as_double(cfg.min_animation_lock_ms);
-    if (in.contains("max_animation_lock_ms")) cfg.max_animation_lock_ms = in["max_animation_lock_ms"].as_double(cfg.max_animation_lock_ms);
-    if (in.contains("rtt_sample_window")) {
-        // A negative value would wrap to a huge size_t; anything below 1 keeps the current window.
-        const int window = in["rtt_sample_window"].as_int(static_cast<int>(cfg.rtt_sample_window));
-        if (window >= 1) cfg.rtt_sample_window = static_cast<size_t>(window);
-    }
-    if (in.contains("safety_margin_ms")) cfg.safety_margin_ms = in["safety_margin_ms"].as_double(cfg.safety_margin_ms);
-    if (in.contains("spike_multiplier")) cfg.spike_multiplier = in["spike_multiplier"].as_double(cfg.spike_multiplier);
 
-    m_mitigator.set_config(cfg);
+    // A key absent from `in` keeps the value in effect now.
+    LatencySettings next = live_settings();
+    read_settings(in, next);
 
-    m_overlay_config = ui::deserialize_overlay(in, m_overlay_config);
+    m_mitigator.set_config(next.mitigation);
+    m_overlay_config = next.overlay;
+    m_overlay_mode = next.overlay_mode;
 
     // plugin_enabled may have just changed.
     refresh_overlay_suppression();
 
     if (m_overlay) {
         m_overlay->apply_config(m_overlay_config);
-        if (in.contains("overlay_mode")) {
-            m_overlay->set_display_mode(static_cast<OverlayDisplayMode>(in["overlay_mode"].as_int(static_cast<int>(m_overlay->display_mode()))));
-        }
+        m_overlay->set_display_mode(m_overlay_mode);
     }
 }
 

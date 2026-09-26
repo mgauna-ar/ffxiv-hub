@@ -2,6 +2,7 @@
 #include "meter/action_decoder.hpp"
 #include "meter/actor_info.hpp"
 #include "meter/combat_overlay.hpp"
+#include "meter/combat_settings.hpp"
 #include "common/config/json.hpp"
 #include "hub/game_definitions.hpp"
 #include "hub/game/entity.hpp"
@@ -177,56 +178,51 @@ void CombatPlugin::on_vitals(std::span<const ActorVitals> actors, uint64_t now_u
     });
 }
 
-void CombatPlugin::serialize_config(config::JsonValue& out) const {
-    // The app's commands change the overlay and engine, not m_config (the load-time
-    // copy), so read the live state or the autosave reverts them.
-    const CombatOverlay* overlay = m_overlay;
-    const uint32_t overlay_metric = overlay
-        ? (overlay->metric() == MeterMetric::Healing ? 1u : 0u)
-        : m_config.overlay_metric;
+CombatConfig CombatPlugin::live_config() const {
+    // The app's commands change the overlay and the atomics, not m_config (the
+    // last-loaded copy), so read the live state or the autosave reverts them.
+    CombatConfig cfg = m_config;
+    cfg.enabled = is_enabled();
+    cfg.dps_metric = m_dps_metric.load(std::memory_order_relaxed);
+    cfg.track_vitals = m_track_vitals.load(std::memory_order_relaxed);
+    if (const CombatOverlay* overlay = m_overlay) {
+        cfg.party_only = overlay->party_only();
+        cfg.show_bars = overlay->show_progress_bars();
+        cfg.hide_inactive = overlay->hide_inactive();
+        cfg.refresh_interval_ms = overlay->refresh_interval_ms();
+        cfg.show_col_share = overlay->show_col_share();
+        cfg.show_col_crit = overlay->show_col_crit();
+        cfg.show_col_dh = overlay->show_col_dh();
+        cfg.show_col_cdh = overlay->show_col_cdh();
+        cfg.overlay_metric = overlay->metric() == MeterMetric::Healing ? 1u : 0u;
+        cfg.overlay = overlay->capture_config();
+    }
+    return cfg;
+}
 
+void CombatPlugin::serialize_config(config::JsonValue& out) const {
     // Only this plugin's keys, so desktop_dps_metric stays the app's.
     out = config::JsonValue(config::JsonValue::ObjectType{});
-    out["plugin_enabled"] = config::JsonValue(is_enabled());
-    out["party_only"] = config::JsonValue(overlay ? overlay->party_only() : m_config.party_only);
-    out["show_bars"] = config::JsonValue(overlay ? overlay->show_progress_bars() : m_config.show_bars);
-    out["hide_inactive"] = config::JsonValue(overlay ? overlay->hide_inactive() : m_config.hide_inactive);
-    out["refresh_interval_ms"] = config::JsonValue(
-        overlay ? overlay->refresh_interval_ms() : m_config.refresh_interval_ms);
-    out["show_col_share"] = config::JsonValue(overlay ? overlay->show_col_share() : m_config.show_col_share);
-    out["show_col_crit"] = config::JsonValue(overlay ? overlay->show_col_crit() : m_config.show_col_crit);
-    out["show_col_dh"] = config::JsonValue(overlay ? overlay->show_col_dh() : m_config.show_col_dh);
-    out["show_col_cdh"] = config::JsonValue(overlay ? overlay->show_col_cdh() : m_config.show_col_cdh);
-    out["overlay_metric"] = config::JsonValue(overlay_metric);
-    out["dps_metric"] = config::JsonValue(m_dps_metric.load(std::memory_order_relaxed));
-    out["track_vitals"] = config::JsonValue(m_track_vitals.load(std::memory_order_relaxed));
-    ui::serialize_overlay(overlay ? overlay->capture_config() : m_config.overlay, out);
+    out[plugins::MASTER_SWITCH_KEY] = config::JsonValue(is_enabled());
+    write_settings(live_config(), out);
 }
 
 void CombatPlugin::deserialize_config(const config::JsonValue& in) {
     if (!in.is_object()) return;
 
+    // A key absent from `in` keeps the value in effect now.
+    CombatConfig next = live_config();
     // "enabled" is the key this plugin shipped with, before every plugin moved to
-    // the shared "plugin_enabled" name.
-    if (in.contains("enabled")) m_config.enabled = in["enabled"].as_bool(m_config.enabled);
-    if (in.contains("plugin_enabled")) m_config.enabled = in["plugin_enabled"].as_bool(m_config.enabled);
+    // the shared "plugin_enabled" name, which wins when both are there.
+    if (in.contains(LEGACY_ENABLED_KEY)) next.enabled = in[LEGACY_ENABLED_KEY].as_bool(next.enabled);
+    if (in.contains(plugins::MASTER_SWITCH_KEY)) next.enabled = in[plugins::MASTER_SWITCH_KEY].as_bool(next.enabled);
+    read_settings(in, next);
+    next.dps_metric = static_cast<uint32_t>(dps_metric_from(next.dps_metric));
+
+    m_config = next;
     m_enabled.store(m_config.enabled, std::memory_order_relaxed);
-    if (in.contains("party_only")) m_config.party_only = in["party_only"].as_bool(m_config.party_only);
-    if (in.contains("show_bars")) m_config.show_bars = in["show_bars"].as_bool(m_config.show_bars);
-    if (in.contains("hide_inactive")) m_config.hide_inactive = in["hide_inactive"].as_bool(m_config.hide_inactive);
-    if (in.contains("refresh_interval_ms")) m_config.refresh_interval_ms = static_cast<uint32_t>(in["refresh_interval_ms"].as_int(static_cast<int>(m_config.refresh_interval_ms)));
-    if (in.contains("show_col_share")) m_config.show_col_share = in["show_col_share"].as_bool(m_config.show_col_share);
-    if (in.contains("show_col_crit")) m_config.show_col_crit = in["show_col_crit"].as_bool(m_config.show_col_crit);
-    if (in.contains("show_col_dh")) m_config.show_col_dh = in["show_col_dh"].as_bool(m_config.show_col_dh);
-    if (in.contains("show_col_cdh")) m_config.show_col_cdh = in["show_col_cdh"].as_bool(m_config.show_col_cdh);
-    if (in.contains("overlay_metric")) m_config.overlay_metric = static_cast<uint32_t>(in["overlay_metric"].as_int(static_cast<int>(m_config.overlay_metric)));
-    if (in.contains("dps_metric")) {
-        m_config.dps_metric = static_cast<uint32_t>(dps_metric_from(
-            static_cast<uint32_t>(in["dps_metric"].as_int(static_cast<int>(m_config.dps_metric)))));
-        m_dps_metric.store(m_config.dps_metric, std::memory_order_relaxed);
-    }
-    if (in.contains("track_vitals")) set_vitals_tracking(in["track_vitals"].as_bool(m_config.track_vitals));
-    m_config.overlay = ui::deserialize_overlay(in, m_config.overlay);
+    m_dps_metric.store(m_config.dps_metric, std::memory_order_relaxed);
+    set_vitals_tracking(m_config.track_vitals);
 
     if (m_overlay) {
         m_overlay->set_party_only(m_config.party_only);

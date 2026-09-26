@@ -1,4 +1,5 @@
 #include "common/os/injector.hpp"
+#include "common/os/paths.hpp"
 #include "common/os/logger.hpp"
 #include "common/os/unique_handle.hpp"
 #include <filesystem>
@@ -60,7 +61,7 @@ bool DllInjector::inject(const ProcessInfo& proc, const std::filesystem::path& d
     std::error_code ec;
     const auto abs_path = std::filesystem::absolute(dll_path, ec);
     if (ec || !std::filesystem::exists(abs_path, ec)) {
-        m_last_error = "Payload DLL does not exist: " + dll_path.string();
+        m_last_error = "Payload DLL does not exist: " + to_utf8(dll_path);
         return false;
     }
 

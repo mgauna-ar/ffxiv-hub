@@ -12,6 +12,7 @@
 #include "app/ui/plugin_page.hpp"
 #include "app/ui/theme.hpp"
 #include "app/ui/widgets.hpp"
+#include "meter/combat_settings.hpp"
 #include "meter/pull_grouping.hpp"
 #include "hub/plugin_registry.hpp"
 #include <algorithm>
@@ -624,15 +625,16 @@ void render_healing_table(const meter::EncounterSummary& summary, float height) 
 void render_plugin_section(AppState& app_state) {
     begin_settings_card("##MeterPluginCard", ICON_HISTORY, "PULL TRACKING", colors::Accent);
 
-    int pulls_kept = cfg_get(METER, "pull_history_limit", static_cast<int>(meter::constants::DEFAULT_HISTORY_CAPACITY));
+    int pulls_kept = cfg_get(METER, meter::PULL_HISTORY_LIMIT_KEY, static_cast<int>(meter::constants::DEFAULT_HISTORY_CAPACITY));
     begin_setting_row("Pulls kept", "Finished pulls the pull list holds. Lowering it drops the oldest.");
     if (ImGui::SliderInt("##pulls_kept", &pulls_kept, meter::constants::MIN_PULL_HISTORY_LIMIT,
                          meter::constants::MAX_PULL_HISTORY_LIMIT, "%d pulls",
                          ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_AlwaysClamp)) {
-        cfg_store(METER, "pull_history_limit", pulls_kept);
+        cfg_set(METER, meter::PULL_HISTORY_LIMIT_KEY, pulls_kept);
     }
     // Applied on release: a drag through a low value would otherwise drop pulls for good.
     if (ImGui::IsItemDeactivatedAfterEdit()) {
+        cfg_save();
         app_state.set_pull_history_limit(pulls_kept);
     }
     end_setting_row();
@@ -643,7 +645,7 @@ void render_plugin_section(AppState& app_state) {
                        "Deaths and Buffs & Debuffs tabs stay empty and pulls show no boss HP.",
                        &track_vitals)) {
         cfg_store(METER, "track_vitals", track_vitals);
-        app_state.send_combat_track_vitals(track_vitals);
+        app_state.send_command(PluginId::CombatMeter, CommandId::SetVitalsTracking, track_vitals ? 1 : 0);
     }
 
     end_settings_card();
@@ -680,7 +682,7 @@ void render_display_section(AppState& app_state) {
     begin_setting_row("Table", "Which table the in-game meter draws.");
     if (ImGui::Combo("##meter_metric", &metric, metric_modes, 2)) {
         cfg_store(METER, "overlay_metric", metric);
-        app_state.send_combat_overlay_metric(static_cast<uint32_t>(metric));
+        app_state.send_command(PluginId::CombatMeter, CommandId::SetMeterMetric, static_cast<uint32_t>(metric));
     }
     end_setting_row();
 
@@ -691,7 +693,7 @@ void render_display_section(AppState& app_state) {
     };
     if (ImGui::Combo("##dps_metric", &dps_metric, label_of, nullptr, static_cast<int>(meter::DPS_METRIC_COUNT))) {
         cfg_store(METER, "dps_metric", dps_metric);
-        app_state.send_combat_dps_metric(static_cast<uint32_t>(dps_metric));
+        app_state.send_command(PluginId::CombatMeter, CommandId::SetDpsMetric, static_cast<uint32_t>(dps_metric));
     }
     end_setting_row();
 
@@ -699,26 +701,30 @@ void render_display_section(AppState& app_state) {
     if (setting_toggle("Party members only",
                        "Lists your party and the Limit Break. Solo, every friendly row stays.", &party_only)) {
         cfg_store(METER, "party_only", party_only);
-        app_state.send_combat_overlay_party_only(party_only);
+        app_state.send_command(PluginId::CombatMeter, CommandId::FilterPartyOnly, party_only ? 1 : 0);
     }
 
     bool hide_inactive = cfg_get(METER, "hide_inactive", false);
     if (setting_toggle("Hide idle combatants", "Drops anyone with no contribution this pull.", &hide_inactive)) {
         cfg_store(METER, "hide_inactive", hide_inactive);
-        app_state.send_combat_hide_inactive(hide_inactive);
+        app_state.send_command(PluginId::CombatMeter, CommandId::SetHideInactive, hide_inactive ? 1 : 0);
     }
 
     bool show_bars = cfg_get(METER, "show_bars", true);
     if (setting_toggle("Job-coloured row bars", "Draws a bar in each row's job colour behind it.", &show_bars)) {
         cfg_store(METER, "show_bars", show_bars);
-        app_state.send_combat_show_bars(show_bars);
+        app_state.send_command(PluginId::CombatMeter, CommandId::SetShowBars, show_bars ? 1 : 0);
     }
 
     int refresh_ms = cfg_get(METER, "refresh_interval_ms", 500);
     begin_setting_row("Refresh rate", "How often the in-game meter redraws.");
     if (ImGui::SliderInt("##refresh_ms", &refresh_ms, 100, 2000, "%d ms")) {
-        cfg_store(METER, "refresh_interval_ms", refresh_ms);
-        app_state.send_combat_refresh_interval(static_cast<uint32_t>(refresh_ms));
+        cfg_set(METER, "refresh_interval_ms", refresh_ms);
+    }
+    // On release, like every slider that has no in-game preview.
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        cfg_save();
+        app_state.send_command(PluginId::CombatMeter, CommandId::SetRefreshInterval, static_cast<uint32_t>(refresh_ms));
     }
     end_setting_row();
 
@@ -728,25 +734,25 @@ void render_display_section(AppState& app_state) {
     bool col_share = cfg_get(METER, "show_col_share", true);
     if (setting_toggle("Damage share", "Percentage of total raid damage.", &col_share)) {
         cfg_store(METER, "show_col_share", col_share);
-        app_state.send_combat_column_share(col_share);
+        app_state.send_command(PluginId::CombatMeter, CommandId::SetColumnShare, col_share ? 1 : 0);
     }
 
     bool col_crit = cfg_get(METER, "show_col_crit", true);
     if (setting_toggle("Critical hit rate", "Per-combatant crit percentage.", &col_crit)) {
         cfg_store(METER, "show_col_crit", col_crit);
-        app_state.send_combat_column_crit(col_crit);
+        app_state.send_command(PluginId::CombatMeter, CommandId::SetColumnCrit, col_crit ? 1 : 0);
     }
 
     bool col_dh = cfg_get(METER, "show_col_dh", true);
     if (setting_toggle("Direct hit rate", "Per-combatant direct hit percentage.", &col_dh)) {
         cfg_store(METER, "show_col_dh", col_dh);
-        app_state.send_combat_column_dh(col_dh);
+        app_state.send_command(PluginId::CombatMeter, CommandId::SetColumnDh, col_dh ? 1 : 0);
     }
 
     bool col_cdh = cfg_get(METER, "show_col_cdh", true);
     if (setting_toggle("Critical direct hit", "Combined crit-and-direct percentage.", &col_cdh)) {
         cfg_store(METER, "show_col_cdh", col_cdh);
-        app_state.send_combat_column_cdh(col_cdh);
+        app_state.send_command(PluginId::CombatMeter, CommandId::SetColumnCdh, col_cdh ? 1 : 0);
     }
 
     end_settings_card();
@@ -756,7 +762,7 @@ void render_maintenance_section(AppState& app_state) {
     begin_settings_card("##MeterMaintenanceCard", ICON_WRENCH, "MAINTENANCE", colors::Warning);
 
     if (button(ICON_MOVE "  Reset overlay position", ButtonKind::Secondary, ButtonSize::Large)) {
-        app_state.send_combat_reset_overlay_geometry();
+        app_state.send_command(PluginId::CombatMeter, CommandId::ResetOverlayGeometry);
     }
     ImGui::Dummy(ImVec2(0.0f, m(6.0f)));
     if (button(ICON_POWER "  End encounter", ButtonKind::Secondary, ButtonSize::Large)) {
@@ -764,7 +770,7 @@ void render_maintenance_section(AppState& app_state) {
     }
     ImGui::Dummy(ImVec2(0.0f, m(6.0f)));
     if (button(ICON_TRASH "  Reset all statistics", ButtonKind::Danger, ButtonSize::Large)) {
-        app_state.send_combat_reset_stats();
+        app_state.send_command(PluginId::CombatMeter, CommandId::ResetStats);
         app_state.reset_encounter();
         app_state.clear_pull_history();
     }

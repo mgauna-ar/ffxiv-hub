@@ -3,6 +3,8 @@
 #include <iomanip>
 #include <cctype>
 #include <cmath>
+#include <limits>
+#include <locale>
 
 namespace hub::config {
 
@@ -25,13 +27,25 @@ bool JsonValue::as_bool(bool default_val) const noexcept {
 }
 
 int JsonValue::as_int(int default_val) const noexcept {
-    if (const auto* d = std::get_if<double>(&m_value)) return static_cast<int>(*d);
-    return default_val;
+    const auto* d = std::get_if<double>(&m_value);
+    if (d == nullptr || std::isnan(*d)) return default_val;
+    // Converting a double outside int's range is undefined, and a hand-edited
+    // config can hold any number.
+    constexpr double lo = static_cast<double>(std::numeric_limits<int>::min());
+    constexpr double hi = static_cast<double>(std::numeric_limits<int>::max());
+    if (*d <= lo) return std::numeric_limits<int>::min();
+    if (*d >= hi) return std::numeric_limits<int>::max();
+    return static_cast<int>(*d);
 }
 
 float JsonValue::as_float(float default_val) const noexcept {
-    if (const auto* d = std::get_if<double>(&m_value)) return static_cast<float>(*d);
-    return default_val;
+    const auto* d = std::get_if<double>(&m_value);
+    if (d == nullptr || std::isnan(*d)) return default_val;
+    // Likewise a finite double beyond float's range.
+    constexpr double max = static_cast<double>(std::numeric_limits<float>::max());
+    if (*d <= -max) return -std::numeric_limits<float>::max();
+    if (*d >= max) return std::numeric_limits<float>::max();
+    return static_cast<float>(*d);
 }
 
 double JsonValue::as_double(double default_val) const noexcept {
@@ -283,13 +297,15 @@ private:
             }
         }
 
-        const auto num_str = std::string(m_src.substr(start, m_pos - start));
-        try {
-            const double val = std::stod(num_str);
-            return JsonValue(val);
-        } catch (...) {
-            return std::nullopt;
-        }
+        // Not std::stod: it follows the process's C locale, and the payload runs in
+        // the game's, where the decimal separator may be a comma.
+        std::istringstream in(std::string(m_src.substr(start, m_pos - start)));
+        in.imbue(std::locale::classic());
+        double val = 0.0;
+        in >> val;
+        // Overflow sets failbit too, as stod threw for it.
+        if (in.fail() || in.peek() != std::char_traits<char>::eof()) return std::nullopt;
+        return JsonValue(val);
     }
 
     std::string_view m_src;
@@ -310,7 +326,10 @@ void stringify_internal(const JsonValue& val, std::ostringstream& ss, int indent
             break;
         case JsonValue::Type::Number: {
             const double d = val.as_double();
-            if (std::floor(d) == d && !std::isinf(d) && !std::isnan(d) && std::abs(d) < 1e15) {
+            if (!std::isfinite(d)) {
+                // JSON has no spelling for these, and "nan" would make the whole file unreadable.
+                ss << "null";
+            } else if (std::floor(d) == d && std::abs(d) < 1e15) {
                 ss << static_cast<int64_t>(d);
             } else {
                 ss << std::fixed << std::setprecision(4) << d;
@@ -378,6 +397,9 @@ std::optional<JsonValue> JsonValue::parse(std::string_view json) {
 
 std::string JsonValue::stringify(int indent) const {
     std::ostringstream ss;
+    // Independent of whatever global locale the host process set: no digit
+    // grouping and always a '.' decimal point.
+    ss.imbue(std::locale::classic());
     stringify_internal(*this, ss, 0, indent);
     ss << '\n';
     return ss.str();

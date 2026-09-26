@@ -95,6 +95,11 @@ public:
 
     /// Puts every setting back to its default, on disk, in the app and in-game.
     void reset_config();
+
+    /// The document "Reset all settings" restores and config.json starts from:
+    /// the hub keys, each plugin's section from its key table, and the meter keys
+    /// only the app reads.
+    [[nodiscard]] static config::JsonValue default_config();
     [[nodiscard]] size_t enabled_plugin_count() const noexcept;
 
     // ==========================================
@@ -116,21 +121,7 @@ public:
     /// the oldest at once.
     void set_pull_history_limit(int pulls);
 
-    // Combat Overlay in-game controls
-    void send_combat_overlay_party_only(bool party_only);
-    void send_combat_show_bars(bool show);
-    void send_combat_hide_inactive(bool hide);
-    void send_combat_refresh_interval(uint32_t ms);
-    void send_combat_column_share(bool show);
-    void send_combat_column_crit(bool show);
-    void send_combat_column_dh(bool show);
-    void send_combat_column_cdh(bool show);
-    void send_combat_overlay_metric(uint32_t metric);
-    void send_combat_dps_metric(uint32_t metric);
-    /// Death, buff and debuff tracking (the payload's vitals polling).
-    void send_combat_track_vitals(bool enabled);
-    void send_combat_reset_stats();
-    void send_combat_reset_overlay_geometry();
+    /// Ends the pull in the app's engine as well as in-game.
     void send_combat_end_encounter();
 
     // ==========================================
@@ -149,21 +140,8 @@ public:
     [[nodiscard]] MitigatorMetrics get_mitigator_metrics();
     [[nodiscard]] std::vector<ipc::MitigatorTelemetryPayload> get_recent_telemetry(size_t max_count = 300);
 
-    // Latency Mitigator in-game controls
-    void send_mitigator_target_ping(float target_ping_ms);
-    void send_mitigator_min_lock(float min_lock_ms);
-    void send_mitigator_spike_multiplier(float mult);
-    void send_mitigator_dry_run(bool dry_run);
-    void send_mitigator_hud_display_mode(uint32_t mode);
-    void send_mitigator_enabled(bool enabled);
-    void send_mitigator_reset_stats();
     /// Clears the app's own copy of the telemetry: the tiles, graph and feed.
     void clear_mitigator_stats();
-    void send_mitigator_reset_overlay_geometry();
-
-    /// Tells the payload to re-read config.json. Without it the payload keeps its
-    /// own copy and overwrites hand edits on its next autosave.
-    void send_reload_config();
 
     /// Asks the payload to unhook and go dormant without killing the game. Its
     /// DLL stays mapped, so it cannot be attached again until the game restarts;
@@ -173,7 +151,6 @@ public:
     /// Independent ICMP ping to the game server, measured from the desktop process
     /// (not the in-game hooks), so it's available immediately on login.
     [[nodiscard]] double network_ping_ms() const noexcept { return m_network_monitor.get_current_ping_ms(); }
-    void send_network_ping(float ping_ms);
 
     /// Hook state as last reported by the payload. "Connected" alone only means
     /// the pipe came up, which is not the same as the game hooks being live.
@@ -183,12 +160,14 @@ public:
     /// Last overlay geometry the payload reported, so the app can show where an
     /// overlay actually sits after an in-game drag.
     [[nodiscard]] std::optional<ipc::OverlayGeometryPayload> overlay_geometry(PluginId id) const;
-    void send_overlay_position(PluginId id, float x, float y);
 
-    /// Every overlay answers to the same command IDs, so the shared settings
-    /// controls send through here rather than a wrapper per plugin per control.
-    void send_overlay_command(PluginId id, CommandId cmd, uint32_t param_uint = 0,
-                              float param_float = 0.0f, float param_float2 = 0.0f);
+    /// Sends one command to the payload. The parameters mean what the command's
+    /// handler in src/payload/command_dispatcher.cpp reads them as; a bool goes as
+    /// 1 or 0 in `param_uint`. ReloadConfig makes the payload re-read config.json,
+    /// which it otherwise overwrites with its own copy on the next autosave.
+    /// False when no payload is connected.
+    bool send_command(PluginId id, CommandId cmd, uint32_t param_uint = 0,
+                      float param_float = 0.0f, float param_float2 = 0.0f);
 
     /// Coarse game state the payload last reported, as a hub::GameStateFlag
     /// bitmask. Zero until the payload connects, or if its scan failed.
