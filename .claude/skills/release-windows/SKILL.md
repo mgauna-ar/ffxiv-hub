@@ -7,7 +7,8 @@ description: Build, package and release the Windows binaries. Use when cutting a
 
 ## MSVC build
 
-Requires Visual Studio 2022 (MSVC C++20) and CMake 3.20+.
+Requires Visual Studio 2022 (MSVC C++20), CMake 3.22+ (the first to pass MSVC
+`/external:I` for the vendored `SYSTEM` includes) and Python 3 for the layering check.
 
 ```cmd
 cmake -B build -S . -A x64
@@ -18,6 +19,14 @@ ctest --test-dir build -C Release --output-on-failure
 Outputs `build/bin/Release/ffxiv-hub.exe` and `build/bin/Release/hub_payload.dll`. Both
 are `/MT` static-runtime builds, so no Visual C++ Redistributable is needed on the target
 machine.
+
+The build is layered (AGENTS.md, *Build layers*): `hub_common`, `hub_meter` and
+`hub_mitigator` (`hub_plugins`), then `hub_payload_core` and `hub_app_core`, which the DLL,
+the executable and `hub_test_runner` link. Every target of ours links `hub_warnings`,
+which is `/W4 /WX`, so any MSVC warning in our code fails the build. Fix the warning;
+don't add a `/wd`. MinHook and ImGui keep their own `/W3` and `/wd` flags and never take
+`hub_warnings`. The `check_layers` target runs `tools/check_layers.py` on every build;
+without Python 3, CMake warns and skips it.
 
 ## Portable ZIP
 
@@ -45,15 +54,16 @@ Both binaries must stay in the same directory when extracted: the desktop app re
 
 - **Windows MSVC Build, Test & Package** (`build-windows`, `windows-latest`, MSVC 2022 and
   CMake):
-  - Builds Release `/MT` binaries.
+  - Builds Release `/MT` binaries with warnings as errors, and runs the layering check.
   - Executes the full CTest suite.
   - Stages `dist/`, compresses `ffxiv-hub-windows-x64.zip` and writes a SHA256 sidecar
     (`ffxiv-hub-windows-x64.zip.sha256`, which is uploaded alongside the archive).
   - Uploads the build artifacts, and on a tag also the archive and sidecar for the
     release job.
 - **Linux clang++ / g++ Build & Test** (`build-linux`, `ubuntu-latest`): `make` with
-  each compiler, so the `-Werror` build, the unit tests and the `check-ui` syntax pass
-  over the `HAVE_IMGUI` desktop UI all run off Windows.
+  each compiler, so the `-Werror` build, the unit tests, the `check-ui` syntax pass
+  over the `HAVE_IMGUI` desktop UI and the `check-layers` include check all run off
+  Windows.
 - **Linux ThreadSanitizer** and **Linux AddressSanitizer + UBSan** (`sanitizers`,
   `ubuntu-latest`): `make tsan` and `make asan` with clang++. Both lower
   `vm.mmap_rnd_bits` to 28 first, which the LLVM 18 sanitizer runtimes need on the

@@ -1,5 +1,6 @@
 #include "common/os/logger.hpp"
 #include "common/config/config_manager.hpp"
+#include "common/os/local_time.hpp"
 #include "common/os/paths.hpp"
 
 #include <fstream>
@@ -23,12 +24,7 @@ std::string get_timestamp_string() {
     const auto ms = duration_cast<milliseconds>(now.time_since_epoch()) % 1000;
     const auto timer = system_clock::to_time_t(now);
 
-    std::tm bt{};
-#ifdef _WIN32
-    localtime_s(&bt, &timer);
-#else
-    localtime_r(&timer, &bt);
-#endif
+    const std::tm bt = local_time(timer);
 
     std::ostringstream ss;
     ss << std::put_time(&bt, "%Y-%m-%d %H:%M:%S")

@@ -27,6 +27,9 @@ public:
         std::string_view process_name = game::definitions::DEFAULT_GAME_PROCESS_NAME
     );
 
+    /// True when the main game window (FFXIVGAME) exists and belongs to `pid`.
+    /// Always true on the mock.
+    [[nodiscard]] static bool has_game_window(uint32_t pid);
 };
 
 } // namespace hub::os

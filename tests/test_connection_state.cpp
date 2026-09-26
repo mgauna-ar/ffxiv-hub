@@ -9,7 +9,13 @@ namespace {
 
 /// A probe that must not be consulted; the test fails if the decision reads it.
 struct MustNotProbe {
-    bool operator()() const { throw std::runtime_error("probe consulted"); }
+    bool operator()() const {
+        // Read through a volatile, so MSVC cannot prove the probe never returns and
+        // flag the rest of decide_connection unreachable (C4702 under /WX).
+        static volatile bool consulted_is_a_failure = true;
+        if (consulted_is_a_failure) throw std::runtime_error("probe consulted");
+        return false;
+    }
 };
 
 struct Probe {

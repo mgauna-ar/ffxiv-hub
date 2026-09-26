@@ -435,7 +435,7 @@ ffxiv-hub/
 ├── plugins/latency_mitigator/   Latency Mitigator: RTT tracking, lock math, ping HUD
 ├── tests/                       Unit tests, runnable on Windows, macOS and Linux
 └── tools/                       Table generators, signature checks, game-client inspection,
-                                 README screenshots
+                                 the layering check, README screenshots
 ```
 
 ---
@@ -444,7 +444,7 @@ ffxiv-hub/
 
 ### Tests (macOS, Linux or Windows)
 
-You need a C++20 compiler and GNU `make`. `make` uses `clang++`; `make CXX=g++` picks
+You need a C++20 compiler, GNU `make` and `python3`. `make` uses `clang++`; `make CXX=g++` picks
 g++. g++ 13 and clang 18 to 20 all build it with warnings as errors, and CI builds it
 with both.
 
@@ -452,8 +452,9 @@ with both.
 make
 ```
 
-This builds and runs the unit test suite, then syntax-checks the desktop UI code with
-Dear ImGui enabled. The build is incremental: objects go to `build/test/`, so after an
+This builds and runs the unit test suite, syntax-checks the desktop UI code with Dear
+ImGui enabled, and checks that no source includes a header from a layer it must not
+depend on (`tools/check_layers.py`). The build is incremental: objects go to `build/test/`, so after an
 edit only the files it affects recompile. `make clean` removes the build outputs.
 
 The same suite also runs under the sanitizers, each built into its own folder under
@@ -481,7 +482,8 @@ its numbers and the boss HP are invented; the source is in `tools/screenshots/`.
 
 ### Windows binaries
 
-You need Visual Studio 2022 with *Desktop development with C++*, and CMake 3.20+:
+You need Visual Studio 2022 with *Desktop development with C++*, CMake 3.22+, and Python 3
+for the layering check (the build warns and skips it without Python):
 
 ```cmd
 cmake -B build -S . -A x64
@@ -490,6 +492,8 @@ ctest --test-dir build -C Release --output-on-failure
 ```
 
 The build writes `build/bin/Release/ffxiv-hub.exe` and `build/bin/Release/hub_payload.dll`.
+It treats warnings in the project's own code as errors (`/W4 /WX`); the vendored ImGui and
+MinHook keep their own warning levels.
 To produce the portable ZIP:
 
 ```cmd

@@ -10,6 +10,10 @@ namespace hub::os {
 /// $HOME/.config/ffxiv-hub on the mock. Empty when the variable is unset.
 [[nodiscard]] std::filesystem::path app_data_dir();
 
+/// Folder holding the running executable, from GetModuleFileNameW. Empty on the
+/// mock, and when the path does not fit in MAX_PATH.
+[[nodiscard]] std::filesystem::path executable_dir();
+
 /// A path spelled in UTF-8, for log lines and UI text. path::string() on Windows
 /// converts through the ANSI code page and throws on a character outside it.
 [[nodiscard]] std::string to_utf8(const std::filesystem::path& path);

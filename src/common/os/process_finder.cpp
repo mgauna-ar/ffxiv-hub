@@ -97,6 +97,14 @@ std::optional<ProcessInfo> ProcessFinder::find_process(std::string_view process_
     return fallback_proc;
 }
 
+bool ProcessFinder::has_game_window(uint32_t pid) {
+    HWND game_hwnd = FindWindowW(L"FFXIVGAME", nullptr);
+    if (game_hwnd == nullptr) return false;
+    DWORD wnd_pid = 0;
+    GetWindowThreadProcessId(game_hwnd, &wnd_pid);
+    return wnd_pid == pid;
+}
+
 } // namespace hub::os
 
 #else // !_WIN32
@@ -105,6 +113,7 @@ namespace hub::os {
 
 bool ProcessFinder::enable_debug_privilege() { return false; }
 std::optional<ProcessInfo> ProcessFinder::find_process(std::string_view) { return std::nullopt; }
+bool ProcessFinder::has_game_window(uint32_t) { return true; }
 
 } // namespace hub::os
 

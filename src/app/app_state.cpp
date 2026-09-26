@@ -13,16 +13,6 @@
 #include <cstring>
 #include <filesystem>
 
-#ifdef _WIN32
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#endif
-
 namespace hub::app {
 
 namespace {
@@ -382,18 +372,8 @@ void AppState::check_game_process() {
         m_access_denied.store(false);
     }
 
-    const auto window_ready = [&]() {
-#ifdef _WIN32
-        // Only the main game window (FFXIVGAME) of this very process counts.
-        HWND h_game_wnd = FindWindowW(L"FFXIVGAME", nullptr);
-        if (h_game_wnd == nullptr) return false;
-        DWORD wnd_pid = 0;
-        GetWindowThreadProcessId(h_game_wnd, &wnd_pid);
-        return wnd_pid == pid;
-#else
-        return true;
-#endif
-    };
+    // Only the main game window (FFXIVGAME) of this very process counts.
+    const auto window_ready = [&]() { return os::ProcessFinder::has_game_window(pid); };
     const auto payload_loaded = [&]() { return os::DllInjector::is_payload_already_loaded(*proc); };
 
     const ConnectionState previous = m_connection_state.load();
@@ -419,18 +399,13 @@ void AppState::check_game_process() {
             os::Logger::info("FFXIV detected (PID: " + std::to_string(pid) + "). Injecting hub_payload.dll...");
 
             std::filesystem::path dll_path = "hub_payload.dll";
-#ifdef _WIN32
-            wchar_t exe_path_buf[MAX_PATH];
-            DWORD len = GetModuleFileNameW(nullptr, exe_path_buf, MAX_PATH);
-            if (len > 0 && len < MAX_PATH) {
-                std::filesystem::path exe_dir = std::filesystem::path(exe_path_buf).parent_path();
-                std::filesystem::path candidate = exe_dir / "hub_payload.dll";
+            if (const std::filesystem::path exe_dir = os::executable_dir(); !exe_dir.empty()) {
+                const std::filesystem::path candidate = exe_dir / "hub_payload.dll";
                 std::error_code ec;
                 if (std::filesystem::exists(candidate, ec)) {
                     dll_path = candidate;
                 }
             }
-#endif
 
             os::DllInjector injector;
             const bool ok = injector.inject(*proc, dll_path);

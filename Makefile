@@ -46,8 +46,12 @@ UI_CHECK_FLAGS = -std=c++20 -Wall -Wextra -Wpedantic -Werror \
 
 all: test
 
-test: hub_test_runner check-ui
+test: hub_test_runner check-ui check-layers
 	./hub_test_runner
+
+# Rejects an #include that crosses AGENTS.md's layers (see tools/check_layers.py).
+check-layers:
+	@python3 tools/check_layers.py
 
 # Each variant compiles one object per source into build/<variant>/obj, with -MMD -MP
 # dependency files, so an edit recompiles only what includes it. flags records the
@@ -176,4 +180,4 @@ clean:
 
 FORCE:
 
-.PHONY: all test tsan asan clean check-ui screenshots FORCE
+.PHONY: all test tsan asan clean check-ui check-layers screenshots FORCE
