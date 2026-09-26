@@ -80,8 +80,9 @@ It ends in one of four ways:
 Duration is measured to the *last combat action*, not to the moment the pull closed, so
 the quiet at the end of a fight does not inflate the pull and deflate everyone's DPS.
 Wipes and zone changes are trimmed the same way, since both are also detected after the
-fact. Only a manual end takes the full elapsed time. A kill stops the clock earlier
-still, whatever ended the pull; see
+fact. Only a manual end takes the full elapsed time. A duration never reads below zero,
+even when a snapshot asked for just before the pull started lands just after. A kill
+stops the clock earlier still, whatever ended the pull; see
 [The boss and how a pull ended](#the-boss-and-how-a-pull-ended).
 
 ### The boss and how a pull ended

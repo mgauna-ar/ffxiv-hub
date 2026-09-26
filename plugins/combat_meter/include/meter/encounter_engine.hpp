@@ -238,6 +238,9 @@ private:
     /// ended it, or the idle timeout when the game's state is unknown.
     void check_pull_end(TimePoint now);
     [[nodiscard]] bool game_state_fresh_locked(TimePoint now) const noexcept;
+    /// Seconds from the pull's start to `t`, never negative. A reader's `now` is taken
+    /// before it locks, so a producer can start the pull after it.
+    [[nodiscard]] double elapsed_since_start_locked(TimePoint t) const noexcept;
     void check_wipe(TimePoint now);
     /// Damage from the party's side landing on an enemy; a kill's clock stops at the last.
     [[nodiscard]] bool hits_enemy_locked(EntityId source, EntityId target) const;

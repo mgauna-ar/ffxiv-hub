@@ -527,6 +527,38 @@ TEST_CASE(MeterEngine, EncounterLifecycleStartOnAction) {
     TEST_ASSERT_TRUE(engine.in_combat());
 }
 
+TEST_CASE(MeterEngine, ReaderNowBeforeThePullStartReadsZero) {
+    // A reader's default `now` is taken before it locks, so the detour thread can
+    // start the pull in between. That `now` must read as no time elapsed, never as a
+    // negative duration cast to an unsigned end time.
+    EncounterEngine engine;
+    const auto t0 = std::chrono::steady_clock::now();
+
+    hub::ipc::CombatActionPacket act{};
+    act.source_id = 100;
+    act.target_id = 0x40001;
+    act.damage = 12000;
+    act.action_id = 31;
+    act.effect_type = static_cast<uint16_t>(EffectType::Damage);
+    engine.process_action(act, t0);
+    TEST_ASSERT_TRUE(engine.in_combat());
+
+    const auto before = t0 - std::chrono::seconds(196);
+    for (const EncounterSummary& summary : {engine.current_summary(before), engine.current_rankings(before)}) {
+        TEST_ASSERT_EQ(summary.duration_seconds, 0.0);
+        TEST_ASSERT_EQ(summary.end_time_us, summary.start_time_us);
+    }
+    TEST_ASSERT_EQ(engine.active_duration_seconds(before), 0.0);
+
+    engine.update(before);
+    TEST_ASSERT_TRUE(engine.in_combat());
+    engine.end_encounter(EncounterEndReason::Manual, before);
+    const auto history = engine.pull_history();
+    TEST_ASSERT_EQ(history.size(), static_cast<size_t>(1));
+    TEST_ASSERT_EQ(history.back().duration_seconds, 0.0);
+    TEST_ASSERT_EQ(history.back().end_time_us, history.back().start_time_us);
+}
+
 TEST_CASE(MeterEngine, InactivityTimeoutSplit) {
     EncounterEngine engine(7.0); // 7.0s timeout
     const auto t0 = std::chrono::steady_clock::now();
