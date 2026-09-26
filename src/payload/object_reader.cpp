@@ -1,9 +1,11 @@
 #include "payload/object_reader.hpp"
+#include "meter/actor_info.hpp"
 #include "meter/buff_attribution.hpp"
 #include "meter/combatant_registry.hpp"
 #include "common/sigscan.hpp"
 #include "common/pe_scanner.hpp"
 #include "common/os/logger.hpp"
+#include "common/os/safe_memory.hpp"
 #include "hub/game/entity.hpp"
 #include "hub/game/raid_buffs.hpp"
 #include "hub/game/status.hpp"
@@ -14,49 +16,28 @@ namespace hub::payload {
 
 namespace detail {
 
-/// Field extraction for a Character object. Reading the struct needs no platform
-/// support; only walking a pointer the game handed us does, so Windows wraps this
-/// in SEH and the mock build calls it directly.
-bool extract_character_fields(const game::CharacterObject* obj, ipc::ActorInfoPacket& out) {
-    if (obj == nullptr) return false;
+namespace {
 
-    out.entity_id = obj->entity_id;
-    if (!hub::game::is_real_entity_id(out.entity_id)) return false;
-
-    out.owner_id = (obj->owner_id != hub::game::NO_ENTITY_ID) ? obj->owner_id : 0;
-    out.job_id = obj->class_job;
-    out.max_hp = obj->max_hp;
-    out.current_hp = obj->current_hp;
-
-    if (obj->object_kind == game::ObjectKind::Kind5 || (out.owner_id != 0)) {
-        out.actor_type = static_cast<uint8_t>(meter::ActorType::Pet);
-    } else if (obj->object_kind == game::ObjectKind::Player) {
-        out.actor_type = static_cast<uint8_t>(meter::ActorType::Player);
-    } else {
-        out.actor_type = static_cast<uint8_t>(meter::ActorType::Monster);
+/// The layout check both status reads share: a slot count of 30 or 60, and, with
+/// `expected_owner` set, an owner that is null or that object.
+bool status_layout_ok(const game::StatusManagerObject& manager, const void* expected_owner) noexcept {
+    const uint8_t slots = manager.slot_count;
+    if (slots != game::definitions::DEFAULT_STATUS_SLOTS && slots != game::definitions::MAX_STATUS_SLOTS) {
+        return false;
     }
-
-    std::memcpy(out.name, obj->name, sizeof(out.name) - 1);
-    out.name[sizeof(out.name) - 1] = '\0';
-    return true;
+    return expected_owner == nullptr || manager.owner == nullptr || manager.owner == expected_owner;
 }
+
+} // namespace
 
 bool extract_status_list(const game::StatusManagerObject* manager, const void* expected_owner,
                          bool with_detail, meter::ActorVitals& out) noexcept {
     out.count = 0;
     out.statuses_read = false;
     out.status_detail = with_detail;
-    if (manager == nullptr) return false;
+    if (manager == nullptr || !status_layout_ok(*manager, expected_owner)) return false;
 
-    const uint8_t slots = manager->slot_count;
-    if (slots != game::definitions::DEFAULT_STATUS_SLOTS && slots != game::definitions::MAX_STATUS_SLOTS) {
-        return false;
-    }
-    if (expected_owner != nullptr && manager->owner != nullptr && manager->owner != expected_owner) {
-        return false;
-    }
-
-    for (size_t i = 0; i < slots && i < game::definitions::MAX_STATUS_SLOTS; ++i) {
+    for (size_t i = 0; i < manager->slot_count && i < game::definitions::MAX_STATUS_SLOTS; ++i) {
         const game::StatusEntry& slot = manager->statuses[i];
         if (slot.status_id == 0) continue;
         ipc::CombatStatusEntry& entry = out.entries[out.count++];
@@ -72,15 +53,8 @@ bool extract_status_list(const game::StatusManagerObject* manager, const void* e
 bool extract_attribution_statuses(const game::StatusManagerObject* manager, const void* expected_owner,
                                   ipc::CombatStatusEntry* out, size_t capacity, size_t& count) noexcept {
     count = 0;
-    if (manager == nullptr || out == nullptr) return false;
-    const uint8_t slots = manager->slot_count;
-    if (slots != game::definitions::DEFAULT_STATUS_SLOTS && slots != game::definitions::MAX_STATUS_SLOTS) {
-        return false;
-    }
-    if (expected_owner != nullptr && manager->owner != nullptr && manager->owner != expected_owner) {
-        return false;
-    }
-    for (size_t i = 0; i < slots && i < game::definitions::MAX_STATUS_SLOTS && count < capacity; ++i) {
+    if (manager == nullptr || out == nullptr || !status_layout_ok(*manager, expected_owner)) return false;
+    for (size_t i = 0; i < manager->slot_count && i < game::definitions::MAX_STATUS_SLOTS && count < capacity; ++i) {
         const game::StatusEntry& slot = manager->statuses[i];
         if (slot.status_id == 0 || !meter::is_attribution_status(slot.status_id)) continue;
         ipc::CombatStatusEntry& entry = out[count++];
@@ -97,6 +71,13 @@ bool reads_as_lobby(const uint32_t* local_player_id) noexcept {
 }
 
 } // namespace detail
+
+ObjectReader::ObjectReader(RingBuffer* ring_buffer)
+    : m_ring_buffer(ring_buffer) {}
+
+bool ObjectReader::read_character_object(const void* character_ptr, ipc::ActorInfoPacket& out_packet) {
+    return meter::read_actor_info(character_ptr, out_packet);
+}
 
 void ObjectReader::note_status_layout(bool ok) {
     if (ok) {
@@ -189,252 +170,155 @@ namespace {
 
 using FnGetObjectByEntityId = game::CharacterObject*(void*, uint32_t);
 
-static bool SafeReadCharacterFromObject(
-    const game::CharacterObject* obj,
-    ipc::ActorInfoPacket& out
+// Game memory is copied out through hub::os::safe_read, which carries the SEH guard,
+// and checked on the copy. Only the call into the game's own lookup has a guard here.
+
+static const game::CharacterObject* SafeGetObjectByEntityId(
+    FnGetObjectByEntityId* fn, uintptr_t game_obj_mgr_addr, uint32_t entity_id
 ) {
     __try {
-        return detail::extract_character_fields(obj, out);
+        if (fn == nullptr || game_obj_mgr_addr == 0 || !game::is_real_entity_id(entity_id)) return nullptr;
+        return fn(reinterpret_cast<void*>(game_obj_mgr_addr + game::offsets::GAME_OBJECT_MANAGER_OBJECT_ARRAYS), entity_id);
     }
     __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
+        return nullptr;
     }
 }
 
-static bool SafeReadCharacter(
+bool SafeReadCharacter(
     FnGetObjectByEntityId* fn,
     uintptr_t game_obj_mgr_addr,
     uint32_t entity_id,
     ipc::ActorInfoPacket& out
 ) {
-    __try {
-        if (!game::is_real_entity_id(entity_id) || game_obj_mgr_addr == 0) {
-            return false;
-        }
-
-        void* object_arrays = reinterpret_cast<void*>(game_obj_mgr_addr + game::offsets::GAME_OBJECT_MANAGER_OBJECT_ARRAYS);
-        game::CharacterObject* obj = nullptr;
-
-        if (fn != nullptr) {
-            obj = fn(object_arrays, entity_id);
-        }
-
-        if (obj != nullptr) {
-            return SafeReadCharacterFromObject(obj, out);
-        }
-        return false;
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
+    const game::CharacterObject* obj = SafeGetObjectByEntityId(fn, game_obj_mgr_addr, entity_id);
+    return obj != nullptr && meter::read_actor_info(obj, out);
 }
 
-struct ExtractedPartyMember {
-    uint32_t entity_id{0};
-    uint32_t current_hp{0};
-    uint32_t max_hp{0};
-    uint8_t job_id{0};
-    char name[64]{0};
-};
-
-struct ExtractedParty {
+/// The main group of the party list, copied out in one read.
+struct PartyCopy {
     uint8_t count{0};
-    uint16_t territory_type{0};
-    ExtractedPartyMember members[game::definitions::MAX_PARTY_MEMBERS];
+    uintptr_t main_group{0};
+    game::PartyMemberObject members[game::definitions::MAX_PARTY_MEMBERS];
+
+    [[nodiscard]] uintptr_t member_addr(uint8_t i) const noexcept {
+        return main_group + (i * game::offsets::PARTY_MEMBER_SIZE);
+    }
 };
 
-static bool SafeReadParty(
-    uintptr_t group_mgr_addr,
-    ipc::PartySyncPacket& out,
-    ExtractedParty& out_members
-) {
-    __try {
-        if (group_mgr_addr == 0) return false;
+/// The count is clamped to MAX_PARTY_MEMBERS. False when the read faulted.
+bool SafeReadParty(uintptr_t group_mgr_addr, PartyCopy& out) {
+    out.count = 0;
+    if (group_mgr_addr == 0) return false;
 
-        // GroupManager is the static instance itself, not a pointer to one.
-        const uintptr_t main_group = group_mgr_addr + game::offsets::GROUP_MAIN_GROUP;
-
-        uint8_t count = *reinterpret_cast<const uint8_t*>(main_group + game::offsets::GROUP_MEMBER_COUNT);
-        if (count > game::definitions::MAX_PARTY_MEMBERS) {
-            count = static_cast<uint8_t>(game::definitions::MAX_PARTY_MEMBERS);
-        }
-
-        out.party_count = count;
-        out_members.count = count;
-
-        uint16_t territories[game::definitions::MAX_PARTY_MEMBERS]{};
-
-        for (uint8_t i = 0; i < count; ++i) {
-            const auto* member = reinterpret_cast<const game::PartyMemberObject*>(
-                main_group + (i * game::offsets::PARTY_MEMBER_SIZE)
-            );
-            out.entity_ids[i] = member->entity_id;
-            out.job_ids[i] = member->class_job;
-
-            auto& extracted = out_members.members[i];
-            extracted.entity_id = member->entity_id;
-            extracted.current_hp = member->current_hp;
-            extracted.max_hp = member->max_hp;
-            extracted.job_id = member->class_job;
-            std::memcpy(extracted.name, member->name, sizeof(extracted.name) - 1);
-            extracted.name[sizeof(extracted.name) - 1] = '\0';
-
-            territories[i] = member->territory_type;
-        }
-
-        // A cross-world member standing somewhere else must not redefine where
-        // the party is, so take the value most of the list agrees on.
-        uint16_t best = 0;
-        uint8_t best_votes = 0;
-        for (uint8_t i = 0; i < count; ++i) {
-            if (territories[i] == 0) continue;
-            uint8_t votes = 0;
-            for (uint8_t j = 0; j < count; ++j) {
-                if (territories[j] == territories[i]) ++votes;
-            }
-            if (votes > best_votes) {
-                best_votes = votes;
-                best = territories[i];
-            }
-        }
-        out_members.territory_type = best;
-
-        return true;
+    // GroupManager is the static instance itself, not a pointer to one.
+    out.main_group = group_mgr_addr + game::offsets::GROUP_MAIN_GROUP;
+    uint8_t count = 0;
+    if (!hub::os::safe_read(out.main_group + game::offsets::GROUP_MEMBER_COUNT, count)) return false;
+    if (count > game::definitions::MAX_PARTY_MEMBERS) {
+        count = static_cast<uint8_t>(game::definitions::MAX_PARTY_MEMBERS);
     }
-    __except (EXCEPTION_EXECUTE_HANDLER) {
+    if (!hub::os::safe_copy(out.members, reinterpret_cast<const void*>(out.main_group),
+                            count * sizeof(game::PartyMemberObject))) {
         return false;
     }
+    out.count = count;
+    return true;
 }
 
-static uint32_t SafeReadLocalPlayerId(uintptr_t addr) {
-    __try {
-        const uint32_t id = addr != 0 ? *reinterpret_cast<const uint32_t*>(addr) : 0;
-        return game::is_real_entity_id(id) ? id : 0;
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER) {
-        return 0;
-    }
-}
-
-static bool SafeReadInLobby(uintptr_t addr) {
-    __try {
-        return detail::reads_as_lobby(reinterpret_cast<const uint32_t*>(addr));
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
-}
-
-/// One party slot for the vitals pass.
-struct PartyVitalsSlot {
-    uint32_t entity_id{0};
-    uint32_t current_hp{0};
-    uint32_t max_hp{0};
-    uintptr_t member_addr{0};
-};
-
-static uint8_t SafeReadPartyVitals(uintptr_t group_mgr_addr, PartyVitalsSlot* out) {
-    __try {
-        if (group_mgr_addr == 0) return 0;
-        const uintptr_t main_group = group_mgr_addr + game::offsets::GROUP_MAIN_GROUP;
-        uint8_t count = *reinterpret_cast<const uint8_t*>(main_group + game::offsets::GROUP_MEMBER_COUNT);
-        if (count > game::definitions::MAX_PARTY_MEMBERS) {
-            count = static_cast<uint8_t>(game::definitions::MAX_PARTY_MEMBERS);
+/// A cross-world member standing somewhere else must not redefine where the party
+/// is, so take the territory most of the list agrees on. 0 when none reports one.
+uint16_t party_territory(const PartyCopy& party) {
+    uint16_t best = 0;
+    uint8_t best_votes = 0;
+    for (uint8_t i = 0; i < party.count; ++i) {
+        const uint16_t territory = party.members[i].territory_type;
+        if (territory == 0) continue;
+        uint8_t votes = 0;
+        for (uint8_t j = 0; j < party.count; ++j) {
+            if (party.members[j].territory_type == territory) ++votes;
         }
-        for (uint8_t i = 0; i < count; ++i) {
-            const uintptr_t addr = main_group + (i * game::offsets::PARTY_MEMBER_SIZE);
-            const auto* member = reinterpret_cast<const game::PartyMemberObject*>(addr);
-            out[i].entity_id = member->entity_id;
-            out[i].current_hp = member->current_hp;
-            out[i].max_hp = member->max_hp;
-            out[i].member_addr = addr;
+        if (votes > best_votes) {
+            best_votes = votes;
+            best = territory;
         }
-        return count;
     }
-    __except (EXCEPTION_EXECUTE_HANDLER) {
-        return 0;
-    }
+    return best;
+}
+
+uint32_t SafeReadLocalPlayerId(uintptr_t addr) {
+    uint32_t id = 0;
+    return hub::os::safe_read(addr, id) && game::is_real_entity_id(id) ? id : 0;
+}
+
+bool SafeReadInLobby(uintptr_t addr) {
+    uint32_t id = 0;
+    return hub::os::safe_read(addr, id) && detail::reads_as_lobby(&id);
 }
 
 /// The BattleChara for `entity_id`: a player or a battle NPC whose id reads back
 /// the same. The lookup is a binary search the main thread may be reshaping, so
 /// the id is checked again on the object it returns.
-static const game::CharacterObject* SafeFindBattleChara(
+const game::CharacterObject* SafeFindBattleChara(
     FnGetObjectByEntityId* fn, uintptr_t game_obj_mgr_addr, uint32_t entity_id, uint32_t& hp, uint32_t& max_hp
 ) {
-    __try {
-        if (fn == nullptr || game_obj_mgr_addr == 0 || !game::is_real_entity_id(entity_id)) return nullptr;
-        const game::CharacterObject* obj = fn(reinterpret_cast<void*>(game_obj_mgr_addr + game::offsets::GAME_OBJECT_MANAGER_OBJECT_ARRAYS), entity_id);
-        if (obj == nullptr || obj->entity_id != entity_id) return nullptr;
-        if (!game::is_battle_chara_kind(obj->object_kind)) return nullptr;
-        hp = obj->current_hp;
-        max_hp = obj->max_hp;
-        return obj;
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER) {
-        return nullptr;
-    }
+    const game::CharacterObject* obj = SafeGetObjectByEntityId(fn, game_obj_mgr_addr, entity_id);
+    game::CharacterObject copy;
+    if (obj == nullptr || !hub::os::safe_read(obj, copy)) return nullptr;
+    if (copy.entity_id != entity_id || !game::is_battle_chara_kind(copy.object_kind)) return nullptr;
+    hp = copy.current_hp;
+    max_hp = copy.max_hp;
+    return obj;
 }
 
 /// The local player's own Character, which the client keeps next to its id.
-static const game::CharacterObject* SafeReadLocalPlayerObject(
+const game::CharacterObject* SafeReadLocalPlayerObject(
     uintptr_t id_addr, uint32_t& entity_id, uint32_t& hp, uint32_t& max_hp
 ) {
-    __try {
-        if (id_addr == 0) return nullptr;
-        const uint32_t id = *reinterpret_cast<const uint32_t*>(id_addr);
-        if (!game::is_real_entity_id(id)) return nullptr;
-        const auto* obj = *reinterpret_cast<const game::CharacterObject* const*>(
-            id_addr + game::definitions::LOCAL_PLAYER_OBJECT_FROM_ID);
-        if (obj == nullptr || obj->entity_id != id || obj->object_kind != game::ObjectKind::Player) return nullptr;
-        entity_id = id;
-        hp = obj->current_hp;
-        max_hp = obj->max_hp;
-        return obj;
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER) {
-        return nullptr;
-    }
+    uint32_t id = 0;
+    if (!hub::os::safe_read(id_addr, id) || !game::is_real_entity_id(id)) return nullptr;
+    const game::CharacterObject* obj = nullptr;
+    if (!hub::os::safe_read(id_addr + game::definitions::LOCAL_PLAYER_OBJECT_FROM_ID, obj)) return nullptr;
+    game::CharacterObject copy;
+    if (obj == nullptr || !hub::os::safe_read(obj, copy)) return nullptr;
+    if (copy.entity_id != id || copy.object_kind != game::ObjectKind::Player) return nullptr;
+    entity_id = id;
+    hp = copy.current_hp;
+    max_hp = copy.max_hp;
+    return obj;
 }
 
 /// False when the read faulted, which says nothing about the layout. Otherwise
 /// `layout_ok` carries the layout check's verdict.
-static bool SafeExtractStatusList(
+bool SafeExtractStatusList(
     uintptr_t manager_addr, const void* expected_owner, bool with_detail, meter::ActorVitals& out, bool& layout_ok
 ) {
-    __try {
-        layout_ok = detail::extract_status_list(
-            reinterpret_cast<const game::StatusManagerObject*>(manager_addr), expected_owner, with_detail, out);
-        return true;
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER) {
+    game::StatusManagerObject manager;
+    if (!hub::os::safe_read(manager_addr, manager)) {
         out.count = 0;
         out.statuses_read = false;
         return false;
     }
+    layout_ok = detail::extract_status_list(&manager, expected_owner, with_detail, out);
+    return true;
 }
 
 /// The StatusManager of a BattleChara the hook handed over, once its id and kind check out.
-static bool SafeExtractAttributionStatuses(
+bool SafeExtractAttributionStatuses(
     const game::CharacterObject* obj, uint32_t entity_id, ipc::CombatStatusEntry* out, size_t capacity, size_t& count
 ) {
-    __try {
-        if (obj == nullptr || obj->entity_id != entity_id) return false;
-        if (!game::is_battle_chara_kind(obj->object_kind)) return false;
-        const auto* manager = reinterpret_cast<const game::StatusManagerObject*>(
-            reinterpret_cast<uintptr_t>(obj) + game::offsets::BATTLE_CHARA_STATUS_MANAGER);
-        return detail::extract_attribution_statuses(manager, obj, out, capacity, count);
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER) {
-        count = 0;
+    count = 0;
+    game::CharacterObject copy;
+    if (obj == nullptr || !hub::os::safe_read(obj, copy)) return false;
+    if (copy.entity_id != entity_id || !game::is_battle_chara_kind(copy.object_kind)) return false;
+    game::StatusManagerObject manager;
+    if (!hub::os::safe_read(reinterpret_cast<uintptr_t>(obj) + game::offsets::BATTLE_CHARA_STATUS_MANAGER, manager)) {
         return false;
     }
+    return detail::extract_attribution_statuses(&manager, obj, out, capacity, count);
 }
 
 } // namespace
-
-ObjectReader::ObjectReader(RingBuffer* ring_buffer)
-    : m_ring_buffer(ring_buffer) {}
 
 std::optional<size_t> ObjectReader::read_attribution_statuses(
     uint32_t entity_id, const void* character, std::span<ipc::CombatStatusEntry> out
@@ -481,10 +365,10 @@ size_t ObjectReader::read_vitals(std::span<const uint32_t> enemy_ids, std::span<
     };
 
     size_t filled = 0;
-    PartyVitalsSlot party[game::definitions::MAX_PARTY_MEMBERS]{};
-    const uint8_t party_count = SafeReadPartyVitals(m_group_manager_addr, party);
+    PartyCopy party;
+    const uint8_t party_count = SafeReadParty(m_group_manager_addr, party) ? party.count : 0;
     for (uint8_t i = 0; i < party_count && filled < out.size(); ++i) {
-        const PartyVitalsSlot& slot = party[i];
+        const game::PartyMemberObject& slot = party.members[i];
         if (!game::is_real_entity_id(slot.entity_id)) continue;
         meter::ActorVitals& vitals = out[filled++];
         vitals = meter::ActorVitals{};
@@ -500,7 +384,7 @@ size_t ObjectReader::read_vitals(std::span<const uint32_t> enemy_ids, std::span<
         }
         if (!vitals.statuses_read) {
             // Out of range: the list's own copy, which has no timers or sources.
-            read_statuses(vitals, slot.member_addr + game::offsets::PARTY_MEMBER_STATUS_MANAGER, nullptr, false);
+            read_statuses(vitals, party.member_addr(i) + game::offsets::PARTY_MEMBER_STATUS_MANAGER, nullptr, false);
         }
     }
 
@@ -535,10 +419,6 @@ size_t ObjectReader::read_vitals(std::span<const uint32_t> enemy_ids, std::span<
         read_statuses(vitals, own_statuses(obj), obj, true);
     }
     return filled;
-}
-
-bool ObjectReader::read_character_object(const void* character_ptr, ipc::ActorInfoPacket& out_packet) {
-    return SafeReadCharacterFromObject(static_cast<const game::CharacterObject*>(character_ptr), out_packet);
 }
 
 bool ObjectReader::initialize() {
@@ -621,73 +501,48 @@ void ObjectReader::sync_party(meter::CombatantRegistry* registry) {
     if (!m_initialized) return;
     if (m_group_manager_addr == 0) return;
 
-    ipc::PartySyncPacket sync{};
-    ExtractedParty extracted{};
-    if (!SafeReadParty(m_group_manager_addr, sync, extracted)) {
+    PartyCopy party;
+    if (!SafeReadParty(m_group_manager_addr, party)) {
         return;
     }
+    ipc::PartySyncPacket sync{};
+    sync.party_count = party.count;
     sync.local_player_id = SafeReadLocalPlayerId(m_local_player_id_addr);
 
     // Party members carry name/job/HP that the action hook only learns once an
     // actor has acted, so publish them as actor info too.
-    for (uint8_t i = 0; i < extracted.count; ++i) {
-        const auto& m = extracted.members[i];
+    for (uint8_t i = 0; i < party.count; ++i) {
+        const game::PartyMemberObject& m = party.members[i];
+        sync.entity_ids[i] = m.entity_id;
+        sync.job_ids[i] = m.class_job;
         if (m.entity_id == 0) continue;
 
-        const bool dead = is_dead(m.current_hp, m.max_hp);
-        bool actor_changed = false;
-        {
-            std::lock_guard<std::mutex> lock(m_cache_mutex);
-            auto it = m_actor_cache.find(m.entity_id);
-            if (it == m_actor_cache.end() || it->second.job_id != m.job_id || it->second.name != m.name ||
-                it->second.dead != dead) {
-                m_actor_cache[m.entity_id] =
-                    CachedActor{0, m.job_id, m.max_hp, m.name, std::chrono::steady_clock::now(), dead};
-                actor_changed = true;
-            }
-        }
-        // The local engine takes every reading; only a death or raise goes on the wire.
+        // The local engine takes every reading; only a death or raise goes on the wire,
+        // through publish_actor's dedupe.
         if (registry) {
             registry->update_hp(m.entity_id, m.current_hp, m.max_hp);
         }
-        if (!actor_changed) continue;
 
         ipc::ActorInfoPacket actor{};
         actor.entity_id = m.entity_id;
-        actor.job_id = m.job_id;
+        actor.job_id = m.class_job;
         actor.current_hp = m.current_hp;
         actor.max_hp = m.max_hp;
         actor.actor_type = static_cast<uint8_t>(meter::ActorType::Player);
         std::memcpy(actor.name, m.name, sizeof(actor.name) - 1);
         actor.name[sizeof(actor.name) - 1] = '\0';
-
-        if (registry) {
-            registry->register_actor(
-                actor.entity_id,
-                actor.name,
-                static_cast<meter::Job>(actor.job_id),
-                0,
-                meter::ActorType::Player,
-                actor.max_hp,
-                actor.current_hp
-            );
-        }
-        if (m_ring_buffer) {
-            m_ring_buffer->push(ipc::serialize_typed_packet(
-                PluginId::CombatMeter, MessageType::CombatActorInfo, 0, actor
-            ));
-        }
+        publish_actor(actor, registry);
     }
 
     // Solo the list is empty, and the local player's own object is the only HP the
     // wipe check can read. Published like a member, so a death or raise reaches the app.
-    if (extracted.count == 0) {
+    if (party.count == 0) {
         uint32_t self_id = 0;
         uint32_t self_hp = 0;
         uint32_t self_max_hp = 0;
         const auto* self = SafeReadLocalPlayerObject(m_local_player_id_addr, self_id, self_hp, self_max_hp);
         ipc::ActorInfoPacket actor{};
-        if (self != nullptr && SafeReadCharacterFromObject(self, actor)) {
+        if (self != nullptr && meter::read_actor_info(self, actor)) {
             publish_actor(actor, registry);
             if (registry) {
                 registry->update_hp(actor.entity_id, actor.current_hp, actor.max_hp);
@@ -728,13 +583,14 @@ void ObjectReader::sync_party(meter::CombatantRegistry* registry) {
     // The party list is the only place the payload can see a territory id. An
     // empty list means solo, so the zone becomes unknown instead of staying on
     // whatever duty the last party was in; a list with no territory tells nothing.
-    const bool territory_known = extracted.count == 0 || extracted.territory_type != 0;
+    const uint16_t territory = party_territory(party);
+    const bool territory_known = party.count == 0 || territory != 0;
     bool territory_changed = false;
     {
         std::lock_guard<std::mutex> lock(m_cache_mutex);
         if (territory_known &&
-            (!m_territory_published || extracted.territory_type != m_last_territory)) {
-            m_last_territory = extracted.territory_type;
+            (!m_territory_published || territory != m_last_territory)) {
+            m_last_territory = territory;
             m_territory_published = true;
             territory_changed = true;
             // Nothing from the old zone's object table is coming back, and the
@@ -747,7 +603,7 @@ void ObjectReader::sync_party(meter::CombatantRegistry* registry) {
         // in_combat_flag and control_command stay 0: this packet only announces
         // the zone (0 = unknown), it must not start or end an encounter on the app side.
         ipc::EncounterControlPacket ctrl{};
-        ctrl.zone_id = extracted.territory_type;
+        ctrl.zone_id = territory;
         ctrl.timestamp_us = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::steady_clock::now().time_since_epoch()).count());
@@ -762,13 +618,6 @@ void ObjectReader::sync_party(meter::CombatantRegistry* registry) {
 #else // !_WIN32 - Cross-platform mock implementation
 
 namespace hub::payload {
-
-ObjectReader::ObjectReader(RingBuffer* ring_buffer)
-    : m_ring_buffer(ring_buffer) {}
-
-bool ObjectReader::read_character_object(const void* character_ptr, ipc::ActorInfoPacket& out_packet) {
-    return detail::extract_character_fields(static_cast<const game::CharacterObject*>(character_ptr), out_packet);
-}
 
 bool ObjectReader::initialize() {
     m_initialized = true;

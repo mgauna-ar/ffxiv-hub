@@ -2,6 +2,7 @@
 #include "common/os/single_instance.hpp"
 #include "common/os/auto_start.hpp"
 #include "common/os/logger.hpp"
+#include "common/os/safe_memory.hpp"
 #include <filesystem>
 
 using namespace hub::os;
@@ -57,4 +58,21 @@ TEST_CASE(OS, LoggerRotationAndWriting) {
     std::error_code ec;
     std::filesystem::remove(test_log, ec);
     std::filesystem::remove(Logger::previous_log_path(test_log), ec);
+}
+
+TEST_CASE(OS, SafeCopyReadsAndRejectsNull) {
+    const uint32_t source = 0xCAFEF00D;
+    uint32_t copy = 0;
+    TEST_ASSERT_TRUE(safe_read(&source, copy));
+    TEST_ASSERT_EQ(copy, 0xCAFEF00Du);
+
+    // An address held as an integer, as the payload keeps its resolved globals.
+    copy = 0;
+    TEST_ASSERT_TRUE(safe_read(reinterpret_cast<uintptr_t>(&source), copy));
+    TEST_ASSERT_EQ(copy, 0xCAFEF00Du);
+
+    // An unresolved signature leaves the address at 0: a failed read, not a fault.
+    TEST_ASSERT_FALSE(safe_read(uintptr_t{0}, copy));
+    TEST_ASSERT_FALSE(safe_copy(nullptr, &source, sizeof(source)));
+    TEST_ASSERT_FALSE(safe_copy(&copy, nullptr, sizeof(copy)));
 }

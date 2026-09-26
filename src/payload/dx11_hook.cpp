@@ -14,6 +14,7 @@
 #include <d3d11.h>
 #include <dxgi.h>
 #include "MinHook.h"
+#include "payload/minhook_init.hpp"
 
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -317,7 +318,7 @@ bool Dx11Hook::install() {
     DestroyWindow(dummy_hwnd);
     UnregisterClassW(wc.lpszClassName, wc.hInstance);
 
-    if (MH_Initialize() != MH_OK && MH_Initialize() != MH_ERROR_ALREADY_INITIALIZED) {
+    if (!initialize_minhook()) {
         m_last_error = "MinHook initialization failed";
         return false;
     }

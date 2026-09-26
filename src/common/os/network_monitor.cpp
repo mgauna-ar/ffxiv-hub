@@ -14,8 +14,18 @@
 
 #pragma comment(lib, "iphlpapi.lib")
 #pragma comment(lib, "ws2_32.lib")
+#endif
 
 namespace hub::os {
+
+namespace {
+// How often the worker wakes to check m_running while it waits out the interval.
+#ifdef _WIN32
+constexpr uint32_t kSleepStepMs = 100;
+#else
+constexpr uint32_t kSleepStepMs = 50;
+#endif
+} // namespace
 
 NetworkMonitor::NetworkMonitor(uint32_t target_pid)
     : m_target_pid(target_pid) {}
@@ -75,12 +85,14 @@ void NetworkMonitor::worker_loop() {
         probe_once();
 
         const uint32_t interval = m_probe_interval_ms.load();
-        const uint32_t step = 100;
+        const uint32_t step = kSleepStepMs;
         for (uint32_t waited = 0; waited < interval && m_running.load(); waited += step) {
             std::this_thread::sleep_for(std::chrono::milliseconds(step));
         }
     }
 }
+
+#ifdef _WIN32
 
 bool NetworkMonitor::probe_once() {
     const uint32_t pid = m_target_pid.load();
@@ -172,76 +184,7 @@ bool NetworkMonitor::probe_once() {
     return (ping_result >= 0.0);
 }
 
-} // namespace hub::os
-
 #else // !_WIN32
-
-namespace hub::os {
-
-NetworkMonitor::NetworkMonitor(uint32_t target_pid)
-    : m_target_pid(target_pid) {}
-
-NetworkMonitor::~NetworkMonitor() {
-    stop();
-}
-
-void NetworkMonitor::start(uint32_t target_pid) {
-    if (target_pid != 0) {
-        m_target_pid.store(target_pid);
-    }
-    if (m_running.exchange(true)) {
-        return;
-    }
-
-    m_worker_thread = std::make_unique<std::thread>(&NetworkMonitor::worker_loop, this);
-}
-
-void NetworkMonitor::stop() {
-    if (!m_running.exchange(false)) {
-        return;
-    }
-
-    if (m_worker_thread && m_worker_thread->joinable()) {
-        m_worker_thread->join();
-    }
-    m_worker_thread.reset();
-    m_current_ping_ms.store(-1.0);
-}
-
-void NetworkMonitor::set_target_pid(uint32_t target_pid) {
-    m_target_pid.store(target_pid);
-    if (target_pid == 0) {
-        m_current_ping_ms.store(-1.0);
-    }
-}
-
-uint32_t NetworkMonitor::target_pid() const noexcept {
-    return m_target_pid.load();
-}
-
-double NetworkMonitor::get_current_ping_ms() const noexcept {
-    return m_current_ping_ms.load();
-}
-
-bool NetworkMonitor::is_running() const noexcept {
-    return m_running.load();
-}
-
-void NetworkMonitor::set_mock_ping(double ping_ms) noexcept {
-    m_current_ping_ms.store(ping_ms);
-}
-
-void NetworkMonitor::worker_loop() {
-    while (m_running.load()) {
-        probe_once();
-
-        const uint32_t interval = m_probe_interval_ms.load();
-        const uint32_t step = 50;
-        for (uint32_t waited = 0; waited < interval && m_running.load(); waited += step) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(step));
-        }
-    }
-}
 
 bool NetworkMonitor::probe_once() {
     const uint32_t pid = m_target_pid.load();
@@ -260,6 +203,6 @@ bool NetworkMonitor::probe_once() {
     return true;
 }
 
-} // namespace hub::os
-
 #endif
+
+} // namespace hub::os

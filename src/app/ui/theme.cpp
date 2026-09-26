@@ -1,20 +1,11 @@
 #include "app/ui/theme.hpp"
+#include "common/ui/imgui_guard.hpp"
 #include "common/ui/job_style.hpp"
 #include <iomanip>
 #include <sstream>
 #include <cmath>
 #include <cstdio>
 #include <algorithm>
-
-#ifdef _WIN32
-#if __has_include("third_party/imgui/imgui.h")
-#include "third_party/imgui/imgui.h"
-#define HAVE_IMGUI 1
-#elif __has_include("imgui.h")
-#include "imgui.h"
-#define HAVE_IMGUI 1
-#endif
-#endif
 
 namespace hub::app::ui {
 

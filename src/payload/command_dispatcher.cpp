@@ -11,6 +11,15 @@ namespace hub::payload {
 
 namespace {
 
+/// ReloadConfig: re-reads config.json and hands each plugin given its own section.
+/// A null plugin is skipped; the file is re-read either way.
+void reload_config(meter::CombatPlugin* combat, mitigator::LatencyPlugin* latency) {
+    auto& config = config::ConfigManager::instance();
+    config.load();
+    if (combat) combat->deserialize_config(config.root()[plugins::COMBAT_METER.config_section]);
+    if (latency) latency->deserialize_config(config.root()[plugins::LATENCY_MITIGATOR.config_section]);
+}
+
 /// Handles the commands every overlay shares. Returns true when consumed, so a
 /// plugin's own switch only has to cover what is specific to it.
 bool dispatch_overlay_command(ui::OverlayBase* overlay, const ipc::CommandPayload& cmd) {
@@ -124,10 +133,7 @@ void dispatch_combat_meter(const CommandDispatchTargets& t, const ipc::CommandPa
             if (t.combat_plugin) t.combat_plugin->set_dps_metric(meter::dps_metric_from(cmd.param_uint));
             break;
         case CommandId::ReloadConfig:
-            if (t.combat_plugin) {
-                config::ConfigManager::instance().load();
-                t.combat_plugin->deserialize_config(config::ConfigManager::instance().root()[plugins::COMBAT_METER.config_section]);
-            }
+            if (t.combat_plugin) reload_config(t.combat_plugin, nullptr);
             break;
         default:
             break;
@@ -170,10 +176,7 @@ void dispatch_latency_mitigator(const CommandDispatchTargets& t, const ipc::Comm
             if (t.latency_plugin) t.latency_plugin->mitigator().reset();
             break;
         case CommandId::ReloadConfig:
-            if (t.latency_plugin) {
-                config::ConfigManager::instance().load();
-                t.latency_plugin->deserialize_config(config::ConfigManager::instance().root()[plugins::LATENCY_MITIGATOR.config_section]);
-            }
+            if (t.latency_plugin) reload_config(nullptr, t.latency_plugin);
             break;
         default:
             break;
@@ -199,13 +202,7 @@ void dispatch_command(const CommandDispatchTargets& targets, const ipc::CommandP
                 break;
             }
             if (static_cast<CommandId>(cmd.command_id) == CommandId::ReloadConfig) {
-                config::ConfigManager::instance().load();
-                if (targets.combat_plugin) {
-                    targets.combat_plugin->deserialize_config(config::ConfigManager::instance().root()[plugins::COMBAT_METER.config_section]);
-                }
-                if (targets.latency_plugin) {
-                    targets.latency_plugin->deserialize_config(config::ConfigManager::instance().root()[plugins::LATENCY_MITIGATOR.config_section]);
-                }
+                reload_config(targets.combat_plugin, targets.latency_plugin);
             }
             break;
         default:

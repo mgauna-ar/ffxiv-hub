@@ -34,6 +34,27 @@ bool ProcessFinder::enable_debug_privilege() {
     return debug_ok;
 }
 
+namespace {
+
+/// What injecting needs: a remote thread, memory to write the DLL path into, and a
+/// wait on the process.
+constexpr DWORD kGameProcessAccess = PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION |
+                                     PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ | SYNCHRONIZE;
+
+/// Opens `pid` for injection. The info is returned either way: without a handle,
+/// last_error says why OpenProcess refused.
+ProcessInfo open_game_process(DWORD pid, std::string_view process_name) {
+    HANDLE h_process = OpenProcess(kGameProcessAccess, FALSE, pid);
+    return ProcessInfo{
+        .pid = pid,
+        .name = std::string(process_name),
+        .handle = h_process,
+        .last_error = h_process ? 0 : GetLastError()
+    };
+}
+
+} // namespace
+
 std::optional<ProcessInfo> ProcessFinder::find_process(std::string_view process_name) {
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     PROCESSENTRY32W entry{};
@@ -44,27 +65,9 @@ std::optional<ProcessInfo> ProcessFinder::find_process(std::string_view process_
 
     if (snapshot != INVALID_HANDLE_VALUE && Process32FirstW(snapshot, &entry)) {
         do {
-            const bool match = (_wcsicmp(entry.szExeFile, target_name_w.c_str()) == 0) ||
-                               (_wcsicmp(entry.szExeFile, L"ffxiv_dx11.exe") == 0) ||
-                               (_wcsicmp(entry.szExeFile, L"ffxiv.exe") == 0);
-            if (match) {
-                HANDLE h_process = OpenProcess(
-                    PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION |
-                    PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ | SYNCHRONIZE,
-                    FALSE,
-                    entry.th32ProcessID
-                );
-
-                const DWORD err = h_process ? 0 : GetLastError();
-
-                ProcessInfo info{
-                    .pid = entry.th32ProcessID,
-                    .name = std::string(process_name),
-                    .handle = h_process,
-                    .last_error = err
-                };
-
-                if (h_process != nullptr) {
+            if (_wcsicmp(entry.szExeFile, target_name_w.c_str()) == 0) {
+                ProcessInfo info = open_game_process(entry.th32ProcessID, process_name);
+                if (info.handle != nullptr) {
                     CloseHandle(snapshot);
                     return info;
                 }
@@ -88,23 +91,8 @@ std::optional<ProcessInfo> ProcessFinder::find_process(std::string_view process_
             DWORD win_pid = 0;
             GetWindowThreadProcessId(game_hwnd, &win_pid);
             if (win_pid != 0) {
-                HANDLE h_process = OpenProcess(
-                    PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION |
-                    PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ | SYNCHRONIZE,
-                    FALSE,
-                    win_pid
-                );
-
-                const DWORD err = h_process ? 0 : GetLastError();
-
-                ProcessInfo win_info{
-                    .pid = win_pid,
-                    .name = std::string(process_name),
-                    .handle = h_process,
-                    .last_error = err
-                };
-
-                if (h_process != nullptr) {
+                ProcessInfo win_info = open_game_process(win_pid, process_name);
+                if (win_info.handle != nullptr) {
                     return win_info;
                 }
                 if (!fallback_proc.has_value()) {
