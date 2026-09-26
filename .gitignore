@@ -33,3 +33,6 @@ __pycache__/
 # Local artifacts
 *.log
 *.prev.log
+
+# AI Agent Working Files
+.plans/
