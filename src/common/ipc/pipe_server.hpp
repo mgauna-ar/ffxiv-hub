@@ -100,6 +100,10 @@ public:
 
 private:
     void server_worker_thread();
+    void publish_pipe_handle(void* handle);
+    /// Nulls the handle, then waits out any send still inside it. The worker
+    /// calls this before it closes the handle.
+    void detach_pipe_handle();
 
     std::string m_pipe_name;
     std::atomic<bool> m_running{false};
@@ -108,9 +112,17 @@ private:
     std::atomic<uint32_t> m_outbound_sequence{0};
 
     std::thread m_worker_thread;
+    /// Serializes writes. A send holds it across a blocking write, so stop()
+    /// never takes it.
     std::mutex m_send_mutex;
+    /// Guards publishing and clearing m_pipe_handle against stop()'s CancelIoEx,
+    /// so the cancel never lands on a handle the worker already closed. Never
+    /// held across blocking I/O.
+    std::mutex m_handle_mutex;
 
-    [[maybe_unused]] void* m_pipe_handle{nullptr}; // Win32 HANDLE
+    /// Win32 HANDLE, owned and closed by the worker thread. Atomic so a send can
+    /// read it under m_send_mutex alone.
+    [[maybe_unused]] std::atomic<void*> m_pipe_handle{nullptr};
     [[maybe_unused]] void* m_stop_event{nullptr};  // Win32 HANDLE
     /// Reused across writes rather than created per packet. Guarded by m_send_mutex.
     [[maybe_unused]] void* m_write_event{nullptr}; // Win32 HANDLE

@@ -1,4 +1,5 @@
 #include "common/ipc/pipe_server.hpp"
+#include "common/ipc/frame_reader.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstring>
@@ -58,13 +59,15 @@ void PipeServer::stop() {
         SetEvent(static_cast<HANDLE>(m_stop_event));
     }
 
-    // Only cancel and detach here. The worker thread owns the handle's
-    // lifetime; closing it from both sides races on a recycled handle value.
+    // Only cancel here. The worker thread owns the handle's lifetime; closing
+    // it from both sides races on a recycled handle value. The cancel must not
+    // wait on m_send_mutex: a send blocked on a client that is not reading holds
+    // it, and this cancel is what releases that send.
     {
-        std::lock_guard<std::mutex> lock(m_send_mutex);
-        if (m_pipe_handle && m_pipe_handle != INVALID_HANDLE_VALUE) {
-            CancelIoEx(static_cast<HANDLE>(m_pipe_handle), nullptr);
-            m_pipe_handle = nullptr;
+        std::lock_guard<std::mutex> lock(m_handle_mutex);
+        const auto h_pipe = static_cast<HANDLE>(m_pipe_handle.load());
+        if (h_pipe && h_pipe != INVALID_HANDLE_VALUE) {
+            CancelIoEx(h_pipe, nullptr);
         }
     }
 
@@ -114,10 +117,11 @@ bool PipeServer::send_packet(
         return false;
     }
 
-    // The handle check has to be inside the lock: the worker can null it out
-    // between a check and the WriteFile.
+    // The handle is read inside the lock: the worker detaches it and then takes
+    // this lock before closing, so a handle seen here stays open until we return.
     std::lock_guard<std::mutex> lock(m_send_mutex);
-    if (!m_pipe_handle || m_pipe_handle == INVALID_HANDLE_VALUE || !m_write_event) {
+    const auto h_pipe = static_cast<HANDLE>(m_pipe_handle.load());
+    if (!h_pipe || h_pipe == INVALID_HANDLE_VALUE || !m_write_event) {
         return false;
     }
 
@@ -126,15 +130,17 @@ bool PipeServer::send_packet(
     ResetEvent(ov_write.hEvent);
 
     DWORD written = 0;
-    BOOL ok = WriteFile(
-        static_cast<HANDLE>(m_pipe_handle),
-        framed.data(),
-        static_cast<DWORD>(framed.size()),
-        &written,
-        &ov_write
-    );
+    BOOL ok = WriteFile(h_pipe, framed.data(), static_cast<DWORD>(framed.size()), &written, &ov_write);
     if (!ok && GetLastError() == ERROR_IO_PENDING) {
-        ok = GetOverlappedResult(static_cast<HANDLE>(m_pipe_handle), &ov_write, &written, TRUE);
+        // Wait on the stop event too: a write issued after stop()'s CancelIoEx
+        // would otherwise block on a client that is not reading.
+        HANDLE wait_events[2] = { ov_write.hEvent, static_cast<HANDLE>(m_stop_event) };
+        if (WaitForMultipleObjects(2, wait_events, FALSE, INFINITE) != WAIT_OBJECT_0) {
+            CancelIoEx(h_pipe, &ov_write);
+            GetOverlappedResult(h_pipe, &ov_write, &written, TRUE); // ov_write lives on this stack
+            return false;
+        }
+        ok = GetOverlappedResult(h_pipe, &ov_write, &written, FALSE);
     }
     return (ok && written == framed.size());
 #else
@@ -283,6 +289,18 @@ bool PipeServer::process_raw_packet(std::span<const uint8_t> data) {
 }
 
 #ifdef _WIN32
+void PipeServer::publish_pipe_handle(void* handle) {
+    std::lock_guard<std::mutex> lock(m_handle_mutex);
+    m_pipe_handle.store(handle);
+}
+
+void PipeServer::detach_pipe_handle() {
+    publish_pipe_handle(nullptr);
+    // Wait out a send that read the handle before it was detached; the caller
+    // closes it next.
+    std::lock_guard<std::mutex> lock(m_send_mutex);
+}
+
 void PipeServer::server_worker_thread() {
     const auto h_stop = static_cast<HANDLE>(m_stop_event);
 
@@ -332,17 +350,13 @@ void PipeServer::server_worker_thread() {
             continue;
         }
 
-        {
-            std::lock_guard<std::mutex> lock(m_send_mutex);
-            m_pipe_handle = hPipe;
-        }
+        publish_pipe_handle(hPipe);
 
         OVERLAPPED ov_connect{};
         ov_connect.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
         if (!ov_connect.hEvent) {
+            detach_pipe_handle();
             CloseHandle(hPipe);
-            std::lock_guard<std::mutex> lock(m_send_mutex);
-            m_pipe_handle = nullptr;
             break;
         }
 
@@ -366,92 +380,44 @@ void PipeServer::server_worker_thread() {
         CloseHandle(ov_connect.hEvent);
 
         if (!connected || !m_running.load()) {
+            detach_pipe_handle();
             DisconnectNamedPipe(hPipe);
             CloseHandle(hPipe);
-            std::lock_guard<std::mutex> lock(m_send_mutex);
-            m_pipe_handle = nullptr;
             continue;
         }
 
         m_connected.store(true);
 
-        std::vector<uint8_t> read_buffer;
-        read_buffer.reserve(65536);
-
         OVERLAPPED ov_read{};
         ov_read.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
 
-        while (m_running.load() && m_connected.load()) {
-            PacketHeader header{};
-            DWORD bytes_read = 0;
-
+        // One overlapped ReadFile that also wakes on the stop event, in the shape
+        // read_frame() wants: bytes read, 0 once the client closed, -1 on failure.
+        const ReadSome read_some = [&](uint8_t* dst, size_t len) -> std::ptrdiff_t {
             ResetEvent(ov_read.hEvent);
-            BOOL ok = ReadFile(hPipe, &header, sizeof(PacketHeader), &bytes_read, &ov_read);
+            DWORD bytes_read = 0;
+            BOOL ok = ReadFile(hPipe, dst, static_cast<DWORD>(len), &bytes_read, &ov_read);
             if (!ok && GetLastError() == ERROR_IO_PENDING) {
                 HANDLE wait_events[2] = { ov_read.hEvent, h_stop };
-                const DWORD wait_res = WaitForMultipleObjects(2, wait_events, FALSE, INFINITE);
-                if (wait_res == WAIT_OBJECT_0) {
-                    ok = GetOverlappedResult(hPipe, &ov_read, &bytes_read, FALSE);
-                } else {
+                if (WaitForMultipleObjects(2, wait_events, FALSE, INFINITE) != WAIT_OBJECT_0) {
                     CancelIoEx(hPipe, &ov_read);
-                    break;
+                    // ov_read and dst must outlive the cancelled read.
+                    GetOverlappedResult(hPipe, &ov_read, &bytes_read, TRUE);
+                    return -1;
                 }
+                ok = GetOverlappedResult(hPipe, &ov_read, &bytes_read, FALSE);
             }
+            if (!ok) return GetLastError() == ERROR_BROKEN_PIPE ? 0 : -1;
+            return static_cast<std::ptrdiff_t>(bytes_read);
+        };
 
-            if (!ok || bytes_read != sizeof(PacketHeader)) {
-                break;
-            }
-
-            if (header.magic != IPC_MAGIC) {
-                break;
-            }
-
-            // Validate before sizing the buffer: payload_size is wire data, and a
-            // 4 GB resize throws std::bad_alloc straight out of this thread.
-            if (header.payload_size > MAX_PAYLOAD_SIZE) {
-                break;
-            }
-
-            read_buffer.resize(sizeof(PacketHeader) + header.payload_size);
-            std::memcpy(read_buffer.data(), &header, sizeof(PacketHeader));
-
-            if (header.payload_size > 0) {
-                DWORD payload_read = 0;
-                DWORD total_payload_read = 0;
-                bool payload_ok = true;
-                while (total_payload_read < header.payload_size) {
-                    ResetEvent(ov_read.hEvent);
-                    ok = ReadFile(
-                        hPipe,
-                        read_buffer.data() + sizeof(PacketHeader) + total_payload_read,
-                        header.payload_size - total_payload_read,
-                        &payload_read,
-                        &ov_read
-                    );
-                    if (!ok && GetLastError() == ERROR_IO_PENDING) {
-                        HANDLE wait_events[2] = { ov_read.hEvent, h_stop };
-                        const DWORD wait_res = WaitForMultipleObjects(2, wait_events, FALSE, INFINITE);
-                        if (wait_res == WAIT_OBJECT_0) {
-                            ok = GetOverlappedResult(hPipe, &ov_read, &payload_read, FALSE);
-                        } else {
-                            CancelIoEx(hPipe, &ov_read);
-                            payload_ok = false;
-                            break;
-                        }
-                    }
-                    if (!ok || payload_read == 0) {
-                        payload_ok = false;
-                        break;
-                    }
-                    total_payload_read += payload_read;
-                }
-
-                if (!payload_ok || total_payload_read != header.payload_size) {
-                    break;
-                }
-            }
-
-            process_raw_packet(read_buffer);
+        // Anything but a whole frame ends the connection: a short read is looped
+        // over inside read_frame(), and a bad header cannot be resynchronised.
+        std::vector<uint8_t> frame;
+        frame.reserve(sizeof(PacketHeader) + MAX_PAYLOAD_SIZE);
+        while (m_running.load() && m_connected.load() && ov_read.hEvent) {
+            if (read_frame(read_some, frame) != FrameResult::Frame) break;
+            process_raw_packet(frame);
         }
 
         if (ov_read.hEvent) {
@@ -460,10 +426,7 @@ void PipeServer::server_worker_thread() {
 
         m_connected.store(false);
 
-        {
-            std::lock_guard<std::mutex> lock(m_send_mutex);
-            m_pipe_handle = nullptr;
-        }
+        detach_pipe_handle();
         DisconnectNamedPipe(hPipe);
         CloseHandle(hPipe);
     }
