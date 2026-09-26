@@ -13,12 +13,8 @@ namespace hub::app::ui {
 #ifdef HAVE_IMGUI
 namespace {
 
-/// A death is picked by who died and when, since the list is rebuilt on every snapshot.
-meter::EntityId s_selected_entity = 0;
-double s_selected_time = -1.0;
-
-bool is_selected(const meter::DeathRecord& death) {
-    return death.entity == s_selected_entity && death.time_s == s_selected_time;
+bool is_selected(const DeathsTabState& state, const meter::DeathRecord& death) {
+    return death.entity == state.selected_entity && death.time_s == state.selected_time;
 }
 
 std::string pull_clock(double seconds) {
@@ -56,7 +52,8 @@ std::string buffs_at_death(const meter::DeathRecord& death) {
     return out;
 }
 
-void render_death_log(const meter::EncounterSummary& summary, const SummaryNames& names, float height) {
+void render_death_log(DeathsTabState& state, const meter::EncounterSummary& summary, const SummaryNames& names,
+                      float height) {
     const auto sizing = table_sizing(760.0f, 7, kCombatTableFlags);
     if (!ImGui::BeginTable("##DeathLog", 7, sizing.flags, ImVec2(0.0f, height))) return;
     ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthFixed, m(50.0f));
@@ -75,10 +72,10 @@ void render_death_log(const meter::EncounterSummary& summary, const SummaryNames
 
         ImGui::TableSetColumnIndex(0);
         const std::string label = pull_clock(death.time_s) + "##Death" + std::to_string(i);
-        const bool selected = is_selected(death);
+        const bool selected = is_selected(state, death);
         if (ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns)) {
-            s_selected_entity = selected ? 0 : death.entity;
-            s_selected_time = selected ? -1.0 : death.time_s;
+            state.selected_entity = selected ? 0 : death.entity;
+            state.selected_time = selected ? -1.0 : death.time_s;
         }
 
         ImGui::TableSetColumnIndex(1);
@@ -183,7 +180,7 @@ void render_recap(const meter::DeathRecord& death, const SummaryNames& names, fl
 
 } // namespace
 
-void render_deaths(const meter::EncounterSummary& summary, float height, bool tracking_on) {
+void render_deaths(DeathsTabState& state, const meter::EncounterSummary& summary, float height, bool tracking_on) {
     if (summary.deaths.empty()) {
         vitals_empty_state(tracking_on, ICON_SKULL, "No deaths",
                            "Deaths show here with their killing blow and the hits before them.");
@@ -193,21 +190,20 @@ void render_deaths(const meter::EncounterSummary& summary, float height, bool tr
     const SummaryNames names(summary);
     const meter::DeathRecord* selected = nullptr;
     for (const meter::DeathRecord& death : summary.deaths) {
-        if (is_selected(death)) {
+        if (is_selected(state, death)) {
             selected = &death;
             break;
         }
     }
     if (selected == nullptr) {
-        s_selected_entity = 0;
-        s_selected_time = -1.0;
+        state = DeathsTabState{};
     }
 
     const float row_h = ImGui::GetTextLineHeight() + m(10.0f);
     const float log_h = selected != nullptr
         ? std::min(height * 0.45f, (static_cast<float>(summary.deaths.size()) + 1.5f) * row_h)
         : height;
-    render_death_log(summary, names, log_h);
+    render_death_log(state, summary, names, log_h);
     if (selected == nullptr) return;
 
     ImGui::Dummy(ImVec2(0.0f, m(6.0f)));

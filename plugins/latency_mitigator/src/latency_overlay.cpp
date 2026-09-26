@@ -1,5 +1,5 @@
 #include "mitigator/latency_overlay.hpp"
-#include "payload/overlay_host.hpp"
+#include "common/ui/overlay_palette.hpp"
 #include <algorithm>
 #include <cstdio>
 
@@ -89,27 +89,29 @@ void LatencyOverlay::render() {
     // Scale: Green < 180ms, Teal/Mint <= 260ms, Amber <= 340ms, Red > 340ms
     const double dot_metric = (net_ping >= 0.0) ? net_ping : (has_rtt && rtt > 0.0 ? rtt : -1.0);
 
+    namespace palette = hub::common::ui::overlay_colors;
+    using hub::common::ui::rgba;
     ImVec4 bg_col, dot_color, text_col, border_col;
     if (is_spike) {
-        bg_col     = ImVec4(0.25f, 0.12f, 0.02f, opacity);
-        dot_color  = ImVec4(1.00f, 0.45f, 0.10f, 1.00f);
-        text_col   = ImVec4(1.00f, 0.70f, 0.20f, 1.00f);
-        border_col = ImVec4(0.95f, 0.55f, 0.15f, 0.90f);
+        bg_col     = rgba(palette::SpikeBackground, opacity);
+        dot_color  = rgba(palette::SpikeDot, 1.00f);
+        text_col   = rgba(palette::SpikeText, 1.00f);
+        border_col = rgba(palette::SpikeBorder, 0.90f);
     } else {
-        bg_col = ImVec4(0.08f, 0.09f, 0.12f, opacity);
-        border_col = ImVec4(0.20f, 0.23f, 0.30f, 0.70f);
+        bg_col = rgba(palette::Background, opacity);
+        border_col = rgba(palette::Border, 0.70f);
         if (dot_metric < 0.0) {
-            dot_color = ImVec4(0.55f, 0.60f, 0.70f, 0.80f); // Muted gray/slate
+            dot_color = rgba(palette::Muted, 0.80f);
         } else if (dot_metric < constants::PING_GRADE_GOOD_MS) {
-            dot_color = ImVec4(0.20f, 0.85f, 0.40f, 1.00f); // Green
+            dot_color = rgba(palette::PingGood, 1.00f);
         } else if (dot_metric <= constants::PING_GRADE_FAIR_MS) {
-            dot_color = ImVec4(0.12f, 0.79f, 0.59f, 1.00f); // Teal/Mint (#20C997)
+            dot_color = rgba(palette::PingFair, 1.00f);
         } else if (dot_metric <= constants::PING_GRADE_POOR_MS) {
-            dot_color = ImVec4(0.95f, 0.70f, 0.20f, 1.00f); // Amber
+            dot_color = rgba(palette::PingPoor, 1.00f);
         } else {
-            dot_color = ImVec4(0.95f, 0.25f, 0.25f, 1.00f); // Red
+            dot_color = rgba(palette::PingBad, 1.00f);
         }
-        text_col = ImVec4(0.92f, 0.94f, 0.98f, 1.00f);
+        text_col = rgba(palette::HudText, 1.00f);
     }
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.0f);
@@ -117,7 +119,7 @@ void LatencyOverlay::render() {
     ImGui::PushStyleColor(ImGuiCol_WindowBg, bg_col);
     ImGui::PushStyleColor(ImGuiCol_Border, border_col);
 
-    const auto scaled_font = hub::payload::OverlayHost::instance().font_for_scale(scale, /*bold_base=*/true);
+    const ScaledFont scaled_font = font_for_scale(scale, /*bold_base=*/true);
     const bool push_font = (scaled_font.font != nullptr && scaled_font.font != ImGui::GetFont());
     if (push_font) {
         ImGui::PushFont(scaled_font.font);
@@ -174,7 +176,7 @@ void LatencyOverlay::render() {
             ImGui::TextColored(text_col, "Ping  %s", ping_str);
             ImGui::Dummy(ImVec2(radius * 2.0f + 4.0f, 0.0f));
             ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.75f, 0.80f, 0.90f, 0.95f), "RTT   %s%s", rtt_str, is_spike ? " !" : "");
+            ImGui::TextColored(rgba(palette::HudSecondaryText, 0.95f), "RTT   %s%s", rtt_str, is_spike ? " !" : "");
         } else if (mode == OverlayDisplayMode::PingOnly) {
             if (is_spike) {
                 std::snprintf(buf, sizeof(buf), "%s !", ping_str);

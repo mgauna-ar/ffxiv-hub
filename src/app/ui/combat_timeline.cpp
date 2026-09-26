@@ -23,100 +23,65 @@ namespace {
 /// never changes, so it is fetched once.
 constexpr auto kLiveRefresh = std::chrono::milliseconds(250);
 
-meter::TimelineMetric s_metric = meter::TimelineMetric::Damage;
-size_t s_smoothing_s = 15;
-/// Players whose line the legend turned off, kept from one pull to the next.
-std::unordered_set<meter::EntityId> s_hidden;
+using Line = TimelineTabState::Line;
 
-struct Fetched {
-    bool valid{false};
-    uint64_t encounter_id{0};
-    std::chrono::steady_clock::time_point at{};
-    uint64_t version{0};
-    meter::EncounterTimeline timeline;
-};
-Fetched s_fetched;
-
-/// One player's line. Worked out again only when the data, a setting or the chart's
-/// width changes, never per frame.
-struct Line {
-    meter::EntityId entity{0};
-    std::string name;
-    uint32_t color{0};
-    double total{0.0};           // Orders the legend
-    float peak{0.0f};
-    std::vector<float> values;   // One per point across the chart
-};
-
-struct Chart {
-    uint64_t version{0};
-    meter::TimelineMetric metric{meter::TimelineMetric::Damage};
-    meter::DpsMetric dps{meter::DpsMetric::Dps};
-    size_t smoothing_s{0};
-    size_t points{0};
-    size_t length_s{0};
-    std::vector<Line> lines;
-};
-Chart s_chart;
-std::vector<ImVec2> s_points;
-
-void refresh(AppState& app_state, uint64_t encounter_id) {
+void refresh(TimelineTabState& state, AppState& app_state, uint64_t encounter_id) {
     const auto now = std::chrono::steady_clock::now();
-    const bool same = s_fetched.valid && s_fetched.encounter_id == encounter_id;
-    if (same && (encounter_id != 0 || now - s_fetched.at < kLiveRefresh)) return;
-    s_fetched.timeline = app_state.get_timeline(encounter_id);
-    s_fetched.valid = true;
-    s_fetched.encounter_id = encounter_id;
-    s_fetched.at = now;
-    ++s_fetched.version;
+    const bool same = state.fetched.valid && state.fetched.encounter_id == encounter_id;
+    if (same && (encounter_id != 0 || now - state.fetched.at < kLiveRefresh)) return;
+    state.fetched.timeline = app_state.get_timeline(encounter_id);
+    state.fetched.valid = true;
+    state.fetched.encounter_id = encounter_id;
+    state.fetched.at = now;
+    ++state.fetched.version;
 }
 
 /// Seconds the chart spans: the pull's own clock, which a kill stops at the last hit.
-size_t chart_length(const meter::EncounterSummary& summary) {
+size_t chart_length(const TimelineTabState& state, const meter::EncounterSummary& summary) {
     size_t longest = 0;
-    for (const meter::TimelineRow& row : s_fetched.timeline.rows) longest = std::max(longest, row.bins.size());
+    for (const meter::TimelineRow& row : state.fetched.timeline.rows) longest = std::max(longest, row.bins.size());
     const auto duration = static_cast<size_t>(std::ceil(std::max(summary.duration_seconds, 0.0)));
     return std::clamp<size_t>(duration > 0 ? duration : longest, 1, meter::TIMELINE_MAX_SECONDS);
 }
 
-void build_chart(const meter::EncounterSummary& summary, size_t points) {
+void build_chart(TimelineTabState& state, const meter::EncounterSummary& summary, size_t points) {
     const meter::DpsMetric dps = selected_dps_metric();
-    const size_t length = chart_length(summary);
-    if (s_chart.version == s_fetched.version && s_chart.metric == s_metric && s_chart.dps == dps
-        && s_chart.smoothing_s == s_smoothing_s && s_chart.points == points && s_chart.length_s == length) {
+    const size_t length = chart_length(state, summary);
+    if (state.chart.version == state.fetched.version && state.chart.metric == state.metric && state.chart.dps == dps
+        && state.chart.smoothing_s == state.smoothing_s && state.chart.points == points && state.chart.length_s == length) {
         return;
     }
-    s_chart = Chart{s_fetched.version, s_metric, dps, s_smoothing_s, points, length, {}};
-    for (const meter::TimelineRow& row : s_fetched.timeline.rows) {
+    state.chart = TimelineTabState::Chart{state.fetched.version, state.metric, dps, state.smoothing_s, points, length, {}};
+    for (const meter::TimelineRow& row : state.fetched.timeline.rows) {
         const auto who = std::find_if(summary.combatants.begin(), summary.combatants.end(),
             [&row](const meter::CombatantStats& c) { return c.entity_id == row.entity; });
         // A pet the tick has not merged into its owner yet.
         if (who == summary.combatants.end()) continue;
         Line line;
         for (size_t i = 0; i < row.bins.size() && i < length; ++i) {
-            line.total += meter::timeline_value(row.bins[i], s_metric, dps);
+            line.total += meter::timeline_value(row.bins[i], state.metric, dps);
         }
         if (line.total <= 0.0) continue;
         line.entity = row.entity;
         line.name = who->name;
         line.color = get_job_color_u32(who->job);
-        line.values = meter::downsample(meter::smoothed_series(row.bins, length, s_metric, dps, s_smoothing_s), points);
+        line.values = meter::downsample(meter::smoothed_series(row.bins, length, state.metric, dps, state.smoothing_s), points);
         line.peak = *std::max_element(line.values.begin(), line.values.end());
-        s_chart.lines.push_back(std::move(line));
+        state.chart.lines.push_back(std::move(line));
     }
-    std::sort(s_chart.lines.begin(), s_chart.lines.end(),
+    std::sort(state.chart.lines.begin(), state.chart.lines.end(),
               [](const Line& a, const Line& b) { return a.total > b.total; });
 }
 
-void metric_button(const char* label, meter::TimelineMetric metric) {
-    if (button(label, s_metric == metric ? ButtonKind::Primary : ButtonKind::Secondary, ButtonSize::Fit)) {
-        s_metric = metric;
+void metric_button(TimelineTabState& state, const char* label, meter::TimelineMetric metric) {
+    if (button(label, state.metric == metric ? ButtonKind::Primary : ButtonKind::Secondary, ButtonSize::Fit)) {
+        state.metric = metric;
     }
 }
 
-void smoothing_button(const char* label, size_t seconds) {
-    if (button(label, s_smoothing_s == seconds ? ButtonKind::Primary : ButtonKind::Secondary, ButtonSize::Fit)) {
-        s_smoothing_s = seconds;
+void smoothing_button(TimelineTabState& state, const char* label, size_t seconds) {
+    if (button(label, state.smoothing_s == seconds ? ButtonKind::Primary : ButtonKind::Secondary, ButtonSize::Fit)) {
+        state.smoothing_s = seconds;
     }
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Each point averages the %zu seconds around it.", seconds);
@@ -124,16 +89,16 @@ void smoothing_button(const char* label, size_t seconds) {
 }
 
 /// What the lines show on the left, how smooth they are on the right.
-void render_controls() {
+void render_controls(TimelineTabState& state) {
     const std::string damage =
         std::string(ICON_SWORDS "  ") + std::string(meter::to_string(selected_dps_metric())) + "##TimelineDamage";
     const char* healing = ICON_HEART "  HPS##TimelineHealing";
     const char* taken = ICON_SHIELD "  Damage taken##TimelineTaken";
-    metric_button(damage.c_str(), meter::TimelineMetric::Damage);
+    metric_button(state, damage.c_str(), meter::TimelineMetric::Damage);
     same_line_if_room(button_width(healing, ButtonSize::Fit));
-    metric_button(healing, meter::TimelineMetric::Healing);
+    metric_button(state, healing, meter::TimelineMetric::Healing);
     same_line_if_room(button_width(taken, ButtonSize::Fit));
-    metric_button(taken, meter::TimelineMetric::Taken);
+    metric_button(state, taken, meter::TimelineMetric::Taken);
 
     constexpr const char* kLabels[] = {"5 s##TimelineSmooth5", "15 s##TimelineSmooth15", "30 s##TimelineSmooth30"};
     constexpr size_t kSeconds[] = {5, 15, 30};
@@ -144,7 +109,7 @@ void render_controls() {
     right_align(width);
     for (size_t i = 0; i < std::size(kLabels); ++i) {
         if (i > 0) ImGui::SameLine(0.0f, gap);
-        smoothing_button(kLabels[i], kSeconds[i]);
+        smoothing_button(state, kLabels[i], kSeconds[i]);
     }
 }
 
@@ -173,16 +138,16 @@ std::string clock_label(double seconds) {
     return buf;
 }
 
-bool is_shown(const Line& line) {
-    return !s_hidden.contains(line.entity);
+bool is_shown(const TimelineTabState& state, const Line& line) {
+    return !state.hidden.contains(line.entity);
 }
 
 /// What every shown line read at the hovered point, and what was going on then.
-void render_readout(const meter::EncounterSummary& summary, const SummaryNames& names, size_t point,
+void render_readout(const TimelineTabState& state, const meter::EncounterSummary& summary, const SummaryNames& names, size_t point,
                     double at_s, double span_s) {
     std::vector<const Line*> shown;
-    for (const Line& line : s_chart.lines) {
-        if (is_shown(line)) shown.push_back(&line);
+    for (const Line& line : state.chart.lines) {
+        if (is_shown(state, line)) shown.push_back(&line);
     }
     std::sort(shown.begin(), shown.end(),
               [point](const Line* a, const Line* b) { return a->values[point] > b->values[point]; });
@@ -198,7 +163,7 @@ void render_readout(const meter::EncounterSummary& summary, const SummaryNames& 
     }
 
     bool header = false;
-    for (const meter::BuffWindow& window : s_fetched.timeline.buffs) {
+    for (const meter::BuffWindow& window : state.fetched.timeline.buffs) {
         if (at_s < window.begin_s || at_s >= window.end_s) continue;
         if (!header) {
             ImGui::Separator();
@@ -231,12 +196,12 @@ float value_gutter(double top) {
     return ImGui::CalcTextSize(format_dps(top).c_str()).x + m(10.0f);
 }
 
-void render_chart(const meter::EncounterSummary& summary, float width, float height) {
+void render_chart(TimelineTabState& state, const meter::EncounterSummary& summary, float width, float height) {
     const SummaryNames names(summary);
     const float line_h = ImGui::GetTextLineHeight();
     float peak = 0.0f;
-    for (const Line& line : s_chart.lines) {
-        if (is_shown(line)) peak = std::max(peak, line.peak);
+    for (const Line& line : state.chart.lines) {
+        if (is_shown(state, line)) peak = std::max(peak, line.peak);
     }
     const double top = chart_top(peak);
 
@@ -247,7 +212,7 @@ void render_chart(const meter::EncounterSummary& summary, float width, float hei
     const ImVec2 plot_max(p_max.x, p_max.y - line_h - m(4.0f));
     const float plot_w = plot_max.x - plot_min.x;
     const float plot_h = plot_max.y - plot_min.y;
-    const double length = static_cast<double>(s_chart.length_s);
+    const double length = static_cast<double>(state.chart.length_s);
     const auto x_of = [&](double s) { return plot_min.x + static_cast<float>(std::clamp(s / length, 0.0, 1.0)) * plot_w; };
     const auto y_of = [&](double v) { return plot_max.y - static_cast<float>(std::clamp(v / top, 0.0, 1.0)) * plot_h; };
 
@@ -261,7 +226,7 @@ void render_chart(const meter::EncounterSummary& summary, float width, float hei
 
     dl->PushClipRect(plot_min, plot_max, true);
     // Raid buffs behind everything, darker where more of them overlap.
-    for (const meter::BuffWindow& window : s_fetched.timeline.buffs) {
+    for (const meter::BuffWindow& window : state.fetched.timeline.buffs) {
         const float x0 = x_of(window.begin_s);
         const float x1 = x_of(window.end_s);
         dl->AddRectFilled(ImVec2(x0, plot_min.y), ImVec2(x1, plot_max.y), colors::with_alpha(colors::WarningLight, 0.05f));
@@ -282,14 +247,14 @@ void render_chart(const meter::EncounterSummary& summary, float width, float hei
     // A whole-pixel width lets ImGui draw the line from its font texture, with half
     // the vertices.
     const float thickness = std::max(1.0f, std::round(m(2.0f)));
-    for (const Line& line : s_chart.lines) {
-        if (!is_shown(line) || line.values.size() < 2) continue;
-        s_points.clear();
+    for (const Line& line : state.chart.lines) {
+        if (!is_shown(state, line) || line.values.size() < 2) continue;
+        state.points.clear();
         const double span = length / static_cast<double>(line.values.size());
         for (size_t i = 0; i < line.values.size(); ++i) {
-            s_points.emplace_back(x_of((static_cast<double>(i) + 0.5) * span), y_of(line.values[i]));
+            state.points.emplace_back(x_of((static_cast<double>(i) + 0.5) * span), y_of(line.values[i]));
         }
-        dl->AddPolyline(s_points.data(), static_cast<int>(s_points.size()), line.color, ImDrawFlags_None, thickness);
+        dl->AddPolyline(state.points.data(), static_cast<int>(state.points.size()), line.color, ImDrawFlags_None, thickness);
     }
     dl->PopClipRect();
 
@@ -309,7 +274,7 @@ void render_chart(const meter::EncounterSummary& summary, float width, float hei
     // Each death: a skull over the plot, a bar for as long as they stayed down.
     const float skull_w = ImGui::CalcTextSize(ICON_SKULL).x;
     for (const meter::DeathRecord& death : summary.deaths) {
-        if (s_hidden.contains(death.entity) || death.time_s > length) continue;
+        if (state.hidden.contains(death.entity) || death.time_s > length) continue;
         const float x = x_of(death.time_s);
         const game::Job job = names.job(death.entity);
         const uint32_t color = job != game::Job::None ? get_job_color_u32(job) : colors::DangerLight;
@@ -320,8 +285,8 @@ void render_chart(const meter::EncounterSummary& summary, float width, float hei
         dl->AddText(ImVec2(x - skull_w * 0.5f, p_min.y), color, ICON_SKULL);
     }
 
-    if (!hovered || s_chart.lines.empty()) return;
-    const size_t n = s_chart.lines.front().values.size();
+    if (!hovered || state.chart.lines.empty()) return;
+    const size_t n = state.chart.lines.front().values.size();
     const float mouse_x = ImGui::GetMousePos().x;
     const auto point = static_cast<size_t>(
         std::clamp((mouse_x - plot_min.x) / plot_w * static_cast<float>(n), 0.0f, static_cast<float>(n - 1)));
@@ -329,10 +294,10 @@ void render_chart(const meter::EncounterSummary& summary, float width, float hei
     const double at_s = (static_cast<double>(point) + 0.5) * span;
     const float x = x_of(at_s);
     dl->AddLine(ImVec2(x, plot_min.y), ImVec2(x, plot_max.y), colors::with_alpha(colors::White, 0.35f));
-    for (const Line& line : s_chart.lines) {
-        if (is_shown(line)) dl->AddCircleFilled(ImVec2(x, y_of(line.values[point])), m(3.5f), line.color);
+    for (const Line& line : state.chart.lines) {
+        if (is_shown(state, line)) dl->AddCircleFilled(ImVec2(x, y_of(line.values[point])), m(3.5f), line.color);
     }
-    render_readout(summary, names, point, at_s, span);
+    render_readout(state, summary, names, point, at_s, span);
 }
 
 float legend_entry_width(const Line& line) {
@@ -340,11 +305,11 @@ float legend_entry_width(const Line& line) {
 }
 
 /// Height the legend's entries take once they wrap to `width`.
-float legend_height(float width) {
+float legend_height(const TimelineTabState& state, float width) {
     const float gap = m(14.0f);
     int rows = 1;
     float x = 0.0f;
-    for (const Line& line : s_chart.lines) {
+    for (const Line& line : state.chart.lines) {
         const float w = legend_entry_width(line);
         if (x > 0.0f && x + gap + w > width) {
             ++rows;
@@ -357,19 +322,19 @@ float legend_height(float width) {
 }
 
 /// One key per line, which turns the line off and on.
-void render_legend() {
-    for (size_t i = 0; i < s_chart.lines.size(); ++i) {
-        const Line& line = s_chart.lines[i];
+void render_legend(TimelineTabState& state) {
+    for (size_t i = 0; i < state.chart.lines.size(); ++i) {
+        const Line& line = state.chart.lines[i];
         const float w = legend_entry_width(line);
         if (i > 0) same_line_if_room(w, 14.0f);
-        const bool shown = is_shown(line);
+        const bool shown = is_shown(state, line);
         const ImVec2 p = ImGui::GetCursorScreenPos();
         ImGui::PushID(static_cast<int>(line.entity));
         if (ImGui::InvisibleButton("##TimelineLegend", ImVec2(w, ImGui::GetTextLineHeight()))) {
             if (shown) {
-                s_hidden.insert(line.entity);
+                state.hidden.insert(line.entity);
             } else {
-                s_hidden.erase(line.entity);
+                state.hidden.erase(line.entity);
             }
         }
         const bool hovered = ImGui::IsItemHovered();
@@ -386,9 +351,9 @@ void render_legend() {
     }
 }
 
-const char* empty_title() {
-    if (s_fetched.timeline.rows.empty()) return "No timeline yet";
-    switch (s_metric) {
+const char* empty_title(const TimelineTabState& state) {
+    if (state.fetched.timeline.rows.empty()) return "No timeline yet";
+    switch (state.metric) {
         case meter::TimelineMetric::Healing: return "No healing this pull";
         case meter::TimelineMetric::Taken: return "No damage taken this pull";
         default: return "No damage this pull";
@@ -397,27 +362,27 @@ const char* empty_title() {
 
 } // namespace
 
-void render_timeline(AppState& app_state, const meter::EncounterSummary& summary, uint64_t encounter_id,
-                     float height) {
+void render_timeline(TimelineTabState& state, AppState& app_state, const meter::EncounterSummary& summary,
+                     uint64_t encounter_id, float height) {
     const float top = ImGui::GetCursorPosY();
-    render_controls();
+    render_controls(state);
     ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
 
-    refresh(app_state, encounter_id);
+    refresh(state, app_state, encounter_id);
     const float width = ImGui::GetContentRegionAvail().x;
     // One point per pixel across the plot, whose value labels are rarely wider than these.
-    build_chart(summary, static_cast<size_t>(std::max(width - value_gutter(999'999.0), 2.0f)));
-    if (s_chart.lines.empty()) {
-        empty_state(ICON_TRENDING, empty_title(),
+    build_chart(state, summary, static_cast<size_t>(std::max(width - value_gutter(999'999.0), 2.0f)));
+    if (state.chart.lines.empty()) {
+        empty_state(ICON_TRENDING, empty_title(state),
                     "Each party member's pull fills in here second by second as it runs.");
         return;
     }
 
     const float body_h = height - (ImGui::GetCursorPosY() - top);
-    const float chart_h = std::max(body_h - legend_height(width) - m(6.0f), m(140.0f));
-    render_chart(summary, width, chart_h);
+    const float chart_h = std::max(body_h - legend_height(state, width) - m(6.0f), m(140.0f));
+    render_chart(state, summary, width, chart_h);
     ImGui::Dummy(ImVec2(0.0f, m(2.0f)));
-    render_legend();
+    render_legend(state);
 }
 
 #endif // HAVE_IMGUI

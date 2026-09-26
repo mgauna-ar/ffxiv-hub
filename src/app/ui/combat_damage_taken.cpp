@@ -15,10 +15,7 @@ namespace hub::app::ui {
 #ifdef HAVE_IMGUI
 namespace {
 
-/// 0 = every player.
-meter::EntityId s_selected_target = 0;
-
-void render_player_table(const std::vector<const meter::CombatantStats*>& players,
+void render_player_table(DamageTakenTabState& state, const std::vector<const meter::CombatantStats*>& players,
                          const std::unordered_map<meter::EntityId, uint64_t>& hits_by_target,
                          uint64_t total_taken, float height) {
     const auto sizing = table_sizing(520.0f, 5, kCombatTableFlags);
@@ -33,8 +30,8 @@ void render_player_table(const std::vector<const meter::CombatantStats*>& player
 
     ImGui::TableNextRow();
     ImGui::TableSetColumnIndex(1);
-    if (ImGui::Selectable("All players##TakenAll", s_selected_target == 0, ImGuiSelectableFlags_SpanAllColumns)) {
-        s_selected_target = 0;
+    if (ImGui::Selectable("All players##TakenAll", state.selected_target == 0, ImGuiSelectableFlags_SpanAllColumns)) {
+        state.selected_target = 0;
     }
     ImGui::TableSetColumnIndex(2);
     text_colored_u32(colors::TextPrimary, "%s", format_damage(total_taken).c_str());
@@ -48,9 +45,9 @@ void render_player_table(const std::vector<const meter::CombatantStats*>& player
         job_badge(p->job);
         ImGui::TableSetColumnIndex(1);
         const std::string label = p->name + "##Taken" + std::to_string(p->entity_id);
-        const bool selected = s_selected_target == p->entity_id;
+        const bool selected = state.selected_target == p->entity_id;
         if (ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns)) {
-            s_selected_target = selected ? 0 : p->entity_id;
+            state.selected_target = selected ? 0 : p->entity_id;
         }
         ImGui::TableSetColumnIndex(2);
         text_colored_u32(colors::TextBody, "%s", format_damage(p->damage_taken).c_str());
@@ -64,11 +61,12 @@ void render_player_table(const std::vector<const meter::CombatantStats*>& player
     ImGui::EndTable();
 }
 
-void render_ability_table(const meter::EncounterSummary& summary, const SummaryNames& names, float height) {
+void render_ability_table(meter::EntityId selected_target, const meter::EncounterSummary& summary,
+                          const SummaryNames& names, float height) {
     // One row per ability and source: the selected player's own, or summed over everyone.
     std::map<std::tuple<meter::ActionId, meter::EntityId>, meter::DamageTakenRow> rows;
     for (const meter::DamageTakenRow& row : summary.damage_taken) {
-        if (s_selected_target != 0 && row.target != s_selected_target) continue;
+        if (selected_target != 0 && row.target != selected_target) continue;
         meter::DamageTakenRow& sum = rows[{row.action_key, row.source}];
         sum.action_key = row.action_key;
         sum.source = row.source;
@@ -127,7 +125,7 @@ void render_ability_table(const meter::EncounterSummary& summary, const SummaryN
 
 } // namespace
 
-void render_damage_taken(const meter::EncounterSummary& summary, float height) {
+void render_damage_taken(DamageTakenTabState& state, const meter::EncounterSummary& summary, float height) {
     std::vector<const meter::CombatantStats*> players;
     uint64_t total_taken = 0;
     for (const meter::CombatantStats& c : summary.combatants) {
@@ -146,9 +144,9 @@ void render_damage_taken(const meter::EncounterSummary& summary, float height) {
     }
 
     // A player who is not in this pull any more cannot stay selected.
-    if (s_selected_target != 0 && std::none_of(players.begin(), players.end(),
-            [](const meter::CombatantStats* p) { return p->entity_id == s_selected_target; })) {
-        s_selected_target = 0;
+    if (state.selected_target != 0 && std::none_of(players.begin(), players.end(),
+            [&state](const meter::CombatantStats* p) { return p->entity_id == state.selected_target; })) {
+        state.selected_target = 0;
     }
 
     std::unordered_map<meter::EntityId, uint64_t> hits_by_target;
@@ -159,14 +157,14 @@ void render_damage_taken(const meter::EncounterSummary& summary, float height) {
     const SummaryNames names(summary);
     const float players_h = std::min(height * 0.42f,
         (static_cast<float>(players.size()) + 2.5f) * (ImGui::GetTextLineHeight() + m(10.0f)));
-    render_player_table(players, hits_by_target, total_taken, players_h);
+    render_player_table(state, players, hits_by_target, total_taken, players_h);
     ImGui::Dummy(ImVec2(0.0f, m(6.0f)));
 
-    const std::string heading = s_selected_target == 0
+    const std::string heading = state.selected_target == 0
         ? std::string("ALL PLAYERS")
-        : names.name(s_selected_target);
+        : names.name(state.selected_target);
     section_header(ICON_CROSSHAIR, heading.c_str(), colors::Danger);
-    render_ability_table(summary, names, fill_h(0.0f));
+    render_ability_table(state.selected_target, summary, names, fill_h(0.0f));
 }
 
 #endif // HAVE_IMGUI

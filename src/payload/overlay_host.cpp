@@ -1,5 +1,6 @@
 #include "payload/overlay_host.hpp"
 #include "common/ui/icon_font.hpp"
+#include "common/ui/overlay_palette.hpp"
 #include <algorithm>
 #include <initializer_list>
 #include <string>
@@ -21,16 +22,19 @@ void OverlayHost::register_overlay(std::shared_ptr<IOverlay> overlay) {
     // Wired here rather than at every construction site, so a new overlay picks
     // up visibility conditions just by registering.
     overlay->set_game_state(m_game_state);
+    overlay->set_fonts(this);
     m_overlays.push_back(std::move(overlay));
 }
 
 void OverlayHost::unregister_overlay(std::string_view overlay_id) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_overlays.erase(
-        std::remove_if(m_overlays.begin(), m_overlays.end(), [&](const auto& o) {
-            return o && std::string_view(o->overlay_id()) == overlay_id;
-        }),
-        m_overlays.end());
+    const auto matches = [&](const auto& o) {
+        return o && std::string_view(o->overlay_id()) == overlay_id;
+    };
+    for (auto& o : m_overlays) {
+        if (matches(o)) o->set_fonts(nullptr);
+    }
+    m_overlays.erase(std::remove_if(m_overlays.begin(), m_overlays.end(), matches), m_overlays.end());
 }
 
 std::shared_ptr<IOverlay> OverlayHost::find_overlay(std::string_view overlay_id) const {
@@ -86,49 +90,51 @@ void OverlayHost::setup_style(float alpha) {
     style.ItemSpacing       = ImVec2(8.0f, 4.0f);
     style.ItemInnerSpacing  = ImVec2(4.0f, 4.0f);
 
-    colors[ImGuiCol_WindowBg]             = ImVec4(0.08f, 0.09f, 0.12f, alpha);
-    colors[ImGuiCol_ChildBg]              = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
-    colors[ImGuiCol_PopupBg]              = ImVec4(0.10f, 0.12f, 0.16f, 0.95f);
-    colors[ImGuiCol_Border]               = ImVec4(0.20f, 0.23f, 0.30f, 0.60f);
-    colors[ImGuiCol_BorderShadow]         = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
-    colors[ImGuiCol_FrameBg]              = ImVec4(0.12f, 0.14f, 0.19f, 0.70f);
-    colors[ImGuiCol_FrameBgHovered]       = ImVec4(0.18f, 0.22f, 0.30f, 0.80f);
-    colors[ImGuiCol_FrameBgActive]        = ImVec4(0.22f, 0.27f, 0.38f, 0.90f);
-    colors[ImGuiCol_TitleBg]              = ImVec4(0.06f, 0.07f, 0.10f, alpha);
-    colors[ImGuiCol_TitleBgActive]        = ImVec4(0.10f, 0.12f, 0.16f, alpha);
-    colors[ImGuiCol_TitleBgCollapsed]     = ImVec4(0.06f, 0.07f, 0.10f, 0.50f);
-    colors[ImGuiCol_MenuBarBg]            = ImVec4(0.10f, 0.12f, 0.16f, alpha);
-    colors[ImGuiCol_ScrollbarBg]          = ImVec4(0.06f, 0.07f, 0.10f, 0.40f);
-    colors[ImGuiCol_ScrollbarGrab]        = ImVec4(0.25f, 0.28f, 0.36f, 0.60f);
-    colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.35f, 0.39f, 0.50f, 0.80f);
-    colors[ImGuiCol_ScrollbarGrabActive]  = ImVec4(0.45f, 0.50f, 0.65f, 1.00f);
-    colors[ImGuiCol_CheckMark]            = ImVec4(0.23f, 0.51f, 0.96f, 1.00f);
-    colors[ImGuiCol_SliderGrab]           = ImVec4(0.23f, 0.51f, 0.96f, 0.80f);
-    colors[ImGuiCol_SliderGrabActive]     = ImVec4(0.30f, 0.58f, 1.00f, 1.00f);
-    colors[ImGuiCol_Button]               = ImVec4(0.15f, 0.18f, 0.24f, 0.80f);
-    colors[ImGuiCol_ButtonHovered]        = ImVec4(0.22f, 0.27f, 0.36f, 0.90f);
-    colors[ImGuiCol_ButtonActive]         = ImVec4(0.28f, 0.34f, 0.46f, 1.00f);
-    colors[ImGuiCol_Header]               = ImVec4(0.18f, 0.22f, 0.30f, 0.70f);
-    colors[ImGuiCol_HeaderHovered]        = ImVec4(0.24f, 0.30f, 0.40f, 0.85f);
-    colors[ImGuiCol_HeaderActive]         = ImVec4(0.30f, 0.37f, 0.50f, 1.00f);
-    colors[ImGuiCol_Separator]            = ImVec4(0.20f, 0.23f, 0.30f, 0.60f);
-    colors[ImGuiCol_SeparatorHovered]     = ImVec4(0.30f, 0.35f, 0.45f, 0.80f);
-    colors[ImGuiCol_SeparatorActive]      = ImVec4(0.40f, 0.47f, 0.60f, 1.00f);
-    colors[ImGuiCol_ResizeGrip]           = ImVec4(0.25f, 0.28f, 0.36f, 0.40f);
-    colors[ImGuiCol_ResizeGripHovered]    = ImVec4(0.35f, 0.40f, 0.52f, 0.70f);
-    colors[ImGuiCol_ResizeGripActive]     = ImVec4(0.45f, 0.52f, 0.68f, 0.90f);
-    colors[ImGuiCol_Tab]                  = ImVec4(0.10f, 0.12f, 0.16f, 0.80f);
-    colors[ImGuiCol_TabHovered]           = ImVec4(0.20f, 0.24f, 0.32f, 0.90f);
-    colors[ImGuiCol_TabActive]            = ImVec4(0.15f, 0.18f, 0.25f, 1.00f);
-    colors[ImGuiCol_TabUnfocused]         = ImVec4(0.08f, 0.09f, 0.12f, 0.70f);
-    colors[ImGuiCol_TabUnfocusedActive]   = ImVec4(0.12f, 0.14f, 0.19f, 0.85f);
-    colors[ImGuiCol_Text]                 = ImVec4(0.92f, 0.93f, 0.95f, 1.00f);
-    colors[ImGuiCol_TextDisabled]         = ImVec4(0.45f, 0.48f, 0.55f, 1.00f);
-    colors[ImGuiCol_TableHeaderBg]        = ImVec4(0.10f, 0.12f, 0.16f, 0.90f);
-    colors[ImGuiCol_TableBorderStrong]    = ImVec4(0.20f, 0.23f, 0.30f, 0.70f);
-    colors[ImGuiCol_TableBorderLight]     = ImVec4(0.15f, 0.17f, 0.22f, 0.50f);
-    colors[ImGuiCol_TableRowBg]           = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
-    colors[ImGuiCol_TableRowBgAlt]        = ImVec4(1.00f, 1.00f, 1.00f, 0.02f);
+    using namespace hub::common::ui::overlay_colors;
+    using hub::common::ui::rgba;
+    colors[ImGuiCol_WindowBg]             = rgba(Background, alpha);
+    colors[ImGuiCol_ChildBg]              = rgba(Black, 0.00f);
+    colors[ImGuiCol_PopupBg]              = rgba(Surface, 0.95f);
+    colors[ImGuiCol_Border]               = rgba(Border, 0.60f);
+    colors[ImGuiCol_BorderShadow]         = rgba(Black, 0.00f);
+    colors[ImGuiCol_FrameBg]              = rgba(SurfaceRaised, 0.70f);
+    colors[ImGuiCol_FrameBgHovered]       = rgba(FrameHovered, 0.80f);
+    colors[ImGuiCol_FrameBgActive]        = rgba(FrameActive, 0.90f);
+    colors[ImGuiCol_TitleBg]              = rgba(SurfaceSunken, alpha);
+    colors[ImGuiCol_TitleBgActive]        = rgba(Surface, alpha);
+    colors[ImGuiCol_TitleBgCollapsed]     = rgba(SurfaceSunken, 0.50f);
+    colors[ImGuiCol_MenuBarBg]            = rgba(Surface, alpha);
+    colors[ImGuiCol_ScrollbarBg]          = rgba(SurfaceSunken, 0.40f);
+    colors[ImGuiCol_ScrollbarGrab]        = rgba(Grip, 0.60f);
+    colors[ImGuiCol_ScrollbarGrabHovered] = rgba(ScrollbarGrabHovered, 0.80f);
+    colors[ImGuiCol_ScrollbarGrabActive]  = rgba(ScrollbarGrabActive, 1.00f);
+    colors[ImGuiCol_CheckMark]            = rgba(Accent, 1.00f);
+    colors[ImGuiCol_SliderGrab]           = rgba(Accent, 0.80f);
+    colors[ImGuiCol_SliderGrabActive]     = rgba(AccentBright, 1.00f);
+    colors[ImGuiCol_Button]               = rgba(Control, 0.80f);
+    colors[ImGuiCol_ButtonHovered]        = rgba(ControlHovered, 0.90f);
+    colors[ImGuiCol_ButtonActive]         = rgba(ControlActive, 1.00f);
+    colors[ImGuiCol_Header]               = rgba(FrameHovered, 0.70f);
+    colors[ImGuiCol_HeaderHovered]        = rgba(HeaderHovered, 0.85f);
+    colors[ImGuiCol_HeaderActive]         = rgba(HeaderActive, 1.00f);
+    colors[ImGuiCol_Separator]            = rgba(Border, 0.60f);
+    colors[ImGuiCol_SeparatorHovered]     = rgba(SeparatorHovered, 0.80f);
+    colors[ImGuiCol_SeparatorActive]      = rgba(SeparatorActive, 1.00f);
+    colors[ImGuiCol_ResizeGrip]           = rgba(Grip, 0.40f);
+    colors[ImGuiCol_ResizeGripHovered]    = rgba(ResizeGripHovered, 0.70f);
+    colors[ImGuiCol_ResizeGripActive]     = rgba(ResizeGripActive, 0.90f);
+    colors[ImGuiCol_Tab]                  = rgba(Surface, 0.80f);
+    colors[ImGuiCol_TabHovered]           = rgba(TabHovered, 0.90f);
+    colors[ImGuiCol_TabActive]            = rgba(TabActive, 1.00f);
+    colors[ImGuiCol_TabUnfocused]         = rgba(Background, 0.70f);
+    colors[ImGuiCol_TabUnfocusedActive]   = rgba(SurfaceRaised, 0.85f);
+    colors[ImGuiCol_Text]                 = rgba(Text, 1.00f);
+    colors[ImGuiCol_TextDisabled]         = rgba(TextDisabled, 1.00f);
+    colors[ImGuiCol_TableHeaderBg]        = rgba(Surface, 0.90f);
+    colors[ImGuiCol_TableBorderStrong]    = rgba(Border, 0.70f);
+    colors[ImGuiCol_TableBorderLight]     = rgba(BorderLight, 0.50f);
+    colors[ImGuiCol_TableRowBg]           = rgba(Black, 0.00f);
+    colors[ImGuiCol_TableRowBgAlt]        = rgba(White, 0.02f);
 }
 
 void OverlayHost::setup_fonts() {

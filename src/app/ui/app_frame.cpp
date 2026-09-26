@@ -44,7 +44,7 @@ void setup_fonts_and_theme(const std::string& windows_dir, float dpi_scale) {
 #endif
 }
 
-void render_app_frame(AppState& app_state) {
+void AppFrame::render(AppState& app_state) {
 #ifdef HAVE_IMGUI
     // Fill entire window client area
     ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
@@ -79,7 +79,7 @@ void render_app_frame(AppState& app_state) {
             render_view_dashboard(app_state);
             break;
         case DesktopView::CombatMeter:
-            render_view_combat(app_state);
+            render_view_combat(app_state, m_combat);
             break;
         case DesktopView::LatencyMitigator:
             render_view_latency(app_state);

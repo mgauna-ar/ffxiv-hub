@@ -14,10 +14,6 @@ namespace hub::app::ui {
 #ifdef HAVE_IMGUI
 namespace {
 
-enum class StatusView { PartyDebuffs = 0, PartyBuffs = 1, EnemyDebuffs = 2 };
-
-StatusView s_view = StatusView::PartyDebuffs;
-
 bool in_view(const meter::StatusUptimeRow& row, StatusView view) {
     switch (view) {
         case StatusView::PartyDebuffs: return !row.on_enemy && row.detrimental;
@@ -82,10 +78,10 @@ std::vector<StatusGroup> group_rows(const meter::EncounterSummary& summary, Stat
 
 /// Sized to its label, like a tab, so all three stay on one line at the
 /// window's minimum width.
-void view_button(const char* label, StatusView view) {
-    const bool active = s_view == view;
+void view_button(StatusesTabState& state, const char* label, StatusView view) {
+    const bool active = state.view == view;
     if (button(label, active ? ButtonKind::Primary : ButtonKind::Secondary, ButtonSize::Fit)) {
-        s_view = view;
+        state.view = view;
     }
 }
 
@@ -138,22 +134,23 @@ void render_group_row(const StatusGroup& group, const SummaryNames& names, Statu
 
 } // namespace
 
-void render_statuses(const meter::EncounterSummary& summary, float height, bool tracking_on) {
+void render_statuses(StatusesTabState& state, const meter::EncounterSummary& summary, float height,
+                     bool tracking_on) {
     const float top = ImGui::GetCursorPosY();
     const char* buffs_label = ICON_SHIELD "  Buffs on party##StatusView1";
     const char* enemies_label = ICON_TARGET "  On enemies##StatusView2";
-    view_button(ICON_WARNING "  Debuffs on party##StatusView0", StatusView::PartyDebuffs);
+    view_button(state, ICON_WARNING "  Debuffs on party##StatusView0", StatusView::PartyDebuffs);
     same_line_if_room(button_width(buffs_label, ButtonSize::Fit));
-    view_button(buffs_label, StatusView::PartyBuffs);
+    view_button(state, buffs_label, StatusView::PartyBuffs);
     same_line_if_room(button_width(enemies_label, ButtonSize::Fit));
-    view_button(enemies_label, StatusView::EnemyDebuffs);
+    view_button(state, enemies_label, StatusView::EnemyDebuffs);
     ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
     const float body_h = std::max(height - (ImGui::GetCursorPosY() - top), ImGui::GetTextLineHeight() * 3.0f);
 
-    const std::vector<StatusGroup> groups = group_rows(summary, s_view);
+    const std::vector<StatusGroup> groups = group_rows(summary, state.view);
     if (groups.empty()) {
-        const char* title = s_view == StatusView::PartyDebuffs ? "No debuffs on the party"
-                          : s_view == StatusView::PartyBuffs   ? "No buffs on the party"
+        const char* title = state.view == StatusView::PartyDebuffs ? "No debuffs on the party"
+                          : state.view == StatusView::PartyBuffs   ? "No buffs on the party"
                                                                : "Nothing on the enemies";
         vitals_empty_state(tracking_on, ICON_SPARKLE, title,
                            "Statuses are tracked while a pull runs, with how long each stayed up.");
@@ -164,7 +161,7 @@ void render_statuses(const meter::EncounterSummary& summary, float height, bool 
     const auto sizing = table_sizing(560.0f, 5, kCombatTableFlags);
     if (!ImGui::BeginTable("##StatusTable", 5, sizing.flags, ImVec2(0.0f, body_h))) return;
     ImGui::TableSetupColumn("Status", sizing.flex_flags(), sizing.flex_width(180.0f, 1.4f));
-    ImGui::TableSetupColumn(s_view == StatusView::EnemyDebuffs ? "Applied by" : "Players",
+    ImGui::TableSetupColumn(state.view == StatusView::EnemyDebuffs ? "Applied by" : "Players",
                             sizing.flex_flags(), sizing.flex_width(110.0f, 0.8f));
     ImGui::TableSetupColumn("Applied", ImGuiTableColumnFlags_WidthFixed, m(70.0f));
     ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthFixed, m(80.0f));
@@ -172,7 +169,7 @@ void render_statuses(const meter::EncounterSummary& summary, float height, bool 
     ImGui::TableSetupScrollFreeze(0, 1);
     combat_table_headers_row();
     for (const StatusGroup& group : groups) {
-        render_group_row(group, names, s_view);
+        render_group_row(group, names, state.view);
     }
     ImGui::EndTable();
 }

@@ -88,6 +88,16 @@ public:
     /// in the desktop app and in tests that don't need game state.
     void set_game_state(const GameStateProvider* provider) noexcept override { m_game_state = provider; }
 
+    /// Non-owning, from the overlay host that draws this overlay.
+    void set_fonts(const OverlayFonts* fonts) noexcept override { m_fonts = fonts; }
+    [[nodiscard]] const OverlayFonts* fonts() const noexcept { return m_fonts; }
+
+    /// The host's font for a scale. Without a host, no font and the whole scale as
+    /// the residual, as the host itself answers before its fonts are loaded.
+    [[nodiscard]] ScaledFont font_for_scale(float scale, bool bold_base) const noexcept {
+        return m_fonts != nullptr ? m_fonts->font_for_scale(scale, bold_base) : ScaledFont{nullptr, scale};
+    }
+
     void apply_config(const OverlayConfig& cfg) noexcept {
         m_visible.store(cfg.visible);
         m_locked.store(cfg.locked);
@@ -173,6 +183,7 @@ protected:
     std::atomic<bool> m_needs_geometry_restore{true};
 
     const GameStateProvider* m_game_state{nullptr};
+    const OverlayFonts* m_fonts{nullptr};
 
 private:
     mutable std::mutex m_geometry_mutex;

@@ -156,6 +156,42 @@ TEST_CASE(Payload, OverlayHostRegistrationAndManagement) {
     TEST_ASSERT(host.find_overlay("##CombatMeterOverlay") == meter_overlay);
 }
 
+/// Answers every scale with a fixed residual, so a test can tell it was asked.
+struct FixedFonts : OverlayFonts {
+    ScaledFont font_for_scale(float scale, bool bold_base) const noexcept override {
+        last_scale = scale;
+        last_bold = bold_base;
+        return ScaledFont{nullptr, 42.0f};
+    }
+    mutable float last_scale{0.0f};
+    mutable bool last_bold{false};
+};
+
+TEST_CASE(Payload, OverlayAsksTheFontsItWasLent) {
+    mitigator::LatencyOverlay overlay;
+    // No host: no font, and the whole scale left for the window to apply.
+    TEST_ASSERT(overlay.font_for_scale(1.5f, true).font == nullptr);
+    TEST_ASSERT_NEAR(overlay.font_for_scale(1.5f, true).residual, 1.5f, 0.0001f);
+
+    FixedFonts fonts;
+    overlay.set_fonts(&fonts);
+    TEST_ASSERT_NEAR(overlay.font_for_scale(1.25f, true).residual, 42.0f, 0.0001f);
+    TEST_ASSERT_NEAR(fonts.last_scale, 1.25f, 0.0001f);
+    TEST_ASSERT_TRUE(fonts.last_bold);
+}
+
+TEST_CASE(Payload, OverlayHostLendsItsFontsWhileRegistered) {
+    auto& host = payload::OverlayHost::instance();
+    auto hud = std::make_shared<mitigator::LatencyOverlay>();
+    TEST_ASSERT(hud->fonts() == nullptr);
+
+    host.register_overlay(hud);
+    TEST_ASSERT(hud->fonts() == &host);
+
+    host.unregister_overlay(hud->overlay_id());
+    TEST_ASSERT(hud->fonts() == nullptr);
+}
+
 static int s_mock_counter = 0;
 
 struct MockLatencyConsumer : public IHookConsumer {

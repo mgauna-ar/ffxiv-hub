@@ -6,6 +6,8 @@
 #include <string_view>
 #include <vector>
 
+struct ImFont;
+
 namespace hub {
 namespace config {
     class JsonValue;
@@ -32,6 +34,24 @@ public:
     virtual void update(double delta_seconds) = 0;
 };
 
+/// A rasterized font and the leftover factor that brings it to the size asked for.
+struct ScaledFont {
+    ImFont* font{nullptr};   ///< Push this, or nothing when null.
+    float residual{1.0f};    ///< Pass to ImGui::SetWindowFontScale.
+};
+
+/// The fonts the overlay host rasterized, lent to the overlays it draws. Overlays
+/// share one ImGui context, so a scale stays per window rather than going through
+/// io.FontGlobalScale.
+class OverlayFonts {
+public:
+    virtual ~OverlayFonts() = default;
+
+    /// The largest rasterized font that fits `scale`, bold or regular at the base
+    /// size, plus the residual factor to reach the requested size exactly.
+    [[nodiscard]] virtual ScaledFont font_for_scale(float scale, bool bold_base) const noexcept = 0;
+};
+
 /// Interface for plugins that provide an independent in-game floating overlay window
 class IOverlay {
 public:
@@ -56,6 +76,10 @@ public:
     /// Supplies the game state that visibility conditions are evaluated against.
     /// Non-owning, and only the in-game payload has one.
     virtual void set_game_state(const GameStateProvider* /*provider*/) noexcept {}
+
+    /// Supplies the fonts to draw with. Non-owning: the overlay host keeps them,
+    /// and clears this when the overlay is unregistered.
+    virtual void set_fonts(const OverlayFonts* /*fonts*/) noexcept {}
 
     /// Query current screen geometry (x, y, width, height)
     virtual Rect get_geometry() const noexcept = 0;

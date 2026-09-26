@@ -1,4 +1,5 @@
 #include "app/app_state.hpp"
+#include "app/connection_notifier.hpp"
 #include "app/ui/app_frame.hpp"
 #include "app/ui/theme.hpp"
 #include "common/os/logger.hpp"
@@ -6,11 +7,14 @@
 #include "common/os/process_finder.hpp"
 #include "common/os/single_instance.hpp"
 #include "common/os/tray_manager.hpp"
+#include "common/os/unique_handle.hpp"
 #include "common/config/config_manager.hpp"
 #include "hub/version.hpp"
 #include <algorithm>
+#include <chrono>
 #include <iostream>
 #include <string>
+#include <thread>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -20,6 +24,7 @@
 #include <d3d11.h>
 #include <dxgi.h>
 #include <dwmapi.h>
+#include <wrl/client.h>
 
 #include "common/ui/imgui_guard.hpp"
 #ifdef HAVE_IMGUI
@@ -30,40 +35,69 @@
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 namespace {
-ID3D11Device* g_pd3dDevice = nullptr;
-ID3D11DeviceContext* g_pd3dDeviceContext = nullptr;
-IDXGISwapChain* g_pSwapChain = nullptr;
-ID3D11RenderTargetView* g_mainRenderTargetView = nullptr;
-bool g_window_minimized = false;
+
+using Microsoft::WRL::ComPtr;
+
+constexpr const wchar_t* kWindowClassName = L"FFXIVHubDesktopWindow";
+constexpr DWORD kWindowStyle = WS_OVERLAPPEDWINDOW;
+constexpr DWORD kWindowExStyle = WS_EX_APPWINDOW;
+
+/// Owns a window, destroyed with DestroyWindow. The window's GWLP_USERDATA is
+/// cleared first, since whatever it points to may already be half torn down.
+struct WindowTraits {
+    using pointer = HWND;
+    static pointer empty() noexcept { return nullptr; }
+    static bool is_valid(pointer hwnd) noexcept { return hwnd != nullptr; }
+    static void close(pointer hwnd) noexcept {
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+        DestroyWindow(hwnd);
+    }
+};
+using UniqueWindow = hub::os::BasicUniqueHandle<WindowTraits>;
+
+/// The desktop window and the device that draws into it. MainWndProc reaches it
+/// through GWLP_USERDATA. Members are released in reverse order: the render
+/// target, swap chain, context and device, then the window.
+struct MainWindow {
+    UniqueWindow hwnd;
+    /// DPI scale of the window, for WM_GETMINMAXINFO, which fires before the
+    /// render loop has a chance to consult the theme.
+    float dpi_scale{1.0f};
+    bool minimized{false};
+    bool running{true};
+
+    ComPtr<ID3D11Device> device;
+    ComPtr<ID3D11DeviceContext> context;
+    ComPtr<IDXGISwapChain> swap_chain;
+    ComPtr<ID3D11RenderTargetView> render_target;
+};
+
+MainWindow* window_of(HWND hwnd) {
+    return reinterpret_cast<MainWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+}
 
 /// Read per close rather than cached: the setting can be toggled while running,
 /// and closing is rare enough that the lookup cost does not matter.
 bool close_to_tray_enabled() {
     return hub::config::ConfigManager::instance().get("hub", "minimize_to_tray", true);
 }
-bool g_running = true;
 
-/// DPI scale of the main window, cached for WM_GETMINMAXINFO, which fires before
-/// the render loop has a chance to consult the theme.
-float g_dpi_scale = 1.0f;
-
-void CreateRenderTarget() {
-    ID3D11Texture2D* pBackBuffer = nullptr;
-    g_pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer));
-    if (pBackBuffer) {
-        g_pd3dDevice->CreateRenderTargetView(pBackBuffer, nullptr, &g_mainRenderTargetView);
-        pBackBuffer->Release();
+void create_render_target(MainWindow& window) {
+    ComPtr<ID3D11Texture2D> back_buffer;
+    window.swap_chain->GetBuffer(0, IID_PPV_ARGS(back_buffer.ReleaseAndGetAddressOf()));
+    if (back_buffer) {
+        window.device->CreateRenderTargetView(back_buffer.Get(), nullptr,
+                                              window.render_target.ReleaseAndGetAddressOf());
     }
 }
 
-void CleanupRenderTarget() {
-    if (g_mainRenderTargetView) {
-        g_mainRenderTargetView->Release();
-        g_mainRenderTargetView = nullptr;
-    }
+void resize_buffers(MainWindow& window, UINT width, UINT height) {
+    window.render_target.Reset();
+    window.swap_chain->ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, 0);
+    create_render_target(window);
 }
 
-bool CreateDeviceD3D(HWND hWnd) {
+bool create_device(MainWindow& window) {
     DXGI_SWAP_CHAIN_DESC sd{};
     sd.BufferCount = 2;
     sd.BufferDesc.Width = 0;
@@ -73,45 +107,26 @@ bool CreateDeviceD3D(HWND hWnd) {
     sd.BufferDesc.RefreshRate.Denominator = 1;
     sd.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
     sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    sd.OutputWindow = hWnd;
+    sd.OutputWindow = window.hwnd.get();
     sd.SampleDesc.Count = 1;
     sd.SampleDesc.Quality = 0;
     sd.Windowed = TRUE;
     sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
 
-    UINT createDeviceFlags = 0;
-    D3D_FEATURE_LEVEL featureLevel;
-    const D3D_FEATURE_LEVEL featureLevelArray[2] = {
+    D3D_FEATURE_LEVEL feature_level;
+    const D3D_FEATURE_LEVEL feature_levels[2] = {
         D3D_FEATURE_LEVEL_11_0,
         D3D_FEATURE_LEVEL_10_0,
     };
 
-    HRESULT hr = D3D11CreateDeviceAndSwapChain(
-        nullptr,
-        D3D_DRIVER_TYPE_HARDWARE,
-        nullptr,
-        createDeviceFlags,
-        featureLevelArray,
-        2,
-        D3D11_SDK_VERSION,
-        &sd,
-        &g_pSwapChain,
-        &g_pd3dDevice,
-        &featureLevel,
-        &g_pd3dDeviceContext
-    );
-
+    const HRESULT hr = D3D11CreateDeviceAndSwapChain(
+        nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, feature_levels, 2, D3D11_SDK_VERSION, &sd,
+        window.swap_chain.ReleaseAndGetAddressOf(), window.device.ReleaseAndGetAddressOf(), &feature_level,
+        window.context.ReleaseAndGetAddressOf());
     if (hr != S_OK) return false;
 
-    CreateRenderTarget();
+    create_render_target(window);
     return true;
-}
-
-void CleanupDeviceD3D() {
-    CleanupRenderTarget();
-    if (g_pSwapChain) { g_pSwapChain->Release(); g_pSwapChain = nullptr; }
-    if (g_pd3dDeviceContext) { g_pd3dDeviceContext->Release(); g_pd3dDeviceContext = nullptr; }
-    if (g_pd3dDevice) { g_pd3dDevice->Release(); g_pd3dDevice = nullptr; }
 }
 
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
@@ -137,38 +152,44 @@ void EnableDarkModeForNativeMenus() {
 }
 
 LRESULT WINAPI MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    if (msg == WM_NCCREATE) {
+        const auto* create = reinterpret_cast<const CREATESTRUCTW*>(lParam);
+        SetWindowLongPtrW(hWnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(create->lpCreateParams));
+    }
+
 #ifdef HAVE_IMGUI
     if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam)) {
         return true;
     }
 #endif
 
+    // Null for the messages CreateWindowExW sends before WM_NCCREATE.
+    MainWindow* window = window_of(hWnd);
     switch (msg) {
         case WM_GETMINMAXINFO: {
             // The layout reflows down to this size and no further, so the window
             // cannot be dragged to a width where cards and tables have nowhere to go.
+            const float dpi_scale = window != nullptr ? window->dpi_scale : 1.0f;
             auto* mmi = reinterpret_cast<MINMAXINFO*>(lParam);
             RECT frame{ 0, 0,
-                        static_cast<LONG>(hub::app::ui::metrics::WindowMinW * g_dpi_scale),
-                        static_cast<LONG>(hub::app::ui::metrics::WindowMinH * g_dpi_scale) };
+                        static_cast<LONG>(hub::app::ui::metrics::WindowMinW * dpi_scale),
+                        static_cast<LONG>(hub::app::ui::metrics::WindowMinH * dpi_scale) };
             // The frame at the window's own DPI, not the system's.
-            AdjustWindowRectExForDpi(&frame, WS_OVERLAPPEDWINDOW, FALSE, WS_EX_APPWINDOW,
-                                     GetDpiForWindow(hWnd));
+            AdjustWindowRectExForDpi(&frame, kWindowStyle, FALSE, kWindowExStyle, GetDpiForWindow(hWnd));
             mmi->ptMinTrackSize.x = frame.right - frame.left;
             mmi->ptMinTrackSize.y = frame.bottom - frame.top;
             return 0;
         }
         case WM_SIZE:
+            if (window == nullptr) return 0;
             if (wParam == SIZE_MINIMIZED) {
-                g_window_minimized = true;
+                window->minimized = true;
                 ShowWindow(hWnd, SW_HIDE);
                 return 0;
             }
-            g_window_minimized = false;
-            if (g_pd3dDevice != nullptr && wParam != SIZE_MINIMIZED) {
-                CleanupRenderTarget();
-                g_pSwapChain->ResizeBuffers(0, (UINT)LOWORD(lParam), (UINT)HIWORD(lParam), DXGI_FORMAT_UNKNOWN, 0);
-                CreateRenderTarget();
+            window->minimized = false;
+            if (window->device) {
+                resize_buffers(*window, (UINT)LOWORD(lParam), (UINT)HIWORD(lParam));
             }
             return 0;
         case WM_SYSCOMMAND:
@@ -179,7 +200,7 @@ LRESULT WINAPI MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_CLOSE:
             if (close_to_tray_enabled()) {
                 ShowWindow(hWnd, SW_HIDE);
-                g_window_minimized = true;
+                if (window != nullptr) window->minimized = true;
                 return 0;
             }
             PostQuitMessage(0);
@@ -191,135 +212,126 @@ LRESULT WINAPI MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     return DefWindowProcW(hWnd, msg, wParam, lParam);
 }
 
-} // namespace
-#endif
+/// The application icon (resource 101) at the large and small sizes.
+struct WindowIcons {
+    HICON large_icon{nullptr};
+    HICON small_icon{nullptr};
+};
 
-#ifdef _WIN32
-int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
-    hub::os::Logger::init();
-    hub::os::Logger::info("Starting FFXIV Hub Desktop Manager v" HUB_VERSION_STRING "...");
-
-    // Best-effort: opt this process into dark-themed native menus/controls before any window
-    // or menu is created.
-    EnableDarkModeForNativeMenus();
-
-    // Enable SeDebugPrivilege and SeSecurityPrivilege for game process attachment
-    if (hub::os::ProcessFinder::enable_debug_privilege()) {
-        hub::os::Logger::info("SeDebugPrivilege acquired successfully.");
-    } else {
-        hub::os::Logger::warn("Could not acquire SeDebugPrivilege. If FFXIV is running as Administrator, please run FFXIV Hub as Administrator.");
-    }
-
-    hub::os::SingleInstance single_instance("Local\\FFXIVHubSingleInstanceMutex");
-    if (!single_instance.try_acquire()) {
-        hub::os::Logger::info("Another instance is already running. Waking up existing instance and exiting.");
-        single_instance.notify_existing_instance();
-        return 0;
-    }
-
-    hub::app::AppState app_state;
-    if (!app_state.initialize()) {
-        hub::os::Logger::error("Failed to initialize AppState.");
-        return 1;
-    }
-
-    hub::os::TrayManager tray_manager;
-    tray_manager.initialize(single_instance.activation_message_id());
-
-    // Register Desktop Window Class with application icon (ID 101)
-    HICON hIcon = LoadIconW(hInstance, MAKEINTRESOURCEW(101));
-    HICON hIconSm = static_cast<HICON>(LoadImageW(
-        hInstance,
+WindowIcons load_icons(HINSTANCE instance) {
+    WindowIcons icons;
+    icons.large_icon = LoadIconW(instance, MAKEINTRESOURCEW(101));
+    icons.small_icon = static_cast<HICON>(LoadImageW(
+        instance,
         MAKEINTRESOURCEW(101),
         IMAGE_ICON,
         GetSystemMetrics(SM_CXSMICON),
         GetSystemMetrics(SM_CYSMICON),
         LR_DEFAULTCOLOR
     ));
-    if (!hIconSm) {
-        hIconSm = hIcon;
+    if (!icons.small_icon) {
+        icons.small_icon = icons.large_icon;
     }
-    if (!hIcon) {
-        hIcon = LoadIconW(nullptr, IDI_APPLICATION);
-        hIconSm = hIcon;
+    if (!icons.large_icon) {
+        icons.large_icon = LoadIconW(nullptr, IDI_APPLICATION);
+        icons.small_icon = icons.large_icon;
     }
+    return icons;
+}
 
-    WNDCLASSEXW wc{};
-    wc.cbSize = sizeof(WNDCLASSEXW);
-    wc.style = CS_CLASSDC;
-    wc.lpfnWndProc = MainWndProc;
-    wc.hInstance = hInstance;
-    wc.lpszClassName = L"FFXIVHubDesktopWindow";
-    wc.hIcon = hIcon;
-    wc.hIconSm = hIconSm;
-    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    RegisterClassExW(&wc);
+/// The desktop window's class, registered for this object's lifetime.
+class WindowClass {
+public:
+    WindowClass(HINSTANCE instance, const WindowIcons& icons) : m_instance(instance) {
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof(WNDCLASSEXW);
+        wc.style = CS_CLASSDC;
+        wc.lpfnWndProc = MainWndProc;
+        wc.hInstance = instance;
+        wc.lpszClassName = kWindowClassName;
+        wc.hIcon = icons.large_icon;
+        wc.hIconSm = icons.small_icon;
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        m_registered = RegisterClassExW(&wc) != 0;
+    }
+    ~WindowClass() {
+        if (m_registered) UnregisterClassW(kWindowClassName, m_instance);
+    }
+    WindowClass(const WindowClass&) = delete;
+    WindowClass& operator=(const WindowClass&) = delete;
 
-    HWND hwnd = CreateWindowExW(
-        WS_EX_APPWINDOW,
-        L"FFXIVHubDesktopWindow",
+    [[nodiscard]] explicit operator bool() const noexcept { return m_registered; }
+
+private:
+    HINSTANCE m_instance;
+    bool m_registered{false};
+};
+
+bool create_main_window(HINSTANCE instance, MainWindow& window) {
+    window.hwnd.reset(CreateWindowExW(
+        kWindowExStyle,
+        kWindowClassName,
         L"FFXIV Hub",
-        WS_OVERLAPPEDWINDOW,
-        // Placeholder until the DPI is known: resized and centred below before the
-        // first show.
+        kWindowStyle,
+        // Placeholder until the DPI is known: size_for_dpi() resizes and centres
+        // it before the first show.
         CW_USEDEFAULT, CW_USEDEFAULT,
         static_cast<int>(hub::app::ui::metrics::WindowDefaultW),
         static_cast<int>(hub::app::ui::metrics::WindowDefaultH),
-        nullptr, nullptr, hInstance, nullptr
-    );
+        nullptr, nullptr, instance, &window
+    ));
+    return static_cast<bool>(window.hwnd);
+}
 
-    if (!hwnd || !CreateDeviceD3D(hwnd)) {
-        CleanupDeviceD3D();
-        UnregisterClassW(L"FFXIVHubDesktopWindow", hInstance);
-        return 1;
+/// Reads the window's actual monitor DPI (the manifest opts into Per-Monitor V2
+/// awareness) so the font and layout constants can be sized to match, instead of
+/// rendering at a fixed 96-DPI pixel size on today's scaled displays.
+///
+/// CreateWindowExW sizes in physical pixels, so its size is only right at 100%;
+/// at 150% the window opened below the layout's own minimum. Re-applied here in
+/// scaled units before the first show, clamped to the work area and centred.
+void size_for_dpi(MainWindow& window) {
+    const HWND hwnd = window.hwnd.get();
+    window.dpi_scale = static_cast<float>(GetDpiForWindow(hwnd)) / 96.0f;
+
+    RECT frame{ 0, 0,
+                static_cast<LONG>(hub::app::ui::metrics::WindowDefaultW * window.dpi_scale),
+                static_cast<LONG>(hub::app::ui::metrics::WindowDefaultH * window.dpi_scale) };
+    AdjustWindowRectExForDpi(&frame, kWindowStyle, FALSE, kWindowExStyle, GetDpiForWindow(hwnd));
+    MONITORINFO monitor{};
+    monitor.cbSize = sizeof(monitor);
+    if (GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &monitor)) {
+        const RECT& work = monitor.rcWork;
+        const LONG width = std::min(frame.right - frame.left, work.right - work.left);
+        const LONG height = std::min(frame.bottom - frame.top, work.bottom - work.top);
+        SetWindowPos(hwnd, nullptr,
+                     work.left + (work.right - work.left - width) / 2,
+                     work.top + (work.bottom - work.top - height) / 2,
+                     width, height, SWP_NOZORDER | SWP_NOACTIVATE);
     }
+}
 
-    // Read the window's actual monitor DPI (the manifest opts into Per-Monitor V2 awareness)
-    // so the font and hardcoded layout constants can be sized to match, instead of rendering
-    // at a fixed 96-DPI pixel size on today's scaled displays.
-    const float dpi_scale = static_cast<float>(GetDpiForWindow(hwnd)) / 96.0f;
-    g_dpi_scale = dpi_scale;
-
-    // CreateWindowExW sizes in physical pixels, so its size is only right at 100%;
-    // at 150% the window opened below the layout's own minimum. Re-applied here in
-    // scaled units before the first show, clamped to the work area and centred.
-    {
-        RECT frame{ 0, 0,
-                    static_cast<LONG>(hub::app::ui::metrics::WindowDefaultW * dpi_scale),
-                    static_cast<LONG>(hub::app::ui::metrics::WindowDefaultH * dpi_scale) };
-        AdjustWindowRectExForDpi(&frame, WS_OVERLAPPEDWINDOW, FALSE, WS_EX_APPWINDOW,
-                                 GetDpiForWindow(hwnd));
-        MONITORINFO monitor{};
-        monitor.cbSize = sizeof(monitor);
-        if (GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &monitor)) {
-            const RECT& work = monitor.rcWork;
-            const LONG width = std::min(frame.right - frame.left, work.right - work.left);
-            const LONG height = std::min(frame.bottom - frame.top, work.bottom - work.top);
-            SetWindowPos(hwnd, nullptr,
-                         work.left + (work.right - work.left - width) / 2,
-                         work.top + (work.bottom - work.top - height) / 2,
-                         width, height, SWP_NOZORDER | SWP_NOACTIVATE);
-        }
-    }
-
-    // Best-effort: make the native titlebar match the app's dark theme instead of the default
-    // light chrome. No-ops silently on pre-1809 Windows.
+/// The dark native title bar (a no-op before Windows 10 1809) and the icons.
+void apply_window_chrome(const MainWindow& window, const WindowIcons& icons) {
+    const HWND hwnd = window.hwnd.get();
     BOOL use_dark_titlebar = TRUE;
     DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &use_dark_titlebar, sizeof(use_dark_titlebar));
 
-    SendMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(hIcon));
-    SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(hIconSm));
+    SendMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(icons.large_icon));
+    SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(icons.small_icon));
+}
 
-    // Configure Tray Callbacks
-    tray_manager.set_on_show_window([hwnd]() {
-        ShowWindow(hwnd, SW_RESTORE);
-        SetForegroundWindow(hwnd);
-        g_window_minimized = false;
+/// The tray menu's actions. Exit only ends the loop; the window is destroyed with
+/// the rest of the teardown.
+void wire_tray(hub::os::TrayManager& tray_manager, MainWindow& window) {
+    tray_manager.set_on_show_window([&window]() {
+        ShowWindow(window.hwnd.get(), SW_RESTORE);
+        SetForegroundWindow(window.hwnd.get());
+        window.minimized = false;
     });
 
-    tray_manager.set_on_exit([hwnd]() {
-        g_running = false;
-        DestroyWindow(hwnd);
+    tray_manager.set_on_exit([&window]() {
+        window.running = false;
     });
 
     tray_manager.set_auto_start(hub::os::AutoStart::is_enabled());
@@ -349,95 +361,157 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
 
     tray_manager.set_notifications_enabled(
         hub::config::ConfigManager::instance().get("hub", "show_notifications", true));
+}
 
+/// The ImGui context and its Win32 and DX11 backends, for this object's lifetime.
+class ImGuiSession {
+public:
+    explicit ImGuiSession(const MainWindow& window) {
 #ifdef HAVE_IMGUI
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO();
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-    io.IniFilename = nullptr; // Window layout managed independently via JSON config (ConfigManager), not imgui.ini
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
+        ImGuiIO& io = ImGui::GetIO();
+        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+        io.IniFilename = nullptr; // Window layout managed independently via JSON config (ConfigManager), not imgui.ini
 
-    char windows_dir[MAX_PATH]{};
-    GetWindowsDirectoryA(windows_dir, MAX_PATH);
-    hub::app::ui::setup_fonts_and_theme(windows_dir, dpi_scale);
+        char windows_dir[MAX_PATH]{};
+        GetWindowsDirectoryA(windows_dir, MAX_PATH);
+        hub::app::ui::setup_fonts_and_theme(windows_dir, window.dpi_scale);
 
-    ImGui_ImplWin32_Init(hwnd);
-    ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
+        ImGui_ImplWin32_Init(window.hwnd.get());
+        ImGui_ImplDX11_Init(window.device.Get(), window.context.Get());
+#else
+        (void)window;
 #endif
+    }
+    ~ImGuiSession() {
+#ifdef HAVE_IMGUI
+        ImGui_ImplDX11_Shutdown();
+        ImGui_ImplWin32_Shutdown();
+        ImGui::DestroyContext();
+#endif
+    }
+    ImGuiSession(const ImGuiSession&) = delete;
+    ImGuiSession& operator=(const ImGuiSession&) = delete;
+};
 
-    ShowWindow(hwnd, SW_SHOWDEFAULT);
-    UpdateWindow(hwnd);
+void render_frame(MainWindow& window, hub::app::AppState& app_state, hub::app::ui::AppFrame& frame) {
+#ifdef HAVE_IMGUI
+    ImGui_ImplDX11_NewFrame();
+    ImGui_ImplWin32_NewFrame();
+    ImGui::NewFrame();
 
-    auto s_last_state = hub::app::ConnectionState::WaitingForGame;
-    bool s_was_access_denied = false;
+    frame.render(app_state);
+
+    ImGui::Render();
+    const ImVec4 canvas = ImGui::ColorConvertU32ToFloat4(hub::app::ui::colors::Canvas);
+    const float clear_color[4] = { canvas.x, canvas.y, canvas.z, 1.0f };
+    ID3D11RenderTargetView* const render_target = window.render_target.Get();
+    window.context->OMSetRenderTargets(1, &render_target, nullptr);
+    window.context->ClearRenderTargetView(render_target, clear_color);
+    ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+
+    window.swap_chain->Present(1, 0); // VSync
+#else
+    (void)window;
+    (void)app_state;
+    (void)frame;
+#endif
+}
+
+void run_frame_loop(MainWindow& window, hub::app::AppState& app_state, hub::os::TrayManager& tray_manager) {
+    hub::app::ui::AppFrame frame;
+    hub::app::ConnectionNotifier notifier;
 
     MSG msg{};
-    while (g_running) {
+    while (window.running) {
         while (PeekMessageW(&msg, nullptr, 0U, 0U, PM_REMOVE)) {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
             if (msg.message == WM_QUIT) {
-                g_running = false;
+                window.running = false;
             }
         }
-        if (!g_running) break;
+        if (!window.running) break;
 
         tray_manager.pump_messages();
+        if (!window.running) break;
         app_state.update();
 
-        // Balloons on transition only. The app closes to tray by default, so
-        // without these a failed injection reports nowhere the user is looking.
-        // Driven by the supervisor's state rather than the pipe, which cannot
-        // tell a closed game from an unload or a reconnect.
-        const bool connected_now = app_state.is_connected();
-        const bool denied_now = app_state.is_access_denied();
-        const auto state_now = app_state.connection_state();
-        if (const auto message = hub::app::connection_notification(s_last_state, state_now,
-                                                                   app_state.game_pid())) {
-            tray_manager.show_notification("FFXIV Hub", *message);
+        for (const hub::app::TrayNotice& notice : notifier.update(
+                 app_state.connection_state(), app_state.is_access_denied(), app_state.game_pid())) {
+            tray_manager.show_notification(notice.title, notice.message);
         }
-        s_last_state = state_now;
-        if (denied_now && !s_was_access_denied) {
-            tray_manager.show_notification(
-                "FFXIV Hub - Access Denied",
-                "Injection was refused. Run FFXIV Hub as administrator.");
-        }
-        s_was_access_denied = denied_now;
+        tray_manager.set_game_connected(app_state.is_connected(), app_state.game_pid());
 
-        tray_manager.set_game_connected(connected_now, app_state.game_pid());
-
-        if (g_window_minimized) {
+        if (window.minimized) {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             continue;
         }
+        render_frame(window, app_state, frame);
+    }
+}
 
-#ifdef HAVE_IMGUI
-        ImGui_ImplDX11_NewFrame();
-        ImGui_ImplWin32_NewFrame();
-        ImGui::NewFrame();
+/// Opens the desktop window and runs it until the app exits. Everything it opens
+/// is released on return, in reverse: ImGui, the device, the window, its class.
+int run_desktop_window(HINSTANCE instance, hub::app::AppState& app_state, hub::os::TrayManager& tray_manager) {
+    const WindowIcons icons = load_icons(instance);
+    const WindowClass window_class(instance, icons);
+    MainWindow window;
+    if (!window_class || !create_main_window(instance, window) || !create_device(window)) {
+        return 1;
+    }
+    size_for_dpi(window);
+    apply_window_chrome(window, icons);
+    wire_tray(tray_manager, window);
 
-        hub::app::ui::render_app_frame(app_state);
+    const ImGuiSession imgui(window);
+    ShowWindow(window.hwnd.get(), SW_SHOWDEFAULT);
+    UpdateWindow(window.hwnd.get());
 
-        ImGui::Render();
-        const ImVec4 canvas = ImGui::ColorConvertU32ToFloat4(hub::app::ui::colors::Canvas);
-        const float clear_color[4] = { canvas.x, canvas.y, canvas.z, 1.0f };
-        g_pd3dDeviceContext->OMSetRenderTargets(1, &g_mainRenderTargetView, nullptr);
-        g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, clear_color);
-        ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+    run_frame_loop(window, app_state, tray_manager);
+    // The window goes with this scope; the tray outlives it.
+    tray_manager.set_on_show_window({});
+    tray_manager.set_on_exit({});
+    return 0;
+}
 
-        g_pSwapChain->Present(1, 0); // VSync
-#endif
+} // namespace
+
+int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
+    hub::os::Logger::init();
+    hub::os::Logger::info("Starting FFXIV Hub Desktop Manager v" HUB_VERSION_STRING "...");
+
+    // Best-effort: opt this process into dark-themed native menus/controls before any window
+    // or menu is created.
+    EnableDarkModeForNativeMenus();
+
+    // SeDebugPrivilege, to attach to a game running as Administrator.
+    if (hub::os::ProcessFinder::enable_debug_privilege()) {
+        hub::os::Logger::info("SeDebugPrivilege acquired successfully.");
+    } else {
+        hub::os::Logger::warn("Could not acquire SeDebugPrivilege. If FFXIV is running as Administrator, please run FFXIV Hub as Administrator.");
     }
 
-#ifdef HAVE_IMGUI
-    ImGui_ImplDX11_Shutdown();
-    ImGui_ImplWin32_Shutdown();
-    ImGui::DestroyContext();
-#endif
+    hub::os::SingleInstance single_instance("Local\\FFXIVHubSingleInstanceMutex");
+    if (!single_instance.try_acquire()) {
+        hub::os::Logger::info("Another instance is already running. Waking up existing instance and exiting.");
+        single_instance.notify_existing_instance();
+        return 0;
+    }
 
-    CleanupDeviceD3D();
-    DestroyWindow(hwnd);
-    UnregisterClassW(L"FFXIVHubDesktopWindow", hInstance);
+    hub::app::AppState app_state;
+    if (!app_state.initialize()) {
+        hub::os::Logger::error("Failed to initialize AppState.");
+        return 1;
+    }
+
+    hub::os::TrayManager tray_manager;
+    tray_manager.initialize(single_instance.activation_message_id());
+
+    if (const int code = run_desktop_window(hInstance, app_state, tray_manager); code != 0) {
+        return code;
+    }
 
     tray_manager.shutdown();
     app_state.shutdown();

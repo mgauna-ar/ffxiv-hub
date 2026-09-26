@@ -395,7 +395,8 @@ The desktop tables have no settings here: the Damage tab picks its own rate abov
 table.
 
 Job colours are per-job, not per-role, and live in `src/common/ui/job_style.cpp` as the
-single source of truth.
+single source of truth. The in-game meter's other colours come from
+`src/common/ui/overlay_palette.hpp`, shared with the ping HUD.
 
 ---
 

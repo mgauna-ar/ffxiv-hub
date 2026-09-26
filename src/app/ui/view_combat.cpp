@@ -31,20 +31,8 @@ namespace {
 
 constexpr const char* METER = plugins::COMBAT_METER.config_section;
 
-/// Keyed on encounter_id, not on a position in the archive: the history deque
-/// evicts from the front at capacity, so an index stops meaning the same pull.
-/// 0 = live encounter.
-uint64_t s_selected_pull_id = 0;
-uint32_t s_selected_drilldown_entity = 0;
-
-/// A full EncounterSummary carries every combatant's per-action breakdown, so
-/// refetching one per frame means hundreds of map and string allocations under
-/// the combat mutex. Snapshot on a timer instead, like the in-game overlay does.
+/// How often the live summary is snapshotted (see CombatViewState).
 constexpr long long kSnapshotIntervalMs = 250;
-meter::EncounterSummary s_live_summary;
-meter::EncounterSummary s_selected_pull;
-uint64_t s_cached_pull_id = 0;
-std::chrono::steady_clock::time_point s_last_snapshot{};
 
 /// Position of a pull in the archive listing, or nothing if it has been evicted.
 std::optional<size_t> find_pull_index(const std::vector<meter::PullHistoryEntry>& pull_history,
@@ -208,7 +196,7 @@ std::string visit_tooltip(const meter::PullGroup& group,
 }
 
 /// Clearing drops every archived pull, so it asks first.
-void render_clear_history_popup(AppState& app_state, size_t pull_count) {
+void render_clear_history_popup(CombatViewState& state, AppState& app_state, size_t pull_count) {
     if (!ImGui::BeginPopupModal("##ConfirmClearPulls", nullptr,
                                 ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
         return;
@@ -228,7 +216,7 @@ void render_clear_history_popup(AppState& app_state, size_t pull_count) {
 
     if (button(ICON_TRASH "  Clear history", ButtonKind::Danger, ButtonSize::Medium)) {
         app_state.clear_pull_history();
-        s_selected_pull_id = 0;
+        state.selected_pull_id = 0;
         ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine(0.0f, m(8.0f));
@@ -257,16 +245,16 @@ void render_history_header(bool has_pulls) {
 
 /// The one place a pull is chosen: live at the top, then the archive grouped by
 /// zone visit. The tables beside it always show whatever is selected here.
-void render_pull_rail(AppState& app_state, const std::vector<meter::PullHistoryEntry>& pull_history,
-                      bool is_live, float width) {
+void render_pull_rail(CombatViewState& state, AppState& app_state,
+                      const std::vector<meter::PullHistoryEntry>& pull_history, bool is_live, float width) {
     CardOptions opts{};
     begin_card("##PullRail", ImVec2(width, fill_h(0.0f)), opts);
 
-    const bool live_active = s_live_summary.state == meter::EncounterState::InCombat;
+    const bool live_active = state.live_summary.state == meter::EncounterState::InCombat;
     const Badge live_badge = live_active ? Badge{"Active", colors::SuccessLight}
                                          : Badge{"Idle", colors::TextDim};
     if (rail_row("Live##LivePull", is_live, live_badge)) {
-        s_selected_pull_id = 0;
+        state.selected_pull_id = 0;
     }
     ImGui::Dummy(ImVec2(0.0f, m(6.0f)));
     render_history_header(!pull_history.empty());
@@ -284,7 +272,7 @@ void render_pull_rail(AppState& app_state, const std::vector<meter::PullHistoryE
         for (const auto& pull : pull_history) max_number = std::max(max_number, pull.pull_number);
         const float number_w = ImGui::CalcTextSize(("#" + std::to_string(max_number)).c_str()).x;
 
-        const auto selected_idx = find_pull_index(pull_history, s_selected_pull_id);
+        const auto selected_idx = find_pull_index(pull_history, state.selected_pull_id);
         const auto groups = meter::group_pulls_by_visit(pull_history);
         for (size_t g = 0; g < groups.size(); ++g) {
             const auto& group = groups[g];
@@ -304,8 +292,8 @@ void render_pull_rail(AppState& app_state, const std::vector<meter::PullHistoryE
             if (open) {
                 for (size_t idx : group.pulls) {
                     const auto& pull = pull_history[idx];
-                    if (pull_row(pull, s_selected_pull_id == pull.encounter_id, number_w)) {
-                        s_selected_pull_id = pull.encounter_id;
+                    if (pull_row(pull, state.selected_pull_id == pull.encounter_id, number_w)) {
+                        state.selected_pull_id = pull.encounter_id;
                     }
                 }
                 ImGui::TreePop();
@@ -315,11 +303,11 @@ void render_pull_rail(AppState& app_state, const std::vector<meter::PullHistoryE
         ImGui::EndChild();
     }
 
-    render_clear_history_popup(app_state, pull_history.size());
+    render_clear_history_popup(state, app_state, pull_history.size());
     end_card();
 }
 
-void render_top_bar(AppState& app_state, const meter::EncounterSummary& summary,
+void render_top_bar(CombatViewState& state, AppState& app_state, const meter::EncounterSummary& summary,
                     const meter::PullHistoryEntry* archived) {
     CardOptions opts{};
     // Auto-height: the stat run and the actions wrap onto further lines on a
@@ -381,9 +369,9 @@ void render_top_bar(AppState& app_state, const meter::EncounterSummary& summary,
     }
 
     const meter::EncounterState outcome_state = archived != nullptr ? archived->state : summary.state;
-    const Badge state = encounter_state_badge(outcome_state, boss);
+    const Badge state_badge = encounter_state_badge(outcome_state, boss);
     const char* reset_label = ICON_RESET "  Reset encounter";
-    const float actions_w = pill_width(state.label) + m(10.0f) +
+    const float actions_w = pill_width(state_badge.label) + m(10.0f) +
                             button_width(reset_label, ButtonSize::Medium);
     if (same_line_if_room(actions_w, metrics::Gutter)) {
         right_align(actions_w);
@@ -392,13 +380,13 @@ void render_top_bar(AppState& app_state, const meter::EncounterSummary& summary,
     // The pill is shorter than the button, so it is centred on it.
     const float actions_y = ImGui::GetCursorPosY();
     ImGui::SetCursorPosY(actions_y + (m(metrics::ButtonH) - pill_height()) * 0.5f);
-    pill(state.label, state.color);
+    pill(state_badge.label, state_badge.color);
     ImGui::SameLine(0.0f, m(10.0f));
     ImGui::SetCursorPosY(actions_y);
     if (button(reset_label, ButtonKind::Danger, ButtonSize::Medium)) {
         app_state.reset_encounter();
-        s_selected_pull_id = 0;
-        s_selected_drilldown_entity = 0;
+        state.selected_pull_id = 0;
+        state.selected_drilldown_entity = 0;
     }
 
     end_card();
@@ -417,11 +405,11 @@ uint32_t combatant_color(const meter::CombatantStats& c) {
 
 /// Name cell shared by the damage and healing tables: a row-spanning selectable
 /// that drives the drilldown panel.
-void combatant_name_cell(const meter::CombatantStats& c, const char* id_prefix) {
+void combatant_name_cell(CombatViewState& state, const meter::CombatantStats& c, const char* id_prefix) {
     const std::string sel_label = c.name + "##" + id_prefix + std::to_string(c.entity_id);
-    const bool selected = (s_selected_drilldown_entity == c.entity_id);
+    const bool selected = (state.selected_drilldown_entity == c.entity_id);
     if (ImGui::Selectable(sel_label.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns)) {
-        s_selected_drilldown_entity = (selected ? 0 : c.entity_id);
+        state.selected_drilldown_entity = (selected ? 0 : c.entity_id);
     }
 }
 
@@ -461,7 +449,7 @@ void render_dps_metric_switch() {
     }
 }
 
-void render_damage_table(const meter::EncounterSummary& summary, float height) {
+void render_damage_table(CombatViewState& state, const meter::EncounterSummary& summary, float height) {
     const float top = ImGui::GetCursorPosY();
     render_dps_metric_switch();
     ImGui::Dummy(ImVec2(0.0f, m(2.0f)));
@@ -518,7 +506,7 @@ void render_damage_table(const meter::EncounterSummary& summary, float height) {
         combatant_job_cell(c);
 
         ImGui::TableSetColumnIndex(2);
-        combatant_name_cell(c, "D");
+        combatant_name_cell(state, c, "D");
 
         ImGui::TableSetColumnIndex(3);
         ImGui::PushFont(bold_font());
@@ -550,7 +538,7 @@ void render_damage_table(const meter::EncounterSummary& summary, float height) {
     ImGui::EndTable();
 }
 
-void render_healing_table(const meter::EncounterSummary& summary, float height) {
+void render_healing_table(CombatViewState& state, const meter::EncounterSummary& summary, float height) {
     std::vector<const meter::CombatantStats*> combatants;
     combatants.reserve(summary.combatants.size());
     for (const auto& c : summary.combatants) combatants.push_back(&c);
@@ -594,7 +582,7 @@ void render_healing_table(const meter::EncounterSummary& summary, float height) 
         combatant_job_cell(c);
 
         ImGui::TableSetColumnIndex(2);
-        combatant_name_cell(c, "H");
+        combatant_name_cell(state, c, "H");
 
         ImGui::TableSetColumnIndex(3);
         ImGui::PushFont(bold_font());
@@ -845,10 +833,10 @@ struct AbilityRow {
     const meter::HitCounts* hits{nullptr};
 };
 
-void render_drilldown(const meter::EncounterSummary& summary, Drilldown kind) {
+void render_drilldown(CombatViewState& state, const meter::EncounterSummary& summary, Drilldown kind) {
     const meter::CombatantStats* selected = nullptr;
     for (const auto& c : summary.combatants) {
-        if (c.entity_id == s_selected_drilldown_entity) {
+        if (c.entity_id == state.selected_drilldown_entity) {
             selected = &c;
             break;
         }
@@ -865,7 +853,7 @@ void render_drilldown(const meter::EncounterSummary& summary, Drilldown kind) {
     begin_section_header(ICON_CROSSHAIR, header, button_width(close_label, ButtonSize::Small),
                          combatant_color(*selected));
     if (button(close_label, ButtonKind::Secondary, ButtonSize::Small)) {
-        s_selected_drilldown_entity = 0;
+        state.selected_drilldown_entity = 0;
     }
     end_section_header();
 
@@ -953,31 +941,31 @@ void render_drilldown(const meter::EncounterSummary& summary, Drilldown kind) {
 
 /// The ranking tabs split their height with the drilldown panel when one is open,
 /// so opening a breakdown never pushes the table off the bottom of the window.
-float ranking_table_height() {
-    return s_selected_drilldown_entity != 0 ? fill_h(0.0f) * 0.55f : fill_h(0.0f);
+float ranking_table_height(const CombatViewState& state) {
+    return state.selected_drilldown_entity != 0 ? fill_h(0.0f) * 0.55f : fill_h(0.0f);
 }
 
 /// Rail on the left, the selected pull's top bar and a tab's body on the right. The
 /// rail narrows on a small window and its rows drop detail to fit. Only the ranking
 /// tabs have the ability drilldown under their table.
 template <typename TableFn>
-void render_pull_view(AppState& app_state, const meter::EncounterSummary& summary,
+void render_pull_view(CombatViewState& state, AppState& app_state, const meter::EncounterSummary& summary,
                       const std::vector<meter::PullHistoryEntry>& pull_history,
                       std::optional<size_t> selected_index, const char* id, TableFn&& table,
                       Drilldown drilldown) {
     const float avail = ImGui::GetContentRegionAvail().x;
     const float rail_w = avail < m(760.0f) ? m(150.0f)
                                            : std::clamp(avail * 0.15f, m(220.0f), m(260.0f));
-    render_pull_rail(app_state, pull_history, !selected_index.has_value(), rail_w);
+    render_pull_rail(state, app_state, pull_history, !selected_index.has_value(), rail_w);
     ImGui::SameLine(0.0f, m(metrics::Gutter));
 
     ImGui::BeginChild(id, ImVec2(0.0f, fill_h(0.0f)), ImGuiChildFlags_None,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
-    render_top_bar(app_state, summary, selected_index ? &pull_history[*selected_index] : nullptr);
+    render_top_bar(state, app_state, summary, selected_index ? &pull_history[*selected_index] : nullptr);
     ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
     if (drilldown != Drilldown::None) {
-        table(summary, ranking_table_height());
-        render_drilldown(summary, drilldown);
+        table(summary, ranking_table_height(state));
+        render_drilldown(state, summary, drilldown);
     } else {
         table(summary, fill_h(0.0f));
     }
@@ -987,7 +975,7 @@ void render_pull_view(AppState& app_state, const meter::EncounterSummary& summar
 } // namespace
 #endif
 
-void render_view_combat(AppState& app_state) {
+void render_view_combat(AppState& app_state, CombatViewState& state) {
 #ifdef HAVE_IMGUI
     render_plugin_header(app_state, PluginId::CombatMeter, ICON_SWORDS, "Combat Meter",
                          "Per-pull damage, healing, deaths, buffs, casts and a timeline");
@@ -999,18 +987,18 @@ void render_view_combat(AppState& app_state) {
 
     // A selected pull that has aged out of the archive falls back to live rather
     // than leaving the tables pointing at whatever took its place.
-    const auto selected_index = find_pull_index(pull_history, s_selected_pull_id);
+    const auto selected_index = find_pull_index(pull_history, state.selected_pull_id);
     const bool is_live = !selected_index.has_value();
 
     // Live is snapshotted on the timer even while an archived pull is open, so
     // the rail's live badge stays current.
     const auto now = std::chrono::steady_clock::now();
-    if (std::chrono::duration_cast<std::chrono::milliseconds>(now - s_last_snapshot).count() >=
+    if (std::chrono::duration_cast<std::chrono::milliseconds>(now - state.last_snapshot).count() >=
         kSnapshotIntervalMs) {
-        s_live_summary = app_state.get_live_summary();
-        s_last_snapshot = now;
+        state.live_summary = app_state.get_live_summary();
+        state.last_snapshot = now;
     }
-    if (!is_live && s_cached_pull_id != s_selected_pull_id) {
+    if (!is_live && state.cached_pull_id != state.selected_pull_id) {
         // An archived pull never changes, so it is fetched once per selection
         // rather than on the live timer. The id only advances on a hit, or a
         // pull that failed to load would leave the tables showing its
@@ -1018,44 +1006,59 @@ void render_view_combat(AppState& app_state) {
         // the listing was read (an eviction, or an older unknown-zone pull
         // dropped), so a neighbour at that position is not taken for it.
         auto pull = app_state.get_pull(*selected_index);
-        if (pull && pull->encounter_id == s_selected_pull_id) {
-            s_selected_pull = std::move(*pull);
-            s_cached_pull_id = s_selected_pull_id;
+        if (pull && pull->encounter_id == state.selected_pull_id) {
+            state.selected_pull = std::move(*pull);
+            state.cached_pull_id = state.selected_pull_id;
         }
     }
 
-    const meter::EncounterSummary& current_summary = is_live ? s_live_summary : s_selected_pull;
+    const meter::EncounterSummary& current_summary = is_live ? state.live_summary : state.selected_pull;
 
     const bool tracking_on = cfg_get(METER, "track_vitals", true);
-    const uint64_t shown_id = is_live ? 0 : s_selected_pull_id;
+    const uint64_t shown_id = is_live ? 0 : state.selected_pull_id;
     const auto pull_tab = [&](const char* pane_id, auto render, Drilldown drilldown) {
         return [&, pane_id, render, drilldown] {
-            render_pull_view(app_state, current_summary, pull_history, selected_index, pane_id, render,
+            render_pull_view(state, app_state, current_summary, pull_history, selected_index, pane_id, render,
                              drilldown);
         };
     };
+    using Summary = meter::EncounterSummary;
     const PluginTab tabs[] = {
-        {ICON_SWORDS, "Damage", pull_tab("##DamagePane", render_damage_table, Drilldown::Damage)},
-        {ICON_HEART, "Healing", pull_tab("##HealingPane", render_healing_table, Drilldown::Healing)},
-        {ICON_SHIELD, "Damage Taken", pull_tab("##TakenPane", render_damage_taken, Drilldown::None)},
+        {ICON_SWORDS, "Damage",
+         pull_tab("##DamagePane",
+                  [&state](const Summary& summary, float height) { render_damage_table(state, summary, height); },
+                  Drilldown::Damage)},
+        {ICON_HEART, "Healing",
+         pull_tab("##HealingPane",
+                  [&state](const Summary& summary, float height) { render_healing_table(state, summary, height); },
+                  Drilldown::Healing)},
+        {ICON_SHIELD, "Damage Taken",
+         pull_tab("##TakenPane",
+                  [&state](const Summary& summary, float height) {
+                      render_damage_taken(state.damage_taken, summary, height);
+                  },
+                  Drilldown::None)},
         {ICON_SKULL, "Deaths",
          pull_tab("##DeathsPane",
-                  [tracking_on](const meter::EncounterSummary& summary, float height) {
-                      render_deaths(summary, height, tracking_on);
+                  [&state, tracking_on](const Summary& summary, float height) {
+                      render_deaths(state.deaths, summary, height, tracking_on);
                   },
                   Drilldown::None)},
         {ICON_SPARKLE, "Buffs & Debuffs",
          pull_tab("##StatusPane",
-                  [tracking_on](const meter::EncounterSummary& summary, float height) {
-                      render_statuses(summary, height, tracking_on);
+                  [&state, tracking_on](const Summary& summary, float height) {
+                      render_statuses(state.statuses, summary, height, tracking_on);
                   },
                   Drilldown::None)},
-        {ICON_BOLT, "Casts", pull_tab("##CastsPane", render_casts, Drilldown::None)},
+        {ICON_BOLT, "Casts",
+         pull_tab("##CastsPane",
+                  [&state](const Summary& summary, float height) { render_casts(state.casts, summary, height); },
+                  Drilldown::None)},
         // A tab's body runs only while it is open, so the timeline is fetched only then.
         {ICON_TRENDING, "Timeline",
          pull_tab("##TimelinePane",
-                  [&app_state, shown_id](const meter::EncounterSummary& summary, float height) {
-                      render_timeline(app_state, summary, shown_id, height);
+                  [&state, &app_state, shown_id](const Summary& summary, float height) {
+                      render_timeline(state.timeline, app_state, summary, shown_id, height);
                   },
                   Drilldown::None)},
         {ICON_SLIDERS, "Settings", [&app_state] { render_settings_tab(app_state); }},
@@ -1063,6 +1066,7 @@ void render_view_combat(AppState& app_state) {
     render_plugin_tabs("##CombatTabs", tabs, std::size(tabs));
 #else
     (void)app_state;
+    (void)state;
 #endif
 }
 
