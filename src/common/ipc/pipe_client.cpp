@@ -1,6 +1,9 @@
 #include "common/ipc/pipe_client.hpp"
+#include "common/ipc/frame_reader.hpp"
 #include "common/os/logger.hpp"
 #include <chrono>
+#include <cstring>
+#include <span>
 #include <string>
 
 #ifdef _WIN32
@@ -95,13 +98,10 @@ void PipeClient::disconnect() {
     }
 
     // Cancel first, close after the workers are joined: closing a handle another
-    // thread is blocked on leaves that thread touching a recycled value.
-    HANDLE h_pipe = nullptr;
-    {
-        std::lock_guard<std::mutex> lock(m_send_mutex);
-        h_pipe = static_cast<HANDLE>(m_pipe_handle);
-        m_pipe_handle = nullptr;
-    }
+    // thread is blocked on leaves that thread touching a recycled value. This
+    // takes no lock: a write blocked on a peer that is not reading holds
+    // m_send_mutex, and only this cancel (or the stop event) releases it.
+    HANDLE h_pipe = static_cast<HANDLE>(m_pipe_handle.exchange(nullptr));
     if (h_pipe && h_pipe != INVALID_HANDLE_VALUE) {
         CancelIoEx(h_pipe, nullptr);
     }
@@ -119,16 +119,18 @@ void PipeClient::disconnect() {
 void PipeClient::start_worker_threads() {
     m_running.store(true);
     if (m_stop_event) ResetEvent(static_cast<HANDLE>(m_stop_event));
-    m_reader_handle = m_pipe_handle;
+    m_reader_handle = m_pipe_handle.load();
     m_reader_thread = std::thread(&PipeClient::reader_thread_func, this);
     m_writer_thread = std::thread(&PipeClient::writer_thread_func, this);
 }
 
 bool PipeClient::write_raw(const uint8_t* data, size_t size) {
     std::lock_guard<std::mutex> lock(m_send_mutex);
-    if (!m_pipe_handle || m_pipe_handle == INVALID_HANDLE_VALUE || !m_write_event) return false;
+    // disconnect() may null this at any moment, but it closes the handle only
+    // after joining this thread, so the copy stays valid until we return.
+    auto h_pipe = static_cast<HANDLE>(m_pipe_handle.load());
+    if (!h_pipe || h_pipe == INVALID_HANDLE_VALUE || !m_write_event) return false;
 
-    auto h_pipe = static_cast<HANDLE>(m_pipe_handle);
     size_t total = 0;
     while (total < size) {
         OVERLAPPED ov{};
@@ -138,7 +140,15 @@ bool PipeClient::write_raw(const uint8_t* data, size_t size) {
         DWORD written = 0;
         BOOL ok = WriteFile(h_pipe, data + total, static_cast<DWORD>(size - total), &written, &ov);
         if (!ok && GetLastError() == ERROR_IO_PENDING) {
-            ok = GetOverlappedResult(h_pipe, &ov, &written, TRUE);
+            // Wait on the stop event too: a write issued after disconnect()'s
+            // CancelIoEx would otherwise block on a peer that is not reading.
+            HANDLE wait_events[2] = { ov.hEvent, static_cast<HANDLE>(m_stop_event) };
+            if (WaitForMultipleObjects(2, wait_events, FALSE, INFINITE) != WAIT_OBJECT_0) {
+                CancelIoEx(h_pipe, &ov);
+                GetOverlappedResult(h_pipe, &ov, &written, TRUE); // ov lives on this stack
+                return false;
+            }
+            ok = GetOverlappedResult(h_pipe, &ov, &written, FALSE);
         }
         if (!ok || written == 0) return false;
         total += written;
@@ -146,72 +156,63 @@ bool PipeClient::write_raw(const uint8_t* data, size_t size) {
     return true;
 }
 
-bool PipeClient::push_raw(const std::vector<uint8_t>& packet) noexcept {
-    return m_ring_buffer.push(packet);
-}
-
 void PipeClient::set_command_handler(CommandHandler handler) {
     m_command_handler = std::move(handler);
 }
 
-/// Reads exactly `size` bytes, or returns false. A byte-mode pipe is free to
-/// hand back a short read, so a single ReadFile is not a whole frame.
-bool PipeClient::read_exact(void* out, size_t size) {
+/// One overlapped ReadFile that also wakes on the stop event, in the shape
+/// read_frame() wants: bytes read, 0 once the server closed, -1 on failure.
+std::ptrdiff_t PipeClient::read_some(uint8_t* dst, size_t len) {
     auto h_pipe = static_cast<HANDLE>(m_reader_handle);
-    auto* dst = static_cast<uint8_t*>(out);
-    size_t total = 0;
+    OVERLAPPED ov{};
+    ov.hEvent = static_cast<HANDLE>(m_read_event);
+    ResetEvent(ov.hEvent);
 
-    while (total < size) {
-        OVERLAPPED ov{};
-        ov.hEvent = static_cast<HANDLE>(m_read_event);
-        ResetEvent(ov.hEvent);
-
-        DWORD read = 0;
-        BOOL ok = ReadFile(h_pipe, dst + total, static_cast<DWORD>(size - total), &read, &ov);
-        if (!ok && GetLastError() == ERROR_IO_PENDING) {
-            HANDLE wait_events[2] = { ov.hEvent, static_cast<HANDLE>(m_stop_event) };
-            const DWORD wait_res = WaitForMultipleObjects(2, wait_events, FALSE, INFINITE);
-            if (wait_res == WAIT_OBJECT_0) {
-                ok = GetOverlappedResult(h_pipe, &ov, &read, FALSE);
-            } else {
-                CancelIoEx(h_pipe, &ov);
-                return false;
-            }
+    DWORD read = 0;
+    BOOL ok = ReadFile(h_pipe, dst, static_cast<DWORD>(len), &read, &ov);
+    if (!ok && GetLastError() == ERROR_IO_PENDING) {
+        HANDLE wait_events[2] = { ov.hEvent, static_cast<HANDLE>(m_stop_event) };
+        if (WaitForMultipleObjects(2, wait_events, FALSE, INFINITE) != WAIT_OBJECT_0) {
+            CancelIoEx(h_pipe, &ov);
+            // ov and dst must outlive the cancelled read.
+            GetOverlappedResult(h_pipe, &ov, &read, TRUE);
+            m_last_read_error = ERROR_OPERATION_ABORTED;
+            return -1;
         }
-        if (!ok || read == 0) return false;
-        total += read;
+        ok = GetOverlappedResult(h_pipe, &ov, &read, FALSE);
     }
-    return true;
+    if (!ok) {
+        m_last_read_error = GetLastError();
+        return m_last_read_error == ERROR_BROKEN_PIPE ? 0 : -1;
+    }
+    return static_cast<std::ptrdiff_t>(read);
 }
 
 void PipeClient::reader_thread_func() {
     HANDLE h_pipe = static_cast<HANDLE>(m_reader_handle);
+    const ReadSome read = [this](uint8_t* dst, size_t len) { return read_some(dst, len); };
+    std::vector<uint8_t> frame;
 
     while (m_running.load() && h_pipe && h_pipe != INVALID_HANDLE_VALUE && m_read_event) {
-        PacketHeader hdr{};
-        if (!read_exact(&hdr, sizeof(hdr))) {
-            if (m_running.load()) {
+        m_last_read_error = 0;
+        const FrameResult result = read_frame(read, frame);
+        if (result != FrameResult::Frame) {
+            // A bad header means the byte stream is out of frame. There is no way
+            // to resynchronise, and skipping the "payload" only desyncs it further.
+            if (result == FrameResult::BadMagic || result == FrameResult::PayloadTooLarge) {
+                hub::os::Logger::warn("PipeClient: malformed packet header, dropping the connection");
+            } else if (m_running.load()) {
                 hub::os::Logger::warn(
-                    "PipeClient: reader thread lost connection (Win32 error " + std::to_string(GetLastError()) + ")"
+                    "PipeClient: reader thread lost connection (Win32 error " + std::to_string(m_last_read_error) + ")"
                 );
             }
             m_connected.store(false);
             break;
         }
 
-        // A bad header means the byte stream is out of frame. There is no way to
-        // resynchronise, and skipping the "payload" only desyncs it further.
-        if (hdr.magic != IPC_MAGIC || hdr.payload_size > MAX_PAYLOAD_SIZE) {
-            hub::os::Logger::warn("PipeClient: malformed packet header, dropping the connection");
-            m_connected.store(false);
-            break;
-        }
-
-        std::vector<uint8_t> payload(hdr.payload_size);
-        if (hdr.payload_size > 0 && !read_exact(payload.data(), payload.size())) {
-            m_connected.store(false);
-            break;
-        }
+        PacketHeader hdr{};
+        std::memcpy(&hdr, frame.data(), sizeof(hdr));
+        const auto payload = std::span<const uint8_t>(frame).subspan(sizeof(PacketHeader));
 
         if (hdr.message_type == static_cast<uint16_t>(MessageType::Command) &&
             payload.size() >= sizeof(CommandPayload)) {
@@ -259,10 +260,6 @@ void PipeClient::disconnect() {
 }
 
 void PipeClient::start_worker_threads() {}
-
-bool PipeClient::push_raw(const std::vector<uint8_t>& packet) noexcept {
-    return m_ring_buffer.push(packet);
-}
 
 void PipeClient::set_command_handler(CommandHandler handler) {
     m_command_handler = std::move(handler);

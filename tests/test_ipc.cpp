@@ -1,9 +1,13 @@
 #include "test_framework.hpp"
+#include "common/ipc/frame_reader.hpp"
+#include "common/ipc/pipe_server.hpp"
 #include "common/ipc/protocol.hpp"
 #include "common/ipc/ring_buffer.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstring>
 #include <string>
 #include <thread>
@@ -245,4 +249,165 @@ TEST_CASE(IPC, MpscRingBufferLaneLimit) {
     TEST_ASSERT_EQ(val, 4);
     TEST_ASSERT_FALSE(ring.pop(val));
     TEST_ASSERT_TRUE(ring.empty());
+}
+
+// The move push is what the hot paths use and must stay noexcept; the copying
+// push allocates, so it must not promise that (a throw there would terminate).
+static_assert(noexcept(std::declval<PacketRingBuffer&>().push(std::declval<std::vector<uint8_t>&&>())));
+static_assert(!noexcept(std::declval<PacketRingBuffer&>().push(std::declval<const std::vector<uint8_t>&>())));
+
+namespace {
+
+/// A byte stream handed out at most `chunk` bytes per read, then closed (0), or
+/// failing (-1) once `fail_at` bytes have gone out.
+struct ScriptedStream {
+    std::vector<uint8_t> bytes;
+    size_t chunk = SIZE_MAX;
+    size_t fail_at = SIZE_MAX;
+    size_t pos = 0;
+    size_t calls = 0;
+
+    std::ptrdiff_t read(uint8_t* dst, size_t len) {
+        ++calls;
+        if (pos >= fail_at) return -1;
+        if (pos >= bytes.size()) return 0;
+        const size_t n = std::min({len, chunk, bytes.size() - pos, fail_at - pos});
+        std::memcpy(dst, bytes.data() + pos, n);
+        pos += n;
+        return static_cast<std::ptrdiff_t>(n);
+    }
+
+    ReadSome reader() {
+        return [this](uint8_t* dst, size_t len) { return read(dst, len); };
+    }
+};
+
+std::vector<uint8_t> heartbeat_frame(uint32_t seq) {
+    HeartbeatPayload hb{};
+    hb.sequence = seq;
+    return serialize_typed_packet(PluginId::None, MessageType::Heartbeat, seq, hb);
+}
+
+} // namespace
+
+TEST_CASE(IPC, FrameReaderOneByteReads) {
+    ScriptedStream s;
+    const auto a = heartbeat_frame(1);
+    const auto b = heartbeat_frame(2);
+    s.bytes = a;
+    s.bytes.insert(s.bytes.end(), b.begin(), b.end());
+    s.chunk = 1;
+    const auto read = s.reader();
+
+    std::vector<uint8_t> frame;
+    TEST_ASSERT_TRUE(read_frame(read, frame) == FrameResult::Frame);
+    TEST_ASSERT_TRUE(frame == a);
+    TEST_ASSERT_TRUE(read_frame(read, frame) == FrameResult::Frame);
+    TEST_ASSERT_TRUE(frame == b);
+    TEST_ASSERT_EQ(s.calls, a.size() + b.size());
+    TEST_ASSERT_TRUE(read_frame(read, frame) == FrameResult::Closed);
+}
+
+TEST_CASE(IPC, FrameReaderHeaderSplitAcrossReads) {
+    // 7 does not divide the 20-byte header, so one read spans header and payload.
+    ScriptedStream s;
+    s.bytes = heartbeat_frame(7);
+    s.chunk = 7;
+    const auto read = s.reader();
+
+    std::vector<uint8_t> frame;
+    TEST_ASSERT_TRUE(read_frame(read, frame) == FrameResult::Frame);
+    TEST_ASSERT_TRUE(frame == s.bytes);
+
+    // The whole frame dispatches as the server's worker would dispatch it.
+    PipeServer server;
+    uint32_t seen_pid = 0;
+    server.set_heartbeat_callback([&](const HeartbeatPayload& hb) { seen_pid = hb.sequence; });
+    TEST_ASSERT_TRUE(server.process_raw_packet(frame));
+    TEST_ASSERT_EQ(seen_pid, 7u);
+}
+
+TEST_CASE(IPC, FrameReaderEmptyPayload) {
+    ScriptedStream s;
+    s.bytes = serialize_packet(PluginId::None, MessageType::Heartbeat, 1, {});
+    const auto read = s.reader();
+
+    std::vector<uint8_t> frame;
+    TEST_ASSERT_TRUE(read_frame(read, frame) == FrameResult::Frame);
+    TEST_ASSERT_EQ(frame.size(), sizeof(PacketHeader));
+    TEST_ASSERT_TRUE(read_frame(read, frame) == FrameResult::Closed);
+}
+
+TEST_CASE(IPC, FrameReaderBadMagicEndsWithoutResync) {
+    ScriptedStream s;
+    s.bytes = heartbeat_frame(1);
+    s.bytes[0] ^= 0xFF;
+    const auto good = heartbeat_frame(2);
+    s.bytes.insert(s.bytes.end(), good.begin(), good.end());
+    const auto read = s.reader();
+
+    std::vector<uint8_t> frame;
+    TEST_ASSERT_TRUE(read_frame(read, frame) == FrameResult::BadMagic);
+    // Only the header was consumed: the reader does not skip ahead hunting for
+    // the next magic, and the caller drops the connection.
+    TEST_ASSERT_EQ(s.pos, sizeof(PacketHeader));
+}
+
+TEST_CASE(IPC, FrameReaderOversizedPayloadRejectedBeforeAllocating) {
+    PacketHeader hdr{};
+    hdr.payload_size = 0xFFFFFFFFu;
+    ScriptedStream s;
+    s.bytes.resize(sizeof(hdr));
+    std::memcpy(s.bytes.data(), &hdr, sizeof(hdr));
+    const auto read = s.reader();
+
+    std::vector<uint8_t> frame;
+    TEST_ASSERT_TRUE(read_frame(read, frame) == FrameResult::PayloadTooLarge);
+    TEST_ASSERT_TRUE(frame.capacity() < 0xFFFFFFFFu);
+    TEST_ASSERT_EQ(s.pos, sizeof(PacketHeader));
+
+    // Exactly the limit is still a frame.
+    hdr.payload_size = static_cast<uint32_t>(MAX_PAYLOAD_SIZE);
+    ScriptedStream at_limit;
+    at_limit.bytes.resize(sizeof(hdr) + MAX_PAYLOAD_SIZE);
+    std::memcpy(at_limit.bytes.data(), &hdr, sizeof(hdr));
+    TEST_ASSERT_TRUE(read_frame(at_limit.reader(), frame) == FrameResult::Frame);
+    TEST_ASSERT_EQ(frame.size(), sizeof(hdr) + MAX_PAYLOAD_SIZE);
+}
+
+TEST_CASE(IPC, FrameReaderCloseMidHeader) {
+    ScriptedStream s;
+    s.bytes = heartbeat_frame(1);
+    s.bytes.resize(sizeof(PacketHeader) - 5);
+    s.chunk = 3;
+
+    std::vector<uint8_t> frame;
+    TEST_ASSERT_TRUE(read_frame(s.reader(), frame) == FrameResult::Truncated);
+}
+
+TEST_CASE(IPC, FrameReaderCloseMidPayload) {
+    ScriptedStream s;
+    s.bytes = heartbeat_frame(1);
+    s.bytes.pop_back();
+    s.chunk = 4;
+
+    std::vector<uint8_t> frame;
+    TEST_ASSERT_TRUE(read_frame(s.reader(), frame) == FrameResult::Truncated);
+}
+
+TEST_CASE(IPC, FrameReaderReadFailure) {
+    ScriptedStream mid_header;
+    mid_header.bytes = heartbeat_frame(1);
+    mid_header.fail_at = 6;
+    std::vector<uint8_t> frame;
+    TEST_ASSERT_TRUE(read_frame(mid_header.reader(), frame) == FrameResult::ReadFailed);
+
+    ScriptedStream mid_payload;
+    mid_payload.bytes = heartbeat_frame(1);
+    mid_payload.fail_at = sizeof(PacketHeader) + 2;
+    TEST_ASSERT_TRUE(read_frame(mid_payload.reader(), frame) == FrameResult::ReadFailed);
+
+    // A read_some that claims more than it was asked for is a failure, not an overrun.
+    const ReadSome liar = [](uint8_t*, size_t len) { return static_cast<std::ptrdiff_t>(len + 1); };
+    TEST_ASSERT_TRUE(read_frame(liar, frame) == FrameResult::ReadFailed);
 }

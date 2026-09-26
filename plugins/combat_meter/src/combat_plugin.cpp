@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstring>
 #include <string>
+#include <utility>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -444,7 +445,7 @@ void CombatPlugin::on_receive_action_effect(
                 auto bytes = ipc::serialize_typed_packet(
                     PluginId::CombatMeter, MessageType::CombatAction, ++m_sequence, packet
                 );
-                m_ring_buffer->push(bytes);
+                m_ring_buffer->push(std::move(bytes));
             }
         }
     );
@@ -568,7 +569,7 @@ void CombatPlugin::on_status_tick(
         auto bytes = ipc::serialize_typed_packet(
             PluginId::CombatMeter, MessageType::CombatStatusTick, ++m_sequence, tick
         );
-        m_ring_buffer->push(bytes);
+        m_ring_buffer->push(std::move(bytes));
     }
 }
 

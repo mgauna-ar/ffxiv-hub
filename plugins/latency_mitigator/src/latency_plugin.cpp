@@ -6,6 +6,7 @@
 #include <cstring>
 #include <cmath>
 #include <chrono>
+#include <utility>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -316,7 +317,7 @@ void LatencyPlugin::on_receive_action_effect(
         );
 
         auto bytes = ipc::serialize_typed_packet(PluginId::LatencyMitigator, MessageType::MitigatorTelemetry, 0, payload);
-        m_ring_buffer->push(bytes);
+        m_ring_buffer->push(std::move(bytes));
     }
 }
 

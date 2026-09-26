@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <thread>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -29,7 +30,9 @@ public:
     SpscRingBuffer(const SpscRingBuffer&) = delete;
     SpscRingBuffer& operator=(const SpscRingBuffer&) = delete;
 
-    bool push(const T& item) noexcept {
+    /// Copies into the slot, which for a vector allocates and may throw. Hot
+    /// paths move instead. On a throw nothing is published.
+    bool push(const T& item) {
         const size_t head = m_head.load(std::memory_order_relaxed);
         const size_t tail = m_tail.load(std::memory_order_acquire);
         if (head - tail >= Capacity) {
@@ -41,7 +44,7 @@ public:
         return true;
     }
 
-    bool push(T&& item) noexcept {
+    bool push(T&& item) noexcept(std::is_nothrow_move_assignable_v<T>) {
         const size_t head = m_head.load(std::memory_order_relaxed);
         const size_t tail = m_tail.load(std::memory_order_acquire);
         if (head - tail >= Capacity) {
@@ -120,12 +123,13 @@ public:
     MpscRingBuffer(const MpscRingBuffer&) = delete;
     MpscRingBuffer& operator=(const MpscRingBuffer&) = delete;
 
-    bool push(const T& item) noexcept {
+    /// Copying may throw (see SpscRingBuffer::push); hot paths move.
+    bool push(const T& item) {
         auto* lane = lane_for_this_thread();
         return lane ? lane->push(item) : refuse();
     }
 
-    bool push(T&& item) noexcept {
+    bool push(T&& item) noexcept(std::is_nothrow_move_assignable_v<T>) {
         auto* lane = lane_for_this_thread();
         return lane ? lane->push(std::move(item)) : refuse();
     }
