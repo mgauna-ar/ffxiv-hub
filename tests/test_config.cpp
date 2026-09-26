@@ -5,6 +5,7 @@
 #include "common/ui/overlay_config.hpp"
 #include "meter/combat_plugin.hpp"
 #include "mitigator/latency_plugin.hpp"
+#include "hub/plugin_registry.hpp"
 #include <filesystem>
 #include <fstream>
 
@@ -232,7 +233,7 @@ TEST_CASE(Config, PayloadSaveKeepsAppOnlySections) {
     payload.set_custom_path_for_testing(tmp);
 
     TEST_ASSERT(app.save());
-    payload.set_owned_sections({"combat_meter", "latency_mitigator"});
+    payload.set_owned_sections(hub::plugins::config_sections());
     TEST_ASSERT(payload.load());
 
     // The app writes behind the payload's back.
@@ -274,7 +275,7 @@ TEST_CASE(Config, PayloadAutosaveKeepsTheDesktopRate) {
 
     app.root()["combat_meter"]["desktop_dps_metric"] = JsonValue(1);
     TEST_ASSERT(app.save());
-    payload.set_owned_sections({"combat_meter", "latency_mitigator"});
+    payload.set_owned_sections(hub::plugins::config_sections());
     TEST_ASSERT(payload.load());
 
     app.root()["combat_meter"]["desktop_dps_metric"] = JsonValue(3);

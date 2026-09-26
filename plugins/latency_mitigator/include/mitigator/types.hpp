@@ -43,6 +43,11 @@ namespace constants {
     constexpr size_t MIN_SAMPLES_FOR_MEDIAN_FILTER = 5;
     constexpr size_t MAX_RTT_SAMPLE_WINDOW = 64;
     constexpr double MIN_OUTLIER_TOLERANCE_MS = 50.0;
+    /// Share of the reference RTT (the median, or during cold start the EMA baseline)
+    /// a sample may exceed it by before it counts as a spike.
+    constexpr double RELATIVE_OUTLIER_TOLERANCE = 0.5;
+    /// Cap on the very first RTT sample, which has no baseline to be judged against.
+    constexpr double COLD_START_FIRST_SAMPLE_CAP_MS = 200.0;
     constexpr double JITTER_SPIKE_MULTIPLIER = 2.5;
 
     /// Default HUD placement and appearance. Also the target of a geometry reset.

@@ -23,6 +23,13 @@ namespace hub::payload {
 namespace {
 
 using FnPresent = HRESULT(WINAPI*)(IDXGISwapChain*, UINT, UINT);
+
+// IDXGISwapChain's vtable slots: IUnknown's 3, IDXGIObject's 4 and
+// IDXGIDeviceSubObject's GetDevice come first, then IDXGISwapChain's own methods
+// in declaration order (Present, GetBuffer, SetFullscreenState, GetFullscreenState,
+// GetDesc, ResizeBuffers).
+constexpr size_t SWAP_CHAIN_VTABLE_PRESENT = 8;
+constexpr size_t SWAP_CHAIN_VTABLE_RESIZE_BUFFERS = 13;
 using FnResizeBuffers = HRESULT(WINAPI*)(IDXGISwapChain*, UINT, UINT, UINT, DXGI_FORMAT, UINT);
 
 FnPresent fp_original_present = nullptr;
@@ -301,8 +308,8 @@ bool Dx11Hook::install() {
     }
 
     void** vtable = *reinterpret_cast<void***>(dummy_swap_chain);
-    void* present_target = vtable[8];
-    void* resize_buffers_target = vtable[13];
+    void* present_target = vtable[SWAP_CHAIN_VTABLE_PRESENT];
+    void* resize_buffers_target = vtable[SWAP_CHAIN_VTABLE_RESIZE_BUFFERS];
 
     dummy_swap_chain->Release();
     dummy_context->Release();

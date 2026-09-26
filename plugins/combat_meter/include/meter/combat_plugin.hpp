@@ -1,6 +1,7 @@
 #pragma once
 
 #include "hub/plugin_api.hpp"
+#include "hub/plugin_registry.hpp"
 #include "meter/buff_attribution.hpp"
 #include "meter/encounter_engine.hpp"
 #include "meter/vitals.hpp"
@@ -24,9 +25,9 @@ public:
     ~CombatPlugin() override = default;
 
     // IPlugin
-    PluginId id() const noexcept override { return PluginId::CombatMeter; }
-    const char* name() const noexcept override { return "Combat Meter"; }
-    const char* version() const noexcept override { return "1.0.0"; }
+    PluginId id() const noexcept override { return plugins::COMBAT_METER.id; }
+    const char* name() const noexcept override { return plugins::COMBAT_METER.name; }
+    const char* version() const noexcept override { return plugins::COMBAT_METER.version; }
 
     bool initialize() override;
     void update(double delta_seconds) override;

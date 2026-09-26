@@ -90,8 +90,8 @@ bool GameStateReader::initialize() {
 
     m_conditions_addr = hub::memory::resolve_rip_relative(
         insn,
-        game::definitions::CONDITIONS_RIP_DISP_OFFSET,
-        game::definitions::CONDITIONS_RIP_INSN_LEN);
+        game::definitions::CONDITIONS_INSTANCE_RIP_DISP_OFFSET,
+        game::definitions::CONDITIONS_INSTANCE_RIP_INSN_END);
     if (m_conditions_addr == 0) {
         m_last_error = "Conditions signature resolved to a null address";
         return false;

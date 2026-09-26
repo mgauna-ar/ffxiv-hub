@@ -6,6 +6,10 @@
 #include "hub/game_state.hpp"
 #include "common/os/tray_manager.hpp"
 #include "meter/pull_grouping.hpp"
+#include "meter/combat_plugin.hpp"
+#include "mitigator/latency_plugin.hpp"
+#include "hub/plugin_registry.hpp"
+#include "hub/version.hpp"
 #include <chrono>
 #include <cstring>
 #include <filesystem>
@@ -365,6 +369,36 @@ TEST_CASE(AppState, CastsReachTheLiveSummary) {
     state.shutdown();
 }
 
+TEST_CASE(AppState, PluginListComesFromTheDescriptorTable) {
+    app::AppState state;
+    const auto& listed = state.registered_plugins();
+    TEST_ASSERT_EQ(listed.size(), plugins::ALL.size());
+    for (size_t i = 0; i < listed.size(); ++i) {
+        TEST_ASSERT(listed[i].id == plugins::ALL[i].id);
+        TEST_ASSERT(listed[i].name == plugins::ALL[i].name);
+        TEST_ASSERT(listed[i].version == plugins::ALL[i].version);
+        TEST_ASSERT(listed[i].description == plugins::ALL[i].description);
+        TEST_ASSERT(std::string(app::AppState::plugin_config_section(listed[i].id)) ==
+                    plugins::ALL[i].config_section);
+    }
+
+    // The payload-side plugins answer IPlugin from the same table.
+    meter::CombatPlugin combat;
+    mitigator::LatencyPlugin latency;
+    TEST_ASSERT(combat.id() == plugins::COMBAT_METER.id);
+    TEST_ASSERT(std::string(combat.name()) == "Combat Meter");
+    TEST_ASSERT(std::string(combat.version()) == HUB_VERSION_STRING);
+    TEST_ASSERT(latency.id() == plugins::LATENCY_MITIGATOR.id);
+    TEST_ASSERT(std::string(latency.name()) == "Latency Mitigator");
+    TEST_ASSERT(std::string(latency.version()) == HUB_VERSION_STRING);
+
+    // config.json keys are on disk, so the sections are pinned as literals here.
+    TEST_ASSERT(std::string(plugins::COMBAT_METER.config_section) == "combat_meter");
+    TEST_ASSERT(std::string(plugins::LATENCY_MITIGATOR.config_section) == "latency_mitigator");
+    TEST_ASSERT(plugins::find(PluginId::Core) == nullptr);
+    TEST_ASSERT(plugins::find(PluginId::None) == nullptr);
+}
+
 TEST_CASE(AppState, InitializationAndRegisteredPlugins) {
     app::AppState state;
     TEST_ASSERT(state.initialize());
@@ -625,7 +659,7 @@ TEST_CASE(AppState, PullHistoryIndexMatchesFullSummaries) {
             ipc::serialize_typed_packet(PluginId::CombatMeter, MessageType::CombatAction, pull, act));
 
         ipc::CombatControlPayload ctrl{};
-        ctrl.control_command = 1; // EndEncounter
+        ctrl.control_command = ipc::EncounterControlCommand::End;
         state.pipe_server().process_raw_packet(
             ipc::serialize_typed_packet(PluginId::CombatMeter, MessageType::CombatControl, pull, ctrl));
     }
@@ -671,7 +705,7 @@ TEST_CASE(AppState, ZoneVisitsNumberPullsFromOne) {
         state.pipe_server().process_raw_packet(
             ipc::serialize_typed_packet(PluginId::CombatMeter, MessageType::CombatAction, ++sequence, act));
         ipc::CombatControlPayload end{};
-        end.control_command = 1; // EndEncounter
+        end.control_command = ipc::EncounterControlCommand::End;
         state.pipe_server().process_raw_packet(
             ipc::serialize_typed_packet(PluginId::CombatMeter, MessageType::CombatControl, ++sequence, end));
     };
@@ -801,7 +835,7 @@ TEST_CASE(AppState, PullHistoryLimitComesFromTheConfig) {
         state.pipe_server().process_raw_packet(
             ipc::serialize_typed_packet(PluginId::CombatMeter, MessageType::CombatAction, ++sequence, act));
         ipc::CombatControlPayload end{};
-        end.control_command = 1; // EndEncounter
+        end.control_command = ipc::EncounterControlCommand::End;
         state.pipe_server().process_raw_packet(
             ipc::serialize_typed_packet(PluginId::CombatMeter, MessageType::CombatControl, ++sequence, end));
     }

@@ -28,9 +28,9 @@ bool extract_character_fields(const game::CharacterObject* obj, ipc::ActorInfoPa
     out.max_hp = obj->max_hp;
     out.current_hp = obj->current_hp;
 
-    if (obj->object_kind == 5 || (out.owner_id != 0)) {
+    if (obj->object_kind == game::ObjectKind::Kind5 || (out.owner_id != 0)) {
         out.actor_type = static_cast<uint8_t>(meter::ActorType::Pet);
-    } else if (obj->object_kind == 1) {
+    } else if (obj->object_kind == game::ObjectKind::Player) {
         out.actor_type = static_cast<uint8_t>(meter::ActorType::Player);
     } else {
         out.actor_type = static_cast<uint8_t>(meter::ActorType::Monster);
@@ -208,11 +208,11 @@ static bool SafeReadCharacter(
     ipc::ActorInfoPacket& out
 ) {
     __try {
-        if (entity_id == 0 || entity_id == 0xE0000000 || game_obj_mgr_addr == 0) {
+        if (!game::is_real_entity_id(entity_id) || game_obj_mgr_addr == 0) {
             return false;
         }
 
-        void* object_arrays = reinterpret_cast<void*>(game_obj_mgr_addr + 0x20);
+        void* object_arrays = reinterpret_cast<void*>(game_obj_mgr_addr + game::offsets::GAME_OBJECT_MANAGER_OBJECT_ARRAYS);
         game::CharacterObject* obj = nullptr;
 
         if (fn != nullptr) {
@@ -364,9 +364,9 @@ static const game::CharacterObject* SafeFindBattleChara(
 ) {
     __try {
         if (fn == nullptr || game_obj_mgr_addr == 0 || !game::is_real_entity_id(entity_id)) return nullptr;
-        const game::CharacterObject* obj = fn(reinterpret_cast<void*>(game_obj_mgr_addr + 0x20), entity_id);
+        const game::CharacterObject* obj = fn(reinterpret_cast<void*>(game_obj_mgr_addr + game::offsets::GAME_OBJECT_MANAGER_OBJECT_ARRAYS), entity_id);
         if (obj == nullptr || obj->entity_id != entity_id) return nullptr;
-        if (obj->object_kind != 1 && obj->object_kind != 2) return nullptr;
+        if (!game::is_battle_chara_kind(obj->object_kind)) return nullptr;
         hp = obj->current_hp;
         max_hp = obj->max_hp;
         return obj;
@@ -386,7 +386,7 @@ static const game::CharacterObject* SafeReadLocalPlayerObject(
         if (!game::is_real_entity_id(id)) return nullptr;
         const auto* obj = *reinterpret_cast<const game::CharacterObject* const*>(
             id_addr + game::definitions::LOCAL_PLAYER_OBJECT_FROM_ID);
-        if (obj == nullptr || obj->entity_id != id || obj->object_kind != 1) return nullptr;
+        if (obj == nullptr || obj->entity_id != id || obj->object_kind != game::ObjectKind::Player) return nullptr;
         entity_id = id;
         hp = obj->current_hp;
         max_hp = obj->max_hp;
@@ -420,7 +420,7 @@ static bool SafeExtractAttributionStatuses(
 ) {
     __try {
         if (obj == nullptr || obj->entity_id != entity_id) return false;
-        if (obj->object_kind != 1 && obj->object_kind != 2) return false;
+        if (!game::is_battle_chara_kind(obj->object_kind)) return false;
         const auto* manager = reinterpret_cast<const game::StatusManagerObject*>(
             reinterpret_cast<uintptr_t>(obj) + game::offsets::BATTLE_CHARA_STATUS_MANAGER);
         return detail::extract_attribution_statuses(manager, obj, out, capacity, count);
@@ -546,11 +546,13 @@ bool ObjectReader::initialize() {
 
     HMODULE h_game = GetModuleHandleW(nullptr);
     if (!h_game) return false;
+    namespace defs = game::definitions;
 
     // Scan for GameObjectManager
     uintptr_t mgr_ins = common::pe::scan_module_section(h_game, ".text", game::signatures::GAME_OBJECT_MANAGER_INSTANCE);
     if (mgr_ins) {
-        m_game_object_mgr_addr = hub::memory::resolve_rip_relative(mgr_ins, 3, 7);
+        m_game_object_mgr_addr = hub::memory::resolve_rip_relative(
+            mgr_ins, defs::GAME_OBJECT_MANAGER_INSTANCE_RIP_DISP_OFFSET, defs::GAME_OBJECT_MANAGER_INSTANCE_RIP_INSN_END);
     }
 
     // Scan for GetObjectByEntityId
@@ -565,17 +567,17 @@ bool ObjectReader::initialize() {
     // Scan for GroupManager
     uintptr_t group_ins = common::pe::scan_module_section(h_game, ".text", game::signatures::GROUP_MANAGER_INSTANCE);
     if (group_ins) {
-        m_group_manager_addr = hub::memory::resolve_rip_relative(group_ins, 5, 9);
+        m_group_manager_addr = hub::memory::resolve_rip_relative(
+            group_ins, defs::GROUP_MANAGER_INSTANCE_RIP_DISP_OFFSET, defs::GROUP_MANAGER_INSTANCE_RIP_INSN_END);
     }
 
     // Local player entity id: the party list cannot say which slot is us.
-    namespace defs = game::definitions;
     if (uintptr_t ins = common::pe::scan_module_section(h_game, ".text", game::signatures::LOCAL_PLAYER_ENTITY_ID_PRIMARY)) {
         m_local_player_id_addr = hub::memory::resolve_rip_relative(
-            ins, defs::LOCAL_PLAYER_ID_PRIMARY_RIP_DISP_OFFSET, defs::LOCAL_PLAYER_ID_PRIMARY_RIP_INSN_END);
+            ins, defs::LOCAL_PLAYER_ENTITY_ID_PRIMARY_RIP_DISP_OFFSET, defs::LOCAL_PLAYER_ENTITY_ID_PRIMARY_RIP_INSN_END);
     } else if (uintptr_t fb = common::pe::scan_module_section(h_game, ".text", game::signatures::LOCAL_PLAYER_ENTITY_ID_FALLBACK)) {
         m_local_player_id_addr = hub::memory::resolve_rip_relative(
-            fb, defs::LOCAL_PLAYER_ID_FALLBACK_RIP_DISP_OFFSET, defs::LOCAL_PLAYER_ID_FALLBACK_RIP_INSN_END);
+            fb, defs::LOCAL_PLAYER_ENTITY_ID_FALLBACK_RIP_DISP_OFFSET, defs::LOCAL_PLAYER_ENTITY_ID_FALLBACK_RIP_INSN_END);
     }
 
     m_initialized = (m_game_object_mgr_addr != 0 || m_group_manager_addr != 0);
@@ -592,7 +594,7 @@ bool ObjectReader::in_lobby() const {
 }
 
 void ObjectReader::inspect_and_sync_actor(uint32_t entity_id, meter::CombatantRegistry* registry) {
-    if (entity_id == 0 || entity_id == 0xE0000000) {
+    if (!game::is_real_entity_id(entity_id)) {
         return;
     }
 

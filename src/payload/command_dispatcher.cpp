@@ -1,6 +1,7 @@
 #include "payload/command_dispatcher.hpp"
 #include "meter/combat_plugin.hpp"
 #include "meter/combat_overlay.hpp"
+#include "hub/plugin_registry.hpp"
 #include "mitigator/latency_plugin.hpp"
 #include "mitigator/latency_overlay.hpp"
 #include "common/config/config_manager.hpp"
@@ -125,7 +126,7 @@ void dispatch_combat_meter(const CommandDispatchTargets& t, const ipc::CommandPa
         case CommandId::ReloadConfig:
             if (t.combat_plugin) {
                 config::ConfigManager::instance().load();
-                t.combat_plugin->deserialize_config(config::ConfigManager::instance().root()["combat_meter"]);
+                t.combat_plugin->deserialize_config(config::ConfigManager::instance().root()[plugins::COMBAT_METER.config_section]);
             }
             break;
         default:
@@ -171,7 +172,7 @@ void dispatch_latency_mitigator(const CommandDispatchTargets& t, const ipc::Comm
         case CommandId::ReloadConfig:
             if (t.latency_plugin) {
                 config::ConfigManager::instance().load();
-                t.latency_plugin->deserialize_config(config::ConfigManager::instance().root()["latency_mitigator"]);
+                t.latency_plugin->deserialize_config(config::ConfigManager::instance().root()[plugins::LATENCY_MITIGATOR.config_section]);
             }
             break;
         default:
@@ -200,10 +201,10 @@ void dispatch_command(const CommandDispatchTargets& targets, const ipc::CommandP
             if (static_cast<CommandId>(cmd.command_id) == CommandId::ReloadConfig) {
                 config::ConfigManager::instance().load();
                 if (targets.combat_plugin) {
-                    targets.combat_plugin->deserialize_config(config::ConfigManager::instance().root()["combat_meter"]);
+                    targets.combat_plugin->deserialize_config(config::ConfigManager::instance().root()[plugins::COMBAT_METER.config_section]);
                 }
                 if (targets.latency_plugin) {
-                    targets.latency_plugin->deserialize_config(config::ConfigManager::instance().root()["latency_mitigator"]);
+                    targets.latency_plugin->deserialize_config(config::ConfigManager::instance().root()[plugins::LATENCY_MITIGATOR.config_section]);
                 }
             }
             break;

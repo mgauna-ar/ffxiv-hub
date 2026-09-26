@@ -7,6 +7,7 @@
 #include "common/os/single_instance.hpp"
 #include "common/os/tray_manager.hpp"
 #include "common/config/config_manager.hpp"
+#include "hub/version.hpp"
 #include <algorithm>
 #include <iostream>
 #include <string>
@@ -199,7 +200,7 @@ LRESULT WINAPI MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 #ifdef _WIN32
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     hub::os::Logger::init();
-    hub::os::Logger::info("Starting FFXIV Hub Desktop Manager v1.0.0...");
+    hub::os::Logger::info("Starting FFXIV Hub Desktop Manager v" HUB_VERSION_STRING "...");
 
     // Best-effort: opt this process into dark-themed native menus/controls before any window
     // or menu is created.
@@ -242,7 +243,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
         hIconSm = hIcon;
     }
     if (!hIcon) {
-        hIcon = LoadIconW(nullptr, MAKEINTRESOURCEW(32512));
+        hIcon = LoadIconW(nullptr, IDI_APPLICATION);
         hIconSm = hIcon;
     }
 
@@ -254,7 +255,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     wc.lpszClassName = L"FFXIVHubDesktopWindow";
     wc.hIcon = hIcon;
     wc.hIconSm = hIconSm;
-    wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
+    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     RegisterClassExW(&wc);
 
     HWND hwnd = CreateWindowExW(
@@ -262,7 +263,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
         L"FFXIVHubDesktopWindow",
         L"FFXIV Hub",
         WS_OVERLAPPEDWINDOW,
-        100, 100, 1020, 680,
+        // Placeholder until the DPI is known: resized and centred below before the
+        // first show.
+        CW_USEDEFAULT, CW_USEDEFAULT,
+        static_cast<int>(hub::app::ui::metrics::WindowDefaultW),
+        static_cast<int>(hub::app::ui::metrics::WindowDefaultH),
         nullptr, nullptr, hInstance, nullptr
     );
 
@@ -417,7 +422,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
         hub::app::ui::render_app_frame(app_state);
 
         ImGui::Render();
-        const float clear_color[4] = { 0.043f, 0.055f, 0.078f, 1.0f };
+        const ImVec4 canvas = ImGui::ColorConvertU32ToFloat4(hub::app::ui::colors::Canvas);
+        const float clear_color[4] = { canvas.x, canvas.y, canvas.z, 1.0f };
         g_pd3dDeviceContext->OMSetRenderTargets(1, &g_mainRenderTargetView, nullptr);
         g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, clear_color);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());

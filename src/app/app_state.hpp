@@ -85,7 +85,7 @@ public:
     }
 
     /// Config section a plugin's settings live under, or nullptr for an id that
-    /// owns none. The only place the id -> section mapping is written down.
+    /// owns none, as the descriptor table in hub/plugin_registry.hpp gives it.
     [[nodiscard]] static const char* plugin_config_section(PluginId id) noexcept;
 
     /// Master switch for a plugin: persists the choice, mirrors it into the

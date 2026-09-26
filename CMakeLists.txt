@@ -1,5 +1,16 @@
 cmake_minimum_required(VERSION 3.20)
-project(ffxiv-hub VERSION 1.0.0 LANGUAGES CXX C)
+# The version is written once, in include/hub/version.hpp, which the Makefile build
+# and app.rc read too.
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/include/hub/version.hpp" HUB_VERSION_DEFINES
+     REGEX "^#define HUB_VERSION_(MAJOR|MINOR|PATCH) [0-9]+$")
+foreach(part MAJOR MINOR PATCH)
+    string(REGEX MATCH "HUB_VERSION_${part} ([0-9]+)" _match "${HUB_VERSION_DEFINES}")
+    if(NOT _match)
+        message(FATAL_ERROR "HUB_VERSION_${part} not found in include/hub/version.hpp")
+    endif()
+    set(HUB_VERSION_${part} "${CMAKE_MATCH_1}")
+endforeach()
+project(ffxiv-hub VERSION ${HUB_VERSION_MAJOR}.${HUB_VERSION_MINOR}.${HUB_VERSION_PATCH} LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

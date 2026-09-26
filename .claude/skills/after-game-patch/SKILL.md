@@ -135,7 +135,7 @@ Five targets carry both tiers:
 - `ACTION_MANAGER_INSTANCE_PRIMARY` / `_FALLBACK`
 - `GET_OBJECT_BY_ENTITY_ID` / `_FALLBACK`
 - `LOCAL_PLAYER_ENTITY_ID_PRIMARY` / `_FALLBACK`. The two tiers resolve the same global
-  through different instructions, so each has its own `LOCAL_PLAYER_ID_*_RIP_*` pair.
+  through different instructions, so each has its own `LOCAL_PLAYER_ENTITY_ID_*_RIP_*` pair.
 
 When one tier breaks, the other usually still resolves. Use the surviving tier to locate
 the function in the copied executable, then re-cut the broken pattern from the bytes at
@@ -160,7 +160,12 @@ rather than replacing it wholesale.
 
 - `game::signatures::*` - the pattern itself.
 - `game::offsets::*` - if struct members shifted.
-- `*_RIP_DISP_OFFSET` - if the displacement's position inside the instruction moved.
+- `<SIGNATURE>_RIP_DISP_OFFSET` and `<SIGNATURE>_RIP_INSN_END` - if the displacement's
+  position inside the match, or the end of its instruction, moved. Every signature that
+  resolves a static global has this pair, named after it and counted from the start of
+  the match, so a re-cut pattern that starts earlier or later shifts both. A new such
+  signature gets its pair too, and an entry in `scripts/verify_signatures.py`'s
+  `RIP_RELATIVE` table, which still keeps its own copy of the values.
 - `SUPPORTED_GAME_VERSION` - bump it; nothing else records which patch the definitions
   target.
 - The struct padding, so every `static_assert(offsetof(...))` still passes. Those asserts

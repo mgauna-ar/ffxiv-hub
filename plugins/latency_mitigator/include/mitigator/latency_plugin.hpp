@@ -1,6 +1,7 @@
 #pragma once
 
 #include "hub/plugin_api.hpp"
+#include "hub/plugin_registry.hpp"
 #include "mitigator/animation_lock.hpp"
 #include "common/ipc/ring_buffer.hpp"
 #include <atomic>
@@ -16,9 +17,9 @@ public:
     ~LatencyPlugin() override = default;
 
     // IPlugin
-    PluginId id() const noexcept override { return PluginId::LatencyMitigator; }
-    const char* name() const noexcept override { return "Latency Mitigator"; }
-    const char* version() const noexcept override { return "1.0.0"; }
+    PluginId id() const noexcept override { return plugins::LATENCY_MITIGATOR.id; }
+    const char* name() const noexcept override { return plugins::LATENCY_MITIGATOR.name; }
+    const char* version() const noexcept override { return plugins::LATENCY_MITIGATOR.version; }
 
     bool initialize() override;
     void update(double delta_seconds) override;

@@ -281,7 +281,7 @@ void render_view_dashboard(AppState& app_state) {
 
     ImGui::Dummy(ImVec2(0.0f, m(metrics::Gutter)));
     if (button(ICON_FOLDER "  Open logs folder", ButtonKind::Secondary, ButtonSize::Medium)) {
-        os::Logger::open_config_folder();
+        os::Logger::open_log_folder();
     }
     ImGui::SameLine(0.0f, m(8.0f));
     if (button(ICON_FILE "  View log file", ButtonKind::Secondary, ButtonSize::Medium)) {

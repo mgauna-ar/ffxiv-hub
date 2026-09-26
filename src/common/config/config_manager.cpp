@@ -1,4 +1,5 @@
 #include "common/config/config_manager.hpp"
+#include "hub/plugin_registry.hpp"
 #include <fstream>
 #include <sstream>
 #include <cstdlib>
@@ -19,7 +20,7 @@ JsonValue ConfigManager::default_document() {
     // Overlay keys are the canonical set shared by every plugin - see
     // hub::ui::serialize_overlay. A negative position means "never placed", so
     // the overlay falls back to its own default.
-    root["combat_meter"] = JsonValue::ObjectType{
+    root[plugins::COMBAT_METER.config_section] = JsonValue::ObjectType{
         {"overlay_visible", JsonValue(true)},
         {"overlay_x", JsonValue(-1.0f)},
         {"overlay_y", JsonValue(-1.0f)},
@@ -46,7 +47,7 @@ JsonValue ConfigManager::default_document() {
         {"show_col_cdh", JsonValue(true)},
         {"track_vitals", JsonValue(true)}
     };
-    root["latency_mitigator"] = JsonValue::ObjectType{
+    root[plugins::LATENCY_MITIGATOR.config_section] = JsonValue::ObjectType{
         {"enabled", JsonValue(true)},
         {"dry_run", JsonValue(false)},
         {"target_ping_ms", JsonValue(15.0f)},
