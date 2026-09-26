@@ -1,77 +1,42 @@
-// Scans a ffxiv_dx11.exe on disk for the payload's signatures and reports how many
-// times each one matches. Links the same matcher the payload uses, so a pattern that
-// passes here is a pattern the payload will resolve.
+// Counts how many times each of the payload's signatures matches a range of bytes
+// in a file, with the same matcher the payload uses, so a pattern that passes here
+// is a pattern the payload will resolve. tools/check_signatures.py finds the range
+// (ffxiv_dx11.exe's .text) with tools/xivbin/pe.py and reports the results.
 //
-// Usage: sigcheck <ffxiv_dx11.exe> <name=pattern>...
+// Usage: sigcheck <file> <offset> <size> <name=pattern>...
+// Prints one line per signature: name, match count and the first match's offset
+// into the range, tab-separated. An unparseable pattern reads -1 matches; no match
+// reads offset -1.
 
 #include "common/sigscan.hpp"
 
 #include <cstdint>
 #include <cstdio>
-#include <cstring>
+#include <cstdlib>
 #include <fstream>
 #include <string>
 #include <vector>
 
 namespace {
 
-// Enough of the PE layout to find one section's bytes. The repo's pe_scanner only
-// works on a module the OS already loaded, which is not an option off Windows.
-struct Section {
-    const uint8_t* data;
-    size_t size;
+struct Matches {
+    size_t count{0};
+    const uint8_t* first{nullptr};
 };
 
-bool find_section(const std::vector<uint8_t>& image, const char* want, Section& out) {
-    if (image.size() < 0x40 || image[0] != 'M' || image[1] != 'Z') {
-        return false;
-    }
-    uint32_t pe = 0;
-    std::memcpy(&pe, image.data() + 0x3C, 4);
-    if (pe + 24 > image.size() || std::memcmp(image.data() + pe, "PE\0\0", 4) != 0) {
-        return false;
-    }
-
-    uint16_t section_count = 0;
-    uint16_t optional_size = 0;
-    std::memcpy(&section_count, image.data() + pe + 6, 2);
-    std::memcpy(&optional_size, image.data() + pe + 20, 2);
-
-    const size_t table = pe + 24 + optional_size;
-    for (uint16_t i = 0; i < section_count; ++i) {
-        const uint8_t* entry = image.data() + table + i * 40;
-        if (table + (i + 1) * 40 > image.size()) {
-            return false;
-        }
-        char name[9] = {0};
-        std::memcpy(name, entry, 8);
-        if (std::strcmp(name, want) != 0) {
-            continue;
-        }
-        uint32_t raw_size = 0;
-        uint32_t raw_offset = 0;
-        std::memcpy(&raw_size, entry + 16, 4);
-        std::memcpy(&raw_offset, entry + 20, 4);
-        if (raw_offset + raw_size > image.size()) {
-            return false;
-        }
-        out = {image.data() + raw_offset, raw_size};
-        return true;
-    }
-    return false;
-}
-
 // The payload takes the first match, so more than one is as broken as none.
-size_t count_matches(Section section, const hub::memory::Signature& sig) {
-    size_t found = 0;
-    const uint8_t* cursor = section.data;
-    size_t remaining = section.size;
+Matches find_all(const std::vector<uint8_t>& bytes, const hub::memory::Signature& sig) {
+    Matches found;
+    const uint8_t* cursor = bytes.data();
+    size_t remaining = bytes.size();
     while (remaining >= sig.size()) {
         const uint8_t* hit = hub::memory::find_pattern(cursor, remaining, sig);
         if (hit == nullptr) {
             break;
         }
-        ++found;
+        if (found.count++ == 0) {
+            found.first = hit;
+        }
         remaining -= static_cast<size_t>(hit - cursor) + 1;
         cursor = hit + 1;
     }
@@ -81,28 +46,27 @@ size_t count_matches(Section section, const hub::memory::Signature& sig) {
 } // namespace
 
 int main(int argc, char** argv) {
-    if (argc < 3) {
-        std::fprintf(stderr, "usage: sigcheck <ffxiv_dx11.exe> <name=pattern>...\n");
+    if (argc < 5) {
+        std::fprintf(stderr, "usage: sigcheck <file> <offset> <size> <name=pattern>...\n");
         return 2;
     }
 
+    const auto offset = std::strtoull(argv[2], nullptr, 0);
+    const auto size = std::strtoull(argv[3], nullptr, 0);
     std::ifstream file(argv[1], std::ios::binary);
     if (!file) {
         std::fprintf(stderr, "cannot open %s\n", argv[1]);
         return 2;
     }
-    std::vector<uint8_t> image((std::istreambuf_iterator<char>(file)),
-                               std::istreambuf_iterator<char>());
-
-    Section text{};
-    if (!find_section(image, ".text", text)) {
-        std::fprintf(stderr, "no .text section in %s\n", argv[1]);
+    std::vector<uint8_t> bytes(size);
+    file.seekg(static_cast<std::streamoff>(offset));
+    if (!file.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(size))) {
+        std::fprintf(stderr, "cannot read %llu bytes at %llu from %s\n",
+                     static_cast<unsigned long long>(size), static_cast<unsigned long long>(offset), argv[1]);
         return 2;
     }
-    std::printf(".text: %zu bytes\n\n", text.size);
 
-    int failures = 0;
-    for (int i = 2; i < argc; ++i) {
+    for (int i = 4; i < argc; ++i) {
         const std::string arg = argv[i];
         const size_t split = arg.find('=');
         const std::string name = arg.substr(0, split);
@@ -110,18 +74,12 @@ int main(int argc, char** argv) {
 
         const auto sig = hub::memory::Signature::parse(pattern);
         if (sig.empty()) {
-            std::printf("  %-36s UNPARSEABLE\n", name.c_str());
-            ++failures;
+            std::printf("%s\t-1\t-1\n", name.c_str());
             continue;
         }
-        const size_t hits = count_matches(text, sig);
-        const char* verdict = hits == 1 ? "OK" : (hits == 0 ? "BROKEN" : "AMBIGUOUS");
-        failures += (hits != 1);
-        std::printf("  %-36s %-10s (%zu hit%s)\n", name.c_str(), verdict, hits,
-                    hits == 1 ? "" : "s");
+        const Matches hits = find_all(bytes, sig);
+        const long long first = hits.first ? static_cast<long long>(hits.first - bytes.data()) : -1;
+        std::printf("%s\t%zu\t%lld\n", name.c_str(), hits.count, first);
     }
-
-    std::printf("\n%s\n", failures == 0 ? "all signatures resolve uniquely"
-                                        : "SOME SIGNATURES NEED ATTENTION");
-    return failures == 0 ? 0 : 1;
+    return 0;
 }

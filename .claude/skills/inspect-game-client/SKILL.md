@@ -15,7 +15,7 @@ combat meter treating party slot 0 as the local player. The install is at `~/ffx
 | Question | Command |
 |---|---|
 | Does a signature still match, and where does it point? | `python3 tools/inspect_exe.py sig GROUP_MANAGER_INSTANCE --rip 5 9` |
-| Check all signatures after a patch | `python3 tools/check_signatures.py`, and `python3 scripts/verify_signatures.py ~/ffxiv/game/ffxiv_dx11.exe` for where static-instance signatures land (register new ones in its `RIP_RELATIVE` table). See `after-game-patch` |
+| Check all signatures after a patch | `python3 tools/check_signatures.py`: every signature matches once, and each static-global one lands in a data section, following the `<SIGNATURE>_RIP_*` pair in `game_definitions.hpp`. See `after-game-patch` |
 | Show a function | `python3 tools/inspect_exe.py func 0x140b4a4b0` |
 | Show a range (leaf functions have no `.pdata` entry) | `python3 tools/inspect_exe.py disasm 0x140b26dd0 0x140b26df0` |
 | Who calls this? | `python3 tools/inspect_exe.py xrefs 0x140b259b0` |

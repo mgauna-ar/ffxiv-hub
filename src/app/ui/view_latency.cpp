@@ -194,7 +194,7 @@ void render_metric_tiles(AppState& app_state, const AppState::MitigatorMetrics& 
     char floors[48];
     std::snprintf(floors, sizeof(floors), "%llu floor clamps (%.0f ms)",
                   static_cast<unsigned long long>(metrics.floor_clamp_count),
-                  cfg_float(MITI, "min_animation_lock_ms", 25.0f));
+                  cfg_get(MITI, "min_animation_lock_ms", 25.0f));
 
     const StatTileSpec tiles[] = {
         { "##PingCard", ICON_ACTIVITY, "SMOOTHED RTT", smoothed,
@@ -333,8 +333,8 @@ void render_live_tab(AppState& app_state, const AppState::MitigatorMetrics& metr
     measured.reserve(telemetry.size());
     std::copy_if(telemetry.begin(), telemetry.end(), std::back_inserter(measured),
                  [](const ipc::MitigatorTelemetryPayload& s) { return s.measured_rtt_ms > 0.0f; });
-    render_rtt_graph(measured, cfg_float(MITI, "target_ping_ms", 15.0f),
-                     cfg_float(MITI, "min_animation_lock_ms", 25.0f), fill_h(0.0f));
+    render_rtt_graph(measured, cfg_get(MITI, "target_ping_ms", 15.0f),
+                     cfg_get(MITI, "min_animation_lock_ms", 25.0f), fill_h(0.0f));
     end_card();
 
     ImGui::Dummy(ImVec2(0.0f, m(2.0f)));
@@ -356,14 +356,14 @@ void render_plugin_section(AppState& app_state) {
 
     // Distinct from the plugin's master switch in the page header: this one only
     // stops the memory write-back, leaving measurement running.
-    bool enabled = cfg_bool(MITI, "enabled", true);
+    bool enabled = cfg_get(MITI, "enabled", true);
     if (setting_toggle("Enable animation lock mitigation",
                        "Master switch for every memory write this plugin makes.", &enabled)) {
         cfg_store(MITI, "enabled", enabled);
         app_state.send_mitigator_enabled(enabled);
     }
 
-    float target_ping = cfg_float(MITI, "target_ping_ms", 15.0f);
+    float target_ping = cfg_get(MITI, "target_ping_ms", 15.0f);
     begin_setting_row("Target ping", "Round-trip time the compensation aims for.");
     if (ImGui::SliderFloat("##target_ping", &target_ping, 10.0f, 40.0f, "%.1f ms")) {
         cfg_store(MITI, "target_ping_ms", target_ping);
@@ -371,7 +371,7 @@ void render_plugin_section(AppState& app_state) {
     }
     end_setting_row();
 
-    float min_lock = cfg_float(MITI, "min_animation_lock_ms", 25.0f);
+    float min_lock = cfg_get(MITI, "min_animation_lock_ms", 25.0f);
     begin_setting_row("Safety floor", "Animation lock is never reduced below this.");
     if (ImGui::SliderFloat("##min_lock", &min_lock, 25.0f, 100.0f, "%.1f ms")) {
         cfg_store(MITI, "min_animation_lock_ms", min_lock);
@@ -379,7 +379,7 @@ void render_plugin_section(AppState& app_state) {
     }
     end_setting_row();
 
-    float spike_mult = cfg_float(MITI, "spike_multiplier", 2.5f);
+    float spike_mult = cfg_get(MITI, "spike_multiplier", 2.5f);
     begin_setting_row("Spike multiplier", "How far above the average an RTT is discarded.");
     if (ImGui::SliderFloat("##spike_mult", &spike_mult, 2.0f, 4.0f, "%.1fx")) {
         cfg_store(MITI, "spike_multiplier", spike_mult);
@@ -387,7 +387,7 @@ void render_plugin_section(AppState& app_state) {
     }
     end_setting_row();
 
-    bool dry_run = cfg_bool(MITI, "dry_run", false);
+    bool dry_run = cfg_get(MITI, "dry_run", false);
     if (setting_toggle("Dry-run mode",
                        "Measure and report only; performs zero memory edits.", &dry_run)) {
         cfg_store(MITI, "dry_run", dry_run);
@@ -422,7 +422,7 @@ void render_overlay_section(AppState& app_state) {
 void render_display_section(AppState& app_state) {
     begin_settings_card("##MitiDisplayCard", ICON_CHECKLIST, "HUD DISPLAY", colors::Violet);
 
-    int hud_mode = cfg_int(MITI, "overlay_mode", 0);
+    int hud_mode = cfg_get(MITI, "overlay_mode", 0);
     static const char* hud_mode_names[] = { "Compact inline", "Two row", "Ping only" };
     begin_setting_row("HUD layout", "How much the in-game HUD shows at a glance.");
     if (ImGui::Combo("##hud_layout", &hud_mode, hud_mode_names, 3)) {
@@ -467,9 +467,9 @@ void render_view_latency(AppState& app_state) {
     // Dry-run is otherwise invisible on this view, so the numbers below look like
     // mitigation that never happened.
     PluginStatus status{ "Mitigating", colors::SuccessLight };
-    if (cfg_bool(MITI, "dry_run", false)) {
+    if (cfg_get(MITI, "dry_run", false)) {
         status = { "Dry-run - measuring only", colors::Violet };
-    } else if (!cfg_bool(MITI, "enabled", true)) {
+    } else if (!cfg_get(MITI, "enabled", true)) {
         status = { "Mitigation disabled", colors::Danger };
     }
 

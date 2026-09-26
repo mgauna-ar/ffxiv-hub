@@ -108,23 +108,23 @@ TEST_CASE(Config, BindingHelpersRoundTripAndPersist) {
     using namespace hub::app::ui;
 
     // Absent keys fall back rather than inventing a value.
-    TEST_ASSERT(cfg_bool("no_such_section", "nope", true));
-    TEST_ASSERT_NEAR(cfg_float("hub", "no_such_key", 4.25f), 4.25f, 0.001f);
+    TEST_ASSERT(cfg_get("no_such_section", "nope", true));
+    TEST_ASSERT_NEAR(cfg_get("hub", "no_such_key", 4.25f), 4.25f, 0.001f);
 
     cfg_store("latency_mitigator", "target_ping_ms", 22.5f);
-    TEST_ASSERT_NEAR(cfg_float("latency_mitigator", "target_ping_ms", 15.0f), 22.5f, 0.001f);
+    TEST_ASSERT_NEAR(cfg_get("latency_mitigator", "target_ping_ms", 15.0f), 22.5f, 0.001f);
 
     cfg_store("hub", "minimize_to_tray", false);
-    TEST_ASSERT(!cfg_bool("hub", "minimize_to_tray", true));
+    TEST_ASSERT(!cfg_get("hub", "minimize_to_tray", true));
 
     cfg_store("combat_meter", "refresh_interval_ms", 250);
-    TEST_ASSERT_EQ(cfg_int("combat_meter", "refresh_interval_ms", 500), 250);
+    TEST_ASSERT_EQ(cfg_get("combat_meter", "refresh_interval_ms", 500), 250);
 
     // A store writes through immediately, so a kill from the tray cannot lose it.
     TEST_ASSERT(std::filesystem::exists(tmp));
     TEST_ASSERT(cfg.load());
-    TEST_ASSERT_NEAR(cfg_float("latency_mitigator", "target_ping_ms", 15.0f), 22.5f, 0.001f);
-    TEST_ASSERT(!cfg_bool("hub", "minimize_to_tray", true));
+    TEST_ASSERT_NEAR(cfg_get("latency_mitigator", "target_ping_ms", 15.0f), 22.5f, 0.001f);
+    TEST_ASSERT(!cfg_get("hub", "minimize_to_tray", true));
 
     std::filesystem::remove(tmp);
     cfg.set_custom_path_for_testing({});

@@ -1,6 +1,6 @@
 ---
 name: after-game-patch
-description: Regenerate game data tables and repair AOB signatures after a Final Fantasy XIV patch. Use when the game has updated, a Dawntrail version bump lands, generated tables need regenerating, or a signature check reports BROKEN or AMBIGUOUS - including any work involving tools/gen_game_tables.py, tools/check_signatures.py, scripts/verify_signatures.py, or the offsets and signatures in include/hub/game_definitions.hpp.
+description: Regenerate game data tables and repair AOB signatures after a Final Fantasy XIV patch. Use when the game has updated, a Dawntrail version bump lands, generated tables need regenerating, or a signature check reports BROKEN or AMBIGUOUS - including any work involving tools/gen_game_tables.py, tools/check_signatures.py, or the offsets and signatures in include/hub/game_definitions.hpp.
 ---
 
 # After a Game Patch
@@ -94,30 +94,27 @@ decoded to `-`.
 
 ## 3. Check the signatures
 
-Run both. They check different things and neither subsumes the other.
-
 ```bash
-python3 tools/check_signatures.py
+python3 tools/check_signatures.py                 # ~/ffxiv/game, or $FFXIV_HUB_GAME_DIR
+python3 tools/check_signatures.py --exe <path to ffxiv_dx11.exe>
 ```
 
 Reads the patterns straight out of `game_definitions.hpp` - no second copy to drift - and
 matches them with the same `hub::memory::find_pattern` the payload uses, against `.text`
 in the executable on disk. Each is `OK` (exactly one hit), `BROKEN` (zero) or `AMBIGUOUS`
-(more than one, which is just as bad since the payload takes the first match). Non-zero
-exit if any is not `OK`. It compiles `tools/sigcheck/sigcheck.cpp` to do the matching,
-because `pe_scanner` only works on a module the OS has loaded.
+(more than one, which is just as bad since the payload takes the first match).
+`tools/xivbin/pe.py` finds `.text`, and a compiled `tools/sigcheck/sigcheck.cpp` does the
+matching, because `pe_scanner` only works on a module the OS has loaded.
 
-```bash
-python3 scripts/verify_signatures.py <path to ffxiv_dx11.exe>
-```
+Every signature that resolves a static global is also followed to its target: the tool
+reads that signature's `<SIGNATURE>_RIP_DISP_OFFSET` / `<SIGNATURE>_RIP_INSN_END` pair
+from the header, decodes the displacement and confirms the target lands in a data
+section rather than `.text` (`NOT DATA` otherwise). A pattern can match exactly once and
+still be the wrong instruction, or the pair can point at the wrong bytes; this catches
+both. Non-zero exit if any signature fails either check.
 
-Adds a check the first one has no notion of: for the five signatures that resolve a static
-singleton, it decodes the RIP-relative displacement and confirms the target lands in a
-data section rather than `.text`. A pattern can match exactly once and still be the wrong
-instruction; this catches that. It is pure Python and needs no C++ toolchain.
-
-**What neither can do:** they report that a signature broke, not what to replace it with,
-and they cannot validate the struct field offsets. Both remain manual reversing work - the
+**What it cannot do:** it reports that a signature broke, not what to replace it with,
+and it cannot validate the struct field offsets. Both remain manual reversing work - the
 rest of this section is how to do it.
 
 ## Repairing a broken signature
@@ -164,8 +161,8 @@ rather than replacing it wholesale.
   position inside the match, or the end of its instruction, moved. Every signature that
   resolves a static global has this pair, named after it and counted from the start of
   the match, so a re-cut pattern that starts earlier or later shifts both. A new such
-  signature gets its pair too, and an entry in `scripts/verify_signatures.py`'s
-  `RIP_RELATIVE` table, which still keeps its own copy of the values.
+  signature gets its pair too; `tools/check_signatures.py` finds it by name, so a
+  missing pair means its target is never checked.
 - `SUPPORTED_GAME_VERSION` - bump it; nothing else records which patch the definitions
   target.
 - The struct padding, so every `static_assert(offsetof(...))` still passes. Those asserts

@@ -200,6 +200,23 @@ private:
         const CombatantRegistry& registry
     );
 
+    /// A heal split as it landed: `raw` is `effective + over`.
+    struct HealAmounts {
+        uint32_t raw{0};
+        uint32_t effective{0};
+        uint32_t over{0};
+    };
+    /// How a heal is counted: a direct heal by its crit, a HoT tick apart from both.
+    enum class HealHit : uint8_t { Normal, Critical, Tick };
+
+    /// Shared body for direct heals and HoT ticks: books `heal` on `stats` and its
+    /// row `act`, the timeline, the friendly totals when `source_friendly`, and
+    /// `recap` (stamped with the heal's time, carrying its effective part) on a
+    /// friendly `target_id`.
+    void record_heal(CombatantStats& stats, ActionSummary& act, const HealAmounts& heal, HealHit hit,
+                     bool source_friendly, EntityId target_id, const RecapSample& recap,
+                     const CombatantRegistry& registry);
+
     std::unordered_map<EntityId, CombatantStats> m_combatants;
     std::unordered_map<DamageTakenKey, DamageTakenRow, DamageTakenKeyHash> m_damage_taken;
     std::unordered_map<BuffCreditKey, uint64_t, BuffCreditKeyHash> m_buff_credits;

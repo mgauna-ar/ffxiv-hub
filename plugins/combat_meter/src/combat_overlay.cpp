@@ -162,6 +162,55 @@ void center_in_row(float row_h) {
     }
 }
 
+/// Moves to the current row's next cell and centres its text in the row.
+void next_cell(int& col, float row_h) {
+    ImGui::TableSetColumnIndex(col++);
+    center_in_row(row_h);
+}
+
+/// Opens a ranked table with the columns every one leads with: rank, job and name.
+/// The caller sets up its own after them, then calls render_ranked_headers().
+bool begin_ranked_table(const char* table_id, int columns, float scale, float& laid_out_at) {
+    const ImGuiTableFlags flags = ImGuiTableFlags_RowBg |
+                                  ImGuiTableFlags_BordersInnerV |
+                                  ImGuiTableFlags_ScrollY |
+                                  ImGuiTableFlags_Resizable |
+                                  ImGuiTableFlags_SizingStretchSame;
+
+    relayout_on_scale_change(table_id, scale, laid_out_at);
+    if (!ImGui::BeginTable(table_id, columns, flags, ImVec2(0, 0))) return false;
+    ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 22.0f * scale);
+    ImGui::TableSetupColumn("Job", ImGuiTableColumnFlags_WidthFixed, 36.0f * scale);
+    ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch);
+    return true;
+}
+
+/// Freezes the header row and draws it in the header font.
+void render_ranked_headers(float scale) {
+    ImGui::TableSetupScrollFreeze(0, 1);
+    const bool header_font = push_header_font(scale);
+    ImGui::TableHeadersRow();
+    if (header_font) ImGui::PopFont();
+}
+
+/// Starts a row with its rank, job and name cells, leaving `col` on the next one.
+/// Returns the row's style for its progress bar.
+hub::common::ui::CombatantStyle begin_ranked_row(const CombatantStats& player, int rank, float row_h, int& col) {
+    ImGui::TableNextRow(0, row_h);
+
+    next_cell(col, row_h);
+    ImGui::TextDisabled("%d", rank);
+
+    const auto style = combatant_style(player);
+
+    next_cell(col, row_h);
+    render_job_cell(player, style);
+
+    next_cell(col, row_h);
+    ImGui::TextUnformatted(player.name.c_str());
+    return style;
+}
+
 } // namespace
 
 float CombatOverlay::row_height(float scale) const {
@@ -252,76 +301,41 @@ void CombatOverlay::render_damage_table(const EncounterSummary& summary, float s
     const bool col_cdh = m_show_col_cdh.load();
     const int columns = 5 + (col_share ? 1 : 0) + (col_crit ? 1 : 0) + (col_dh ? 1 : 0) + (col_cdh ? 1 : 0);
 
-    ImGuiTableFlags flags = ImGuiTableFlags_RowBg |
-                            ImGuiTableFlags_BordersInnerV |
-                            ImGuiTableFlags_ScrollY |
-                            ImGuiTableFlags_Resizable |
-                            ImGuiTableFlags_SizingStretchSame;
-
-    const char* table_id = "##DmgTable";
-    relayout_on_scale_change(table_id, scale, m_damage_layout_scale);
-    if (ImGui::BeginTable(table_id, columns, flags, ImVec2(0, 0))) {
-        ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 22.0f * scale);
-        ImGui::TableSetupColumn("Job", ImGuiTableColumnFlags_WidthFixed, 36.0f * scale);
-        ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch);
+    if (begin_ranked_table("##DmgTable", columns, scale, m_damage_layout_scale)) {
         ImGui::TableSetupColumn(dps_label.c_str(), ImGuiTableColumnFlags_WidthFixed, 70.0f * scale);
         ImGui::TableSetupColumn("Damage", ImGuiTableColumnFlags_WidthFixed, 70.0f * scale);
         if (col_share) ImGui::TableSetupColumn("Share", ImGuiTableColumnFlags_WidthFixed, 56.0f * scale);
         if (col_crit) ImGui::TableSetupColumn("Crit", ImGuiTableColumnFlags_WidthFixed, 50.0f * scale);
         if (col_dh) ImGui::TableSetupColumn("DH", ImGuiTableColumnFlags_WidthFixed, 46.0f * scale);
         if (col_cdh) ImGui::TableSetupColumn("CDH", ImGuiTableColumnFlags_WidthFixed, 48.0f * scale);
-        ImGui::TableSetupScrollFreeze(0, 1);
-
-        const bool header_font = push_header_font(scale);
-        ImGui::TableHeadersRow();
-        if (header_font) ImGui::PopFont();
+        render_ranked_headers(scale);
 
         const float row_h = row_height(scale);
         int rank = 1;
         for (const CombatantStats* player : players) {
-            ImGui::TableNextRow(0, row_h);
             int col = 0;
+            const auto style = begin_ranked_row(*player, rank++, row_h, col);
 
-            ImGui::TableSetColumnIndex(col++);
-            center_in_row(row_h);
-            ImGui::TextDisabled("%d", rank++);
-
-            const auto style = combatant_style(*player);
-
-            ImGui::TableSetColumnIndex(col++);
-            center_in_row(row_h);
-            render_job_cell(*player, style);
-
-            ImGui::TableSetColumnIndex(col++);
-            center_in_row(row_h);
-            ImGui::TextUnformatted(player->name.c_str());
-
-            ImGui::TableSetColumnIndex(col++);
-            center_in_row(row_h);
+            next_cell(col, row_h);
             text_rate(dps_figure(*player, dps_metric));
 
-            ImGui::TableSetColumnIndex(col++);
-            center_in_row(row_h);
+            next_cell(col, row_h);
             text_number(player->total_damage);
 
             if (col_share) {
-                ImGui::TableSetColumnIndex(col++);
-                center_in_row(row_h);
+                next_cell(col, row_h);
                 ImGui::Text("%.1f%%", player->damage_share_pct);
             }
             if (col_crit) {
-                ImGui::TableSetColumnIndex(col++);
-                center_in_row(row_h);
+                next_cell(col, row_h);
                 ImGui::Text("%.1f%%", player->hits.crit_rate());
             }
             if (col_dh) {
-                ImGui::TableSetColumnIndex(col++);
-                center_in_row(row_h);
+                next_cell(col, row_h);
                 ImGui::Text("%.1f%%", player->hits.dh_rate());
             }
             if (col_cdh) {
-                ImGui::TableSetColumnIndex(col++);
-                center_in_row(row_h);
+                next_cell(col, row_h);
                 ImGui::Text("%.1f%%", player->hits.cdh_rate());
             }
 
@@ -341,68 +355,35 @@ void CombatOverlay::render_healing_table(const EncounterSummary& summary, float 
     const bool col_crit = m_show_col_crit.load();
     const int columns = 7 + (col_crit ? 1 : 0);
 
-    ImGuiTableFlags flags = ImGuiTableFlags_RowBg |
-                            ImGuiTableFlags_BordersInnerV |
-                            ImGuiTableFlags_ScrollY |
-                            ImGuiTableFlags_Resizable |
-                            ImGuiTableFlags_SizingStretchSame;
-
-    const char* table_id = "##HealTable";
-    relayout_on_scale_change(table_id, scale, m_healing_layout_scale);
-    if (ImGui::BeginTable(table_id, columns, flags, ImVec2(0, 0))) {
-        ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 22.0f * scale);
-        ImGui::TableSetupColumn("Job", ImGuiTableColumnFlags_WidthFixed, 36.0f * scale);
-        ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch);
+    if (begin_ranked_table("##HealTable", columns, scale, m_healing_layout_scale)) {
         ImGui::TableSetupColumn("HPS", ImGuiTableColumnFlags_WidthFixed, 70.0f * scale);
         ImGui::TableSetupColumn("Heal", ImGuiTableColumnFlags_WidthFixed, 70.0f * scale);
         ImGui::TableSetupColumn("Overheal", ImGuiTableColumnFlags_WidthFixed, 70.0f * scale);
         ImGui::TableSetupColumn("OH%", ImGuiTableColumnFlags_WidthFixed, 56.0f * scale);
         if (col_crit) ImGui::TableSetupColumn("Crit", ImGuiTableColumnFlags_WidthFixed, 50.0f * scale);
-        ImGui::TableSetupScrollFreeze(0, 1);
-
-        const bool header_font = push_header_font(scale);
-        ImGui::TableHeadersRow();
-        if (header_font) ImGui::PopFont();
+        render_ranked_headers(scale);
 
         const float row_h = row_height(scale);
         int rank = 1;
         for (const CombatantStats* player : healers) {
-            ImGui::TableNextRow(0, row_h);
             int col = 0;
+            const auto style = begin_ranked_row(*player, rank++, row_h, col);
 
-            ImGui::TableSetColumnIndex(col++);
-            center_in_row(row_h);
-            ImGui::TextDisabled("%d", rank++);
-
-            const auto style = combatant_style(*player);
-
-            ImGui::TableSetColumnIndex(col++);
-            center_in_row(row_h);
-            render_job_cell(*player, style);
-
-            ImGui::TableSetColumnIndex(col++);
-            center_in_row(row_h);
-            ImGui::TextUnformatted(player->name.c_str());
-
-            ImGui::TableSetColumnIndex(col++);
-            center_in_row(row_h);
+            next_cell(col, row_h);
             text_rate(player->hps);
 
-            ImGui::TableSetColumnIndex(col++);
-            center_in_row(row_h);
+            next_cell(col, row_h);
             text_number(player->effective_healing);
 
             // Raw overhealed amount, not just the ratio: the absolute number is
             // what tells you how much of a cooldown was wasted.
-            ImGui::TableSetColumnIndex(col++);
-            center_in_row(row_h);
+            next_cell(col, row_h);
             const uint64_t overheal = (player->total_healing > player->effective_healing)
                                           ? player->total_healing - player->effective_healing
                                           : 0;
             text_number(overheal);
 
-            ImGui::TableSetColumnIndex(col++);
-            center_in_row(row_h);
+            next_cell(col, row_h);
             const double oh_pct = player->overheal_pct();
             if (oh_pct > 50.0) {
                 ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f), "%.1f%%", oh_pct);
@@ -411,8 +392,7 @@ void CombatOverlay::render_healing_table(const EncounterSummary& summary, float 
             }
 
             if (col_crit) {
-                ImGui::TableSetColumnIndex(col++);
-                center_in_row(row_h);
+                next_cell(col, row_h);
                 // Heals are counted apart from damage hits.
                 ImGui::Text("%.1f%%", player->heal_hit_counts.crit_rate());
             }

@@ -312,30 +312,16 @@ void EncounterEngine::end_encounter_locked(EncounterEndReason reason, TimePoint 
     m_accumulator.update_gcd_uptime(dur);
     m_dirty = false;
 
-    EncounterSummary summary;
+    const EncounterState end_state = (reason == EncounterEndReason::Wipe) ? EncounterState::Wipe : EncounterState::Complete;
+    EncounterSummary summary = base_summary_locked(dur, end_state, reason, std::move(boss), true);
     summary.encounter_id = ++m_next_encounter_id;
-    summary.zone_id = m_current_zone_id;
-    summary.zone_name = m_current_zone_name;
-    summary.zone_visit = m_zone_visit;
     summary.pull_number = ++m_visit_pulls;
-    summary.start_time_us = m_start_time_us;
     summary.end_time_us = (timestamp_us > 0 && !trim_to_kill)
         ? timestamp_us
         : m_start_time_us + static_cast<uint64_t>(dur * 1e6);
     summary.ended_at_unix_s = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::system_clock::now().time_since_epoch()).count());
-    summary.duration_seconds = dur;
-    summary.total_damage = m_accumulator.total_damage();
-    summary.total_healing = m_accumulator.total_healing();
-    summary.total_effective_healing = m_accumulator.total_effective_healing();
-    summary.total_overhealing = m_accumulator.total_overhealing();
-    summary.total_dps = m_accumulator.total_dps();
-    summary.total_hps = m_accumulator.total_hps();
-    summary.state = (reason == EncounterEndReason::Wipe) ? EncounterState::Wipe : EncounterState::Complete;
-    summary.end_reason = reason;
-    summary.boss = std::move(boss);
-    summary.combatants = m_accumulator.sorted_by_dps();
     m_uptime.stop(summary.end_time_us);
     add_detail_rows_locked(summary, summary.end_time_us);
 
@@ -362,7 +348,7 @@ void EncounterEngine::end_encounter_locked(EncounterEndReason reason, TimePoint 
     m_pull_history.push_back(std::move(pull));
     m_live_holds_latest_pull = true;
 
-    m_state = (reason == EncounterEndReason::Wipe) ? EncounterState::Wipe : EncounterState::Complete;
+    m_state = end_state;
     apply_pending_zone_locked();
 }
 
@@ -520,6 +506,28 @@ EncounterSummary EncounterEngine::current_rankings(TimePoint now) {
     return summary_locked(now, false);
 }
 
+EncounterSummary EncounterEngine::base_summary_locked(double duration_seconds, EncounterState state,
+                                                     EncounterEndReason reason, BossSummary boss,
+                                                     bool with_actions) const {
+    EncounterSummary summary;
+    summary.zone_id = m_current_zone_id;
+    summary.zone_name = m_current_zone_name;
+    summary.zone_visit = m_zone_visit;
+    summary.start_time_us = m_start_time_us;
+    summary.duration_seconds = duration_seconds;
+    summary.total_damage = m_accumulator.total_damage();
+    summary.total_healing = m_accumulator.total_healing();
+    summary.total_effective_healing = m_accumulator.total_effective_healing();
+    summary.total_overhealing = m_accumulator.total_overhealing();
+    summary.total_dps = m_accumulator.total_dps();
+    summary.total_hps = m_accumulator.total_hps();
+    summary.state = state;
+    summary.end_reason = reason;
+    summary.boss = std::move(boss);
+    summary.combatants = m_accumulator.sorted_by_dps(true, with_actions);
+    return summary;
+}
+
 void EncounterEngine::add_detail_rows_locked(EncounterSummary& summary, uint64_t end_us) const {
     summary.deaths = m_death_log.deaths();
     summary.damage_taken = m_accumulator.damage_taken_rows();
@@ -569,26 +577,12 @@ EncounterSummary EncounterEngine::summary_locked(TimePoint now, bool with_detail
         if (m_live_holds_latest_pull) shown_pull = pull;
     }
 
-    EncounterSummary summary;
-    summary.encounter_id = m_next_encounter_id + 1;
-    summary.zone_id = m_current_zone_id;
-    summary.zone_name = m_current_zone_name;
-    summary.zone_visit = m_zone_visit;
-    summary.start_time_us = m_start_time_us;
-    summary.duration_seconds = dur;
-    summary.end_time_us = m_start_time_us + static_cast<uint64_t>(dur * 1e6);
-
-    summary.total_damage = m_accumulator.total_damage();
-    summary.total_healing = m_accumulator.total_healing();
-    summary.total_effective_healing = m_accumulator.total_effective_healing();
-    summary.total_overhealing = m_accumulator.total_overhealing();
-    summary.total_dps = m_accumulator.total_dps();
-    summary.total_hps = m_accumulator.total_hps();
-    summary.state = m_state;
-    summary.end_reason = EncounterEndReason::None;
     // An ended pull keeps the boss it was archived with, late kill included.
-    summary.boss = shown_pull ? shown_pull->boss : m_bosses.boss(m_accumulator, m_registry);
-    summary.combatants = m_accumulator.sorted_by_dps(true, with_detail);
+    EncounterSummary summary = base_summary_locked(
+        dur, m_state, EncounterEndReason::None,
+        shown_pull ? shown_pull->boss : m_bosses.boss(m_accumulator, m_registry), with_detail);
+    summary.encounter_id = m_next_encounter_id + 1;
+    summary.end_time_us = m_start_time_us + static_cast<uint64_t>(dur * 1e6);
     if (with_detail) {
         add_detail_rows_locked(summary, summary.end_time_us);
     }
