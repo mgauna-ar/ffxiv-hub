@@ -10,16 +10,21 @@ mirroring the in-game topology. A missing lock does not fail an ordinary run - t
 passes and the race stays silent. It only reports under ThreadSanitizer:
 
 ```bash
-clang++ -std=c++20 -fsanitize=thread -g -O1 \
-  -Iinclude -Isrc -Itests -Iplugins -Iplugins/latency_mitigator/include -Iplugins/combat_meter/include \
-  src/common/*.cpp src/common/ipc/*.cpp src/common/config/*.cpp src/common/os/*.cpp src/common/ui/*.cpp \
-  plugins/*/src/*.cpp src/payload/*.cpp src/app/app_state.cpp src/app/ui/*.cpp tests/*.cpp \
-  -o tsan_runner && ./tsan_runner
+make tsan
 ```
 
-Run it after touching any `EncounterEngine`, `CombatantRegistry` or `MetricsAccumulator`
-entry point, `src/common/ipc/ring_buffer.hpp`, or the set of threads that push outbound
-packets. It must report zero data races.
+This builds the same sources as `make` with `-fsanitize=thread -g -O1` into
+`build/tsan/` (clang++ unless `CXX` says otherwise) and runs the suite with
+`halt_on_error=1`, so the first race fails the target. CI runs it on every pull request
+(the *Linux ThreadSanitizer* job), but run it locally after touching any
+`EncounterEngine`, `CombatantRegistry` or `MetricsAccumulator` entry point,
+`src/common/ipc/ring_buffer.hpp`, or the set of threads that push outbound packets. It
+must report zero data races.
+
+Clang needs its sanitizer runtime (`libclang-rt-<version>-dev` on Debian and Ubuntu); a
+link error naming `libclang_rt.tsan` means it is missing. On a kernel with 32-bit mmap
+ASLR entropy, the LLVM 18 runtime aborts with "unexpected memory mapping" before any test
+runs; `sudo sysctl -w vm.mmap_rnd_bits=28` works around it, as CI does.
 
 ## What it is protecting
 

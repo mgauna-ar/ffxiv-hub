@@ -41,14 +41,28 @@ Both binaries must stay in the same directory when extracted: the desktop app re
 
 ## Continuous Integration
 
-`.github/workflows/ci.yml` runs on `windows-latest` via MSVC 2022 and CMake:
+`.github/workflows/ci.yml` runs these jobs on every pull request and push to `main`:
 
-- Builds Release `/MT` binaries.
-- Executes the full CTest suite.
-- Stages `dist/`, compresses `ffxiv-hub-windows-x64.zip` and writes a SHA256 sidecar
-  (`ffxiv-hub-windows-x64.zip.sha256`, which is uploaded alongside the archive).
-- Uploads build artifacts on every push to `main`.
-- Publishes automated GitHub Releases on tags matching `v*.*.*`.
+- **Windows MSVC Build, Test & Package** (`build-windows`, `windows-latest`, MSVC 2022 and
+  CMake):
+  - Builds Release `/MT` binaries.
+  - Executes the full CTest suite.
+  - Stages `dist/`, compresses `ffxiv-hub-windows-x64.zip` and writes a SHA256 sidecar
+    (`ffxiv-hub-windows-x64.zip.sha256`, which is uploaded alongside the archive).
+  - Uploads the build artifacts, and on a tag also the archive and sidecar for the
+    release job.
+- **Linux clang++ / g++ Build & Test** (`build-linux`, `ubuntu-latest`): `make` with
+  each compiler, so the `-Werror` build, the unit tests and the `check-ui` syntax pass
+  over the `HAVE_IMGUI` desktop UI all run off Windows.
+- **Linux ThreadSanitizer** and **Linux AddressSanitizer + UBSan** (`sanitizers`,
+  `ubuntu-latest`): `make tsan` and `make asan` with clang++. Both lower
+  `vm.mmap_rnd_bits` to 28 first, which the LLVM 18 sanitizer runtimes need on the
+  runner's kernel.
+- **Publish GitHub Release** (`release`): only on tags matching `v*.*.*`, after every
+  job above has passed. It downloads the archive and sidecar and publishes them.
+
+The workflow's token is `contents: read`; only the `release` job gets `contents: write`.
+A new job that needs to write gets its own `permissions:` block, never a wider default.
 
 The CI staging step and the CPack file list are two separate definitions of the archive
 contents - `.github/workflows/ci.yml` and the `install()` rules in `CMakeLists.txt`. Change
