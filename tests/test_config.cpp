@@ -285,7 +285,6 @@ TEST_CASE(Config, PayloadAutosaveKeepsTheDesktopRate) {
     combat.initialize();
     combat.serialize_config(payload.root()["combat_meter"]);
     TEST_ASSERT(payload.save());
-    combat.shutdown();
 
     ConfigManager reader;
     reader.set_custom_path_for_testing(tmp);
@@ -332,7 +331,6 @@ TEST_CASE(Config, DefaultsCoverEveryCombatMeterKey) {
     JsonValue out{JsonValue::ObjectType{}};
     plugin.serialize_config(out);
     assert_defaults_cover(out, "combat_meter");
-    plugin.shutdown();
 }
 
 TEST_CASE(Config, DefaultsCoverEveryLatencyMitigatorKey) {
@@ -341,7 +339,6 @@ TEST_CASE(Config, DefaultsCoverEveryLatencyMitigatorKey) {
     JsonValue out{JsonValue::ObjectType{}};
     plugin.serialize_config(out);
     assert_defaults_cover(out, "latency_mitigator");
-    plugin.shutdown();
 }
 
 TEST_CASE(Config, SaveReportsFailureInsteadOfClaimingSuccess) {

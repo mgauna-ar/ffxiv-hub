@@ -31,7 +31,6 @@
 
 namespace {
 
-HMODULE g_dll_module = nullptr;
 std::atomic<bool> g_shutdown_requested{false};
 
 DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
@@ -187,7 +186,6 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
     if (!hook_mgr.register_consumer(combat_plugin.get())) {
         hub::os::Logger::warn("Failed to register the combat meter as a hook consumer");
     }
-    hook_mgr.set_ring_buffer(&pipe_client->ring_buffer());
 
     hub::os::Logger::info("Installing game hooks...");
     const bool hooks_installed = hook_mgr.install();
@@ -484,7 +482,6 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved) {
     switch (ul_reason_for_call) {
         case DLL_PROCESS_ATTACH:
-            g_dll_module = hModule;
             DisableThreadLibraryCalls(hModule);
             if (HANDLE thread = CreateThread(nullptr, 0, PayloadMainThread, hModule, 0, nullptr)) {
                 CloseHandle(thread);

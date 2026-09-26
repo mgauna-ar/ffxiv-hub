@@ -379,14 +379,6 @@ void EncounterEngine::enter_zone_locked(uint32_t zone_id, std::string zone_name)
     m_visit_pulls = 0;
 }
 
-void EncounterEngine::split_encounter(TimePoint now) {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
-    if (m_state == EncounterState::InCombat) {
-        end_encounter_locked(EncounterEndReason::Manual, now);
-        start_encounter_locked(now);
-    }
-}
-
 void EncounterEngine::reset_current() {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
     reset_current_locked();
@@ -423,14 +415,6 @@ void EncounterEngine::set_zone_locked(uint32_t zone_id, std::string zone_name, T
         }
         enter_zone_locked(zone_id, std::move(zone_name));
     }
-}
-
-double EncounterEngine::active_duration_seconds(TimePoint now) const {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
-    if (m_state != EncounterState::InCombat) {
-        return 0.0;
-    }
-    return elapsed_since_start_locked(now);
 }
 
 std::vector<EncounterSummary> EncounterEngine::pull_history() const {

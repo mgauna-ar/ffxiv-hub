@@ -1,7 +1,6 @@
 #include "common/os/logger.hpp"
 #include "common/config/config_manager.hpp"
 
-#include <iostream>
 #include <fstream>
 #include <sstream>
 #include <iomanip>
@@ -24,7 +23,6 @@ namespace {
 std::mutex g_log_mutex;
 std::ofstream g_log_file;
 std::string g_active_path;
-bool g_echo_stdout = false;
 
 std::string get_timestamp_string() {
     using namespace std::chrono;
@@ -97,11 +95,6 @@ bool Logger::init(const std::string& custom_path, bool rotate) {
     return false;
 }
 
-void Logger::set_echo_stdout(bool echo) noexcept {
-    std::lock_guard<std::mutex> lock(g_log_mutex);
-    g_echo_stdout = echo;
-}
-
 void Logger::log(LogLevel level, std::string_view message) {
     std::lock_guard<std::mutex> lock(g_log_mutex);
     const std::string ts = get_timestamp_string();
@@ -110,10 +103,6 @@ void Logger::log(LogLevel level, std::string_view message) {
     if (g_log_file.is_open()) {
         g_log_file << "[" << ts << "] [" << lvl_str << "] " << message << "\n";
         g_log_file.flush();
-    }
-
-    if (g_echo_stdout) {
-        std::cout << "[" << ts << "] [" << lvl_str << "] " << message << "\n" << std::flush;
     }
 }
 

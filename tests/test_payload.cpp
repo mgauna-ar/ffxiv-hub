@@ -143,7 +143,6 @@ TEST_CASE(Payload, OverlayHostRegistrationAndManagement) {
     host.register_overlay(hud);
     host.register_overlay(meter_overlay);
 
-    TEST_ASSERT(host.overlays().size() >= 2);
     TEST_ASSERT(host.find_overlay("##LatencyHUDOverlay") == hud);
     TEST_ASSERT(host.find_overlay("##CombatMeterOverlay") == meter_overlay);
     TEST_ASSERT(host.find_overlay("##NonExistent") == nullptr);
@@ -1068,11 +1067,11 @@ TEST_CASE(Payload, DisabledPluginsIgnoreHookDispatch) {
 
     combat.set_enabled(false);
     combat.on_receive_action_effect(777, &chr, &header, entries.data(), nullptr);
-    TEST_ASSERT_EQ(combat.engine().accumulator().total_damage(), 0u);
+    TEST_ASSERT_EQ(combat.engine().accumulator_unlocked().total_damage(), 0u);
 
     combat.set_enabled(true);
     combat.on_receive_action_effect(777, &chr, &header, entries.data(), nullptr);
-    TEST_ASSERT_EQ(combat.engine().accumulator().total_damage(), 25000u);
+    TEST_ASSERT_EQ(combat.engine().accumulator_unlocked().total_damage(), 25000u);
 }
 
 TEST_CASE(Payload, HotDotKindDecidesDamageOrHeal) {

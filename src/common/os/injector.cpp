@@ -65,7 +65,6 @@ bool DllInjector::inject(const ProcessInfo& proc, const std::filesystem::path& d
     }
 
     const std::wstring full_path_w = abs_path.wstring();
-    m_target_process_handle = proc.handle;
     const auto h_process = static_cast<HANDLE>(proc.handle);
 
     const size_t path_size_bytes = (full_path_w.length() + 1) * sizeof(wchar_t);
@@ -142,7 +141,6 @@ bool DllInjector::inject(const ProcessInfo& proc, const std::filesystem::path& d
         return false;
     }
 
-    m_remote_hmodule = static_cast<uintptr_t>(remote_exit_code);
     m_last_error = "OK";
     return true;
 }

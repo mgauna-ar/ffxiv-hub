@@ -22,12 +22,10 @@ public:
 
     bool initialize() override;
     void update(double delta_seconds) override;
-    void shutdown() override;
 
     // IConfigurable
     void serialize_config(config::JsonValue& out) const override;
     void deserialize_config(const config::JsonValue& in) override;
-    void render_settings_ui() override;
 
     // IHookConsumer
     void on_use_action_location(

@@ -43,10 +43,6 @@ std::shared_ptr<IOverlay> OverlayHost::find_overlay(std::string_view overlay_id)
     return nullptr;
 }
 
-const std::vector<std::shared_ptr<IOverlay>>& OverlayHost::overlays() const noexcept {
-    return m_overlays;
-}
-
 void OverlayHost::set_game_state(const GameStateProvider* provider) noexcept {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_game_state = provider;
@@ -64,7 +60,6 @@ void OverlayHost::set_game_state(const GameStateProvider* provider) noexcept {
 #include <windows.h>
 #include <d3d11.h>
 #include "imgui.h"
-#include "imgui_internal.h"
 #include "backends/imgui_impl_win32.h"
 #include "backends/imgui_impl_dx11.h"
 
@@ -206,7 +201,6 @@ bool OverlayHost::initialize(void* hwnd, void* d3d_device, void* d3d_context) {
         ImGui::DestroyContext();
         return false;
     }
-    m_hwnd = hwnd;
 
     if (!ImGui_ImplDX11_Init(
             reinterpret_cast<ID3D11Device*>(d3d_device),
@@ -228,7 +222,6 @@ void OverlayHost::shutdown() {
     ImGui::DestroyContext();
 
     m_initialized = false;
-    m_hwnd = nullptr;
     m_font_regular = nullptr;
     m_font_bold    = nullptr;
     m_font_medium  = nullptr;
@@ -255,36 +248,6 @@ void OverlayHost::render_frame() {
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 }
 
-bool OverlayHost::is_point_inside_ui(int screen_x, int screen_y) const {
-    if (!m_initialized) return false;
-
-    ImGuiContext* g = ImGui::GetCurrentContext();
-    if (!g) return false;
-
-    // ImGui window rects are in client space; the caller reports screen space.
-    POINT p{screen_x, screen_y};
-    if (m_hwnd && !ScreenToClient(static_cast<HWND>(m_hwnd), &p)) return false;
-    const ImVec2 pt(static_cast<float>(p.x), static_cast<float>(p.y));
-
-    // Grip padding: a point just outside the frame still belongs to the resize
-    // handle, so treating it as game input makes edges impossible to grab.
-    constexpr float RESIZE_GRIP_PADDING = 4.0f;
-
-    for (int i = 0; i < g->Windows.Size; ++i) {
-        ImGuiWindow* w = g->Windows[i];
-        if (!w || !w->Active || w->Hidden) continue;
-        // A click-through overlay takes no input, so it must not claim the point.
-        if (w->Flags & ImGuiWindowFlags_NoInputs) continue;
-
-        ImRect r = w->Rect();
-        r.Expand(RESIZE_GRIP_PADDING);
-        if (r.Contains(pt)) {
-            return true;
-        }
-    }
-    return false;
-}
-
 } // namespace hub::payload
 
 #else // !_WIN32 - Cross-platform mock implementation for macOS / Linux testing
@@ -294,15 +257,13 @@ namespace hub::payload {
 void OverlayHost::setup_style(float) {}
 void OverlayHost::setup_fonts() {}
 
-bool OverlayHost::initialize(void* hwnd, void*, void*) {
-    m_hwnd = hwnd;
+bool OverlayHost::initialize(void*, void*, void*) {
     m_initialized = true;
     return true;
 }
 
 void OverlayHost::shutdown() {
     m_initialized = false;
-    m_hwnd = nullptr;
 }
 
 void OverlayHost::render_frame() {
@@ -313,10 +274,6 @@ void OverlayHost::render_frame() {
             overlay->render();
         }
     }
-}
-
-bool OverlayHost::is_point_inside_ui(int, int) const {
-    return false;
 }
 
 } // namespace hub::payload

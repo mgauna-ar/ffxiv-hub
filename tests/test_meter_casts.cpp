@@ -244,22 +244,22 @@ TEST_CASE(MeterCasts, ShortGcdsCountInFull) {
 
 TEST_CASE(MeterCasts, CastsNeverStartAPull) {
     EncounterEngine engine;
-    register_party(engine.registry());
+    register_party(engine.registry_unlocked());
     const Timeline tl;
     engine.process_cast(cast(kSam, kHeavySwing, 1.0), tl.at(1.0));
     TEST_ASSERT(engine.state() == EncounterState::Idle);
-    TEST_ASSERT(engine.accumulator().find_stats(kSam) == nullptr);
+    TEST_ASSERT(engine.accumulator_unlocked().find_stats(kSam) == nullptr);
 
     // The press behind the hit that opened the pull counts; one stamped earlier does not.
     engine.process_action(hit(kSam, 10.0), tl.at(10.0));
     engine.process_cast(cast(kSam, kBerserk, 9.5), tl.at(10.0));
     engine.process_cast(cast(kSam, kHeavySwing, 10.0), tl.at(10.0));
-    TEST_ASSERT_EQ(engine.accumulator().find_stats(kSam)->casts, 1u);
+    TEST_ASSERT_EQ(engine.accumulator_unlocked().find_stats(kSam)->casts, 1u);
 }
 
 TEST_CASE(MeterCasts, APlayersCastsKeepThePullAlive) {
     EncounterEngine engine(7.0);
-    register_party(engine.registry());
+    register_party(engine.registry_unlocked());
     const Timeline tl;
     engine.process_action(hit(kSam, 0.0), tl.at(0.0));
     engine.process_cast(cast(kSch, 16542, 5.0), tl.at(5.0));    // Recitation
@@ -274,14 +274,14 @@ TEST_CASE(MeterCasts, APlayersCastsKeepThePullAlive) {
 
 TEST_CASE(MeterCasts, EnemyAndPetCastsAreNobodysPress) {
     EncounterEngine engine(7.0);
-    register_party(engine.registry());
-    engine.registry().register_actor(kEos, "Eos", Job::None, kSch, ActorType::Pet);
+    register_party(engine.registry_unlocked());
+    engine.registry_unlocked().register_actor(kEos, "Eos", Job::None, kSch, ActorType::Pet);
     const Timeline tl;
     engine.process_action(hit(kSam, 0.0), tl.at(0.0));
     engine.process_cast(cast(kEos, 16537, 1.0), tl.at(1.0));    // Whispering Dawn
     engine.process_cast(cast(kBoss, 7477, 5.0), tl.at(5.0));
-    TEST_ASSERT(engine.accumulator().find_stats(kSch) == nullptr);
-    TEST_ASSERT(engine.accumulator().find_stats(kBoss)->casts == 0u);
+    TEST_ASSERT(engine.accumulator_unlocked().find_stats(kSch) == nullptr);
+    TEST_ASSERT(engine.accumulator_unlocked().find_stats(kBoss)->casts == 0u);
     // Neither kept the pull open.
     engine.update(tl.at(7.5));
     TEST_ASSERT_FALSE(engine.in_combat());
@@ -289,7 +289,7 @@ TEST_CASE(MeterCasts, EnemyAndPetCastsAreNobodysPress) {
 
 TEST_CASE(MeterCasts, CastsPerActionAndPerMinute) {
     EncounterEngine engine;
-    register_party(engine.registry());
+    register_party(engine.registry_unlocked());
     const Timeline tl;
     engine.process_action(hit(kSam, 0.0), tl.at(0.0));
     engine.process_cast(cast(kSam, kHeavySwing, 0.0), tl.at(0.0));
@@ -338,7 +338,7 @@ TEST_CASE(MeterCasts, PluginSendsThePressAfterItsHits) {
     plugin.initialize();
     hub::ipc::PacketRingBuffer ring;
     plugin.set_ring_buffer(&ring);
-    register_party(plugin.engine().registry());
+    register_party(plugin.engine().registry_unlocked());
 
     hub::game::ActionEffectHeader header{};
     header.animation_target_id = kBoss;
@@ -386,13 +386,12 @@ TEST_CASE(MeterCasts, PluginSendsThePressAfterItsHits) {
 
     // The app's engine, fed what was shipped in order, counts the same press.
     EncounterEngine mirror;
-    register_party(mirror.registry());
+    register_party(mirror.registry_unlocked());
     mirror.process_action(hits[0]);
     mirror.process_cast(casts[0]);
     mirror.process_action(hits[1]);
-    TEST_ASSERT_EQ(plugin.engine().accumulator().find_stats(kSam)->casts, 1u);
-    TEST_ASSERT_EQ(mirror.accumulator().find_stats(kSam)->casts, 1u);
-    plugin.shutdown();
+    TEST_ASSERT_EQ(plugin.engine().accumulator_unlocked().find_stats(kSam)->casts, 1u);
+    TEST_ASSERT_EQ(mirror.accumulator_unlocked().find_stats(kSam)->casts, 1u);
 }
 
 TEST_CASE(MeterCasts, WireStructSize) {

@@ -548,7 +548,6 @@ TEST_CASE(MeterEngine, ReaderNowBeforeThePullStartReadsZero) {
         TEST_ASSERT_EQ(summary.duration_seconds, 0.0);
         TEST_ASSERT_EQ(summary.end_time_us, summary.start_time_us);
     }
-    TEST_ASSERT_EQ(engine.active_duration_seconds(before), 0.0);
 
     engine.update(before);
     TEST_ASSERT_TRUE(engine.in_combat());
@@ -717,8 +716,8 @@ TEST_CASE(MeterEngine, WipeThatEndsCombatIsAWipe) {
     sync.entity_ids[0] = 101; sync.job_ids[0] = static_cast<uint32_t>(Job::WAR);
     sync.entity_ids[1] = 102; sync.job_ids[1] = static_cast<uint32_t>(Job::WHM);
     engine.process_party_sync(sync);
-    engine.registry().update_hp(101, 80000, 80000);
-    engine.registry().update_hp(102, 60000, 60000);
+    engine.registry_unlocked().update_hp(101, 80000, 80000);
+    engine.registry_unlocked().update_hp(102, 60000, 60000);
 
     engine.set_game_state(kInGameCombat, t0);
     engine.process_action(landed_hit(101), t0);
@@ -726,8 +725,8 @@ TEST_CASE(MeterEngine, WipeThatEndsCombatIsAWipe) {
     tick(engine, kOutOfGameCombat, after(t0, 5));
     TEST_ASSERT_EQ(engine.state(), EncounterState::InCombat);
 
-    engine.registry().update_hp(101, 0);
-    engine.registry().update_hp(102, 0);
+    engine.registry_unlocked().update_hp(101, 0);
+    engine.registry_unlocked().update_hp(102, 0);
     tick(engine, kOutOfGameCombat, after(t0, 6));
     TEST_ASSERT_EQ(engine.state(), EncounterState::Wipe);
     TEST_ASSERT_EQ(engine.latest_pull()->end_reason, EncounterEndReason::Wipe);
@@ -800,8 +799,8 @@ TEST_CASE(MeterEngine, PartyWipeDetection) {
     sync.entity_ids[1] = 102; sync.job_ids[1] = static_cast<uint32_t>(Job::WHM);
     engine.process_party_sync(sync);
 
-    engine.registry().update_hp(101, 80000, 80000);
-    engine.registry().update_hp(102, 60000, 60000);
+    engine.registry_unlocked().update_hp(101, 80000, 80000);
+    engine.registry_unlocked().update_hp(102, 60000, 60000);
 
     // Start encounter
     hub::ipc::CombatActionPacket act{};
@@ -812,12 +811,12 @@ TEST_CASE(MeterEngine, PartyWipeDetection) {
     TEST_ASSERT_EQ(engine.state(), EncounterState::InCombat);
 
     // One player dies
-    engine.registry().update_hp(101, 0);
+    engine.registry_unlocked().update_hp(101, 0);
     engine.update(t0 + std::chrono::seconds(1));
     TEST_ASSERT_EQ(engine.state(), EncounterState::InCombat); // Surviving WHM
 
     // All dead -> Wipe
-    engine.registry().update_hp(102, 0);
+    engine.registry_unlocked().update_hp(102, 0);
     engine.update(t0 + std::chrono::seconds(2));
     TEST_ASSERT_EQ(engine.state(), EncounterState::Wipe);
 
@@ -1181,7 +1180,6 @@ TEST_CASE(MeterPlugin, InGameEngineKeepsOnlyTheLatestPull) {
     TEST_ASSERT_EQ(index.size(), 1u);
     TEST_ASSERT_EQ(index[0].encounter_id, 3u);
     TEST_ASSERT_EQ(index[0].pull_number, 3u);
-    plugin.shutdown();
 }
 
 TEST_CASE(MeterPlugin, PluginLifecycleAndConfig) {
@@ -1227,7 +1225,6 @@ TEST_CASE(MeterPlugin, PluginLifecycleAndConfig) {
     TEST_ASSERT_FALSE(plugin.is_enabled());
     plugin.set_enabled(true);
 
-    plugin.shutdown();
 }
 
 TEST_CASE(MeterPlugin, HookConsumerDispatch) {
@@ -1262,17 +1259,16 @@ TEST_CASE(MeterPlugin, HookConsumerDispatch) {
     );
 
     TEST_ASSERT_TRUE(plugin.engine().in_combat());
-    TEST_ASSERT_EQ(plugin.engine().accumulator().total_damage(), 25000u);
+    TEST_ASSERT_EQ(plugin.engine().accumulator_unlocked().total_damage(), 25000u);
 
-    const auto* actor = plugin.engine().registry().find_actor(777);
+    const auto* actor = plugin.engine().registry_unlocked().find_actor(777);
     TEST_ASSERT(actor != nullptr);
     TEST_ASSERT_EQ(actor->name, "Krile");
     TEST_ASSERT_EQ(actor->job, Job::PCT);
     TEST_ASSERT_EQ(actor->actor_type, ActorType::Player);
     TEST_ASSERT_EQ(actor->owner_id, 0u);
-    TEST_ASSERT_TRUE(plugin.engine().registry().is_friendly(777));
+    TEST_ASSERT_TRUE(plugin.engine().registry_unlocked().is_friendly(777));
 
-    plugin.shutdown();
 }
 
 TEST_CASE(MeterPlugin, CountsDamageOverTimeTicks) {
@@ -1304,18 +1300,17 @@ TEST_CASE(MeterPlugin, CountsDamageOverTimeTicks) {
     plugin.on_receive_action_effect(777, &chr, &header, entries.data(), nullptr);
     TEST_ASSERT_TRUE(plugin.engine().in_combat());
 
-    const uint64_t damage_before = plugin.engine().accumulator().total_damage();
+    const uint64_t damage_before = plugin.engine().accumulator_unlocked().total_damage();
 
     // What the hook sends for effect kind 3, a damage-over-time tick.
     plugin.on_status_tick(0x40000123, 777, 1871, 4500, /*is_heal=*/false);
 
-    TEST_ASSERT_EQ(plugin.engine().accumulator().total_damage(), damage_before + 4500u);
+    TEST_ASSERT_EQ(plugin.engine().accumulator_unlocked().total_damage(), damage_before + 4500u);
 
-    const uint64_t healing_before = plugin.engine().accumulator().total_healing();
+    const uint64_t healing_before = plugin.engine().accumulator_unlocked().total_healing();
     plugin.on_status_tick(777, 777, 158, 2200, /*is_heal=*/true);
-    TEST_ASSERT_EQ(plugin.engine().accumulator().total_healing(), healing_before + 2200u);
+    TEST_ASSERT_EQ(plugin.engine().accumulator_unlocked().total_healing(), healing_before + 2200u);
 
-    plugin.shutdown();
 }
 
 TEST_CASE(MeterPlugin, StatusTickIgnoredWhenDisabledOrTargetless) {
@@ -1330,7 +1325,6 @@ TEST_CASE(MeterPlugin, StatusTickIgnoredWhenDisabledOrTargetless) {
     plugin.on_status_tick(0, 777, 1871, 4500, false);
     TEST_ASSERT_FALSE(plugin.engine().in_combat());
 
-    plugin.shutdown();
 }
 
 TEST_CASE(MeterPlugin, MapsGameObjectKindToActorType) {
@@ -1357,10 +1351,10 @@ TEST_CASE(MeterPlugin, MapsGameObjectKindToActorType) {
 
     plugin.on_receive_action_effect(0x40000123, &monster, &header, entries.data(), nullptr);
 
-    const auto* enemy = plugin.engine().registry().find_actor(0x40000123);
+    const auto* enemy = plugin.engine().registry_unlocked().find_actor(0x40000123);
     TEST_ASSERT(enemy != nullptr);
     TEST_ASSERT_EQ(enemy->actor_type, ActorType::Monster);
-    TEST_ASSERT_FALSE(plugin.engine().registry().is_friendly(0x40000123));
+    TEST_ASSERT_FALSE(plugin.engine().registry_unlocked().is_friendly(0x40000123));
 
     // object_kind 5 is a pet, which ActorType spells 2.
     hub::game::CharacterObject pet{};
@@ -1372,12 +1366,11 @@ TEST_CASE(MeterPlugin, MapsGameObjectKindToActorType) {
 
     plugin.on_receive_action_effect(888, &pet, &header, entries.data(), nullptr);
 
-    const auto* pet_actor = plugin.engine().registry().find_actor(888);
+    const auto* pet_actor = plugin.engine().registry_unlocked().find_actor(888);
     TEST_ASSERT(pet_actor != nullptr);
     TEST_ASSERT_EQ(pet_actor->actor_type, ActorType::Pet);
     TEST_ASSERT_EQ(pet_actor->owner_id, 777u);
 
-    plugin.shutdown();
 }
 
 TEST_CASE(MeterPlugin, EmitsCombatActionOverIpc) {
@@ -1442,7 +1435,7 @@ TEST_CASE(MeterPlugin, StreamsNothingWhileDisconnected) {
     std::vector<uint8_t> item;
     TEST_ASSERT_FALSE(ring.pop(item));
     // The in-game meter keeps counting.
-    TEST_ASSERT_EQ(plugin.engine().accumulator().total_damage(), 29500u);
+    TEST_ASSERT_EQ(plugin.engine().accumulator_unlocked().total_damage(), 29500u);
 
     plugin.set_connected(true);
     plugin.on_receive_action_effect(777, nullptr, &header, entries.data(), nullptr);
@@ -1887,7 +1880,7 @@ TEST_CASE(MeterEngine, WipeDurationTrimsDeadTail) {
     sync.entity_ids[0] = 101;
     sync.job_ids[0] = static_cast<uint32_t>(Job::WAR);
     engine.process_party_sync(sync);
-    engine.registry().update_hp(101, 80000, 80000);
+    engine.registry_unlocked().update_hp(101, 80000, 80000);
 
     hub::ipc::CombatActionPacket act{};
     act.source_id = 101;
@@ -1897,7 +1890,7 @@ TEST_CASE(MeterEngine, WipeDurationTrimsDeadTail) {
     engine.process_action(act, t0 + std::chrono::seconds(4));
     TEST_ASSERT_EQ(engine.state(), EncounterState::InCombat);
 
-    engine.registry().update_hp(101, 0);
+    engine.registry_unlocked().update_hp(101, 0);
     engine.update(t0 + std::chrono::seconds(9));
     TEST_ASSERT_EQ(engine.state(), EncounterState::Wipe);
 
@@ -2218,7 +2211,7 @@ TEST_CASE(MeterPlugin, PublishesActorInfoForSourceWithCharacterPointer) {
     plugin.on_receive_action_effect(777, &chr, &header, entries.data(), nullptr);
 
     // Still registered locally for the in-game overlay.
-    const auto* actor = plugin.engine().registry().find_actor(777);
+    const auto* actor = plugin.engine().registry_unlocked().find_actor(777);
     TEST_ASSERT(actor != nullptr);
     TEST_ASSERT_EQ(actor->name, test_name);
 
@@ -2233,7 +2226,6 @@ TEST_CASE(MeterPlugin, PublishesActorInfoForSourceWithCharacterPointer) {
     TEST_ASSERT_EQ(source->actor_type, static_cast<uint8_t>(ActorType::Player));
     TEST_ASSERT_EQ(source->owner_id, 0u);
 
-    plugin.shutdown();
 }
 
 TEST_CASE(MeterPlugin, RepublishesActorInfoOnlyWhenItChanges) {
@@ -2286,7 +2278,6 @@ TEST_CASE(MeterPlugin, RepublishesActorInfoOnlyWhenItChanges) {
     }
     TEST_ASSERT_EQ(for_source, 1u);
 
-    plugin.shutdown();
 }
 
 TEST_CASE(MeterPlugin, ArchivedPullCarriesNameIntoMirrorEngine) {
@@ -2354,7 +2345,6 @@ TEST_CASE(MeterPlugin, ArchivedPullCarriesNameIntoMirrorEngine) {
     TEST_ASSERT_EQ(row->name, test_name);
     TEST_ASSERT_EQ(row->job, Job::PCT);
 
-    plugin.shutdown();
 }
 
 TEST_CASE(MeterRegistry, LocalPlayerFollowsTheCurrentParty) {
@@ -2511,12 +2501,12 @@ TEST_CASE(MeterEngine, PrepullHealDoesNotStartEncounter) {
     TEST_ASSERT_FALSE(engine.in_combat());
 
     // Nothing was banked either: the heal landed before the pull.
-    TEST_ASSERT_EQ(engine.accumulator().total_healing(), 0u);
+    TEST_ASSERT_EQ(engine.accumulator_unlocked().total_healing(), 0u);
 
     // The first real hit is what opens it.
     engine.process_action(effect_packet(EffectType::Damage, 25000, 0));
     TEST_ASSERT_TRUE(engine.in_combat());
-    TEST_ASSERT_EQ(engine.accumulator().total_damage(), 25000u);
+    TEST_ASSERT_EQ(engine.accumulator_unlocked().total_damage(), 25000u);
 }
 
 TEST_CASE(MeterEngine, OnlyLandedDamageOpensAnEncounter) {
@@ -2553,7 +2543,7 @@ TEST_CASE(MeterEngine, HealingStillCountsOnceTheFightIsUnderway) {
     TEST_ASSERT_TRUE(engine.in_combat());
 
     engine.process_action(effect_packet(EffectType::Heal, 0, 8000));
-    TEST_ASSERT_EQ(engine.accumulator().total_healing(), 8000u);
+    TEST_ASSERT_EQ(engine.accumulator_unlocked().total_healing(), 8000u);
     TEST_ASSERT_TRUE(engine.in_combat());
 }
 
@@ -2721,7 +2711,6 @@ TEST_CASE(MeterPlugin, HealsAreSplitIntoEffectiveAndOverhealBeforeRecording) {
         TEST_ASSERT_EQ(pkt.overheal, 15000u);
     }
     TEST_ASSERT_TRUE(saw_heal);
-    plugin.shutdown();
 }
 
 TEST_CASE(MeterPlugin, HealTicksAreSplitBeforeRecording) {
@@ -2767,7 +2756,6 @@ TEST_CASE(MeterPlugin, HealTicksAreSplitBeforeRecording) {
         TEST_ASSERT_EQ(pkt.overheal, 15000u);
     }
     TEST_ASSERT_TRUE(saw_tick);
-    plugin.shutdown();
 }
 
 namespace {

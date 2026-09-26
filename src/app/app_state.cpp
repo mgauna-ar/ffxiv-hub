@@ -495,11 +495,6 @@ std::optional<meter::EncounterSummary> AppState::get_pull(size_t index) {
     return m_engine.pull_at(index);
 }
 
-std::vector<meter::EncounterSummary> AppState::get_pull_history() {
-    std::lock_guard<std::mutex> lock(m_combat_mutex);
-    return m_engine.pull_history();
-}
-
 meter::EncounterTimeline AppState::get_timeline(uint64_t encounter_id) {
     std::lock_guard<std::mutex> lock(m_combat_mutex);
     return m_engine.timeline(encounter_id);

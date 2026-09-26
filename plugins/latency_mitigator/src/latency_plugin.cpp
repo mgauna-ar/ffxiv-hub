@@ -130,11 +130,6 @@ void LatencyPlugin::refresh_overlay_suppression() noexcept {
     }
 }
 
-void LatencyPlugin::shutdown() {
-    m_initialized = false;
-    m_mitigator.reset();
-}
-
 void LatencyPlugin::serialize_config(config::JsonValue& out) const {
     const auto cfg = m_mitigator.get_config();
     out = config::JsonValue(config::JsonValue::ObjectType{});
@@ -189,10 +184,6 @@ void LatencyPlugin::deserialize_config(const config::JsonValue& in) {
             m_overlay->set_display_mode(static_cast<OverlayDisplayMode>(in["overlay_mode"].as_int(static_cast<int>(m_overlay->display_mode()))));
         }
     }
-}
-
-void LatencyPlugin::render_settings_ui() {
-    // Rendered in desktop app during Session 5
 }
 
 void LatencyPlugin::on_use_action_location(

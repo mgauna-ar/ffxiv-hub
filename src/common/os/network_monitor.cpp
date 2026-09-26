@@ -24,53 +24,6 @@ NetworkMonitor::~NetworkMonitor() {
     stop();
 }
 
-NetworkMonitor::NetworkMonitor(NetworkMonitor&& other) noexcept {
-    stop();
-    m_target_pid.store(other.m_target_pid.load());
-    m_probe_interval_ms.store(other.m_probe_interval_ms.load());
-    m_current_ping_ms.store(other.m_current_ping_ms.load());
-    m_has_connection.store(other.m_has_connection.load());
-
-    {
-        std::lock_guard<std::mutex> lock(other.m_ip_mutex);
-        m_server_ip = std::move(other.m_server_ip);
-    }
-    {
-        std::lock_guard<std::mutex> lock(other.m_callback_mutex);
-        m_on_ping_update = std::move(other.m_on_ping_update);
-    }
-
-    if (other.m_running.load()) {
-        other.stop();
-        start(m_target_pid.load());
-    }
-}
-
-NetworkMonitor& NetworkMonitor::operator=(NetworkMonitor&& other) noexcept {
-    if (this != &other) {
-        stop();
-        m_target_pid.store(other.m_target_pid.load());
-        m_probe_interval_ms.store(other.m_probe_interval_ms.load());
-        m_current_ping_ms.store(other.m_current_ping_ms.load());
-        m_has_connection.store(other.m_has_connection.load());
-
-        {
-            std::lock_guard<std::mutex> lock(other.m_ip_mutex);
-            m_server_ip = std::move(other.m_server_ip);
-        }
-        {
-            std::lock_guard<std::mutex> lock(other.m_callback_mutex);
-            m_on_ping_update = std::move(other.m_on_ping_update);
-        }
-
-        if (other.m_running.load()) {
-            other.stop();
-            start(m_target_pid.load());
-        }
-    }
-    return *this;
-}
-
 void NetworkMonitor::start(uint32_t target_pid) {
     if (target_pid != 0) {
         m_target_pid.store(target_pid);
@@ -91,14 +44,12 @@ void NetworkMonitor::stop() {
         m_worker_thread->join();
     }
     m_worker_thread.reset();
-    m_has_connection.store(false);
     m_current_ping_ms.store(-1.0);
 }
 
 void NetworkMonitor::set_target_pid(uint32_t target_pid) {
     m_target_pid.store(target_pid);
     if (target_pid == 0) {
-        m_has_connection.store(false);
         m_current_ping_ms.store(-1.0);
     }
 }
@@ -115,31 +66,8 @@ bool NetworkMonitor::is_running() const noexcept {
     return m_running.load();
 }
 
-bool NetworkMonitor::has_valid_connection() const noexcept {
-    return m_has_connection.load();
-}
-
-std::string NetworkMonitor::get_server_ip() const {
-    std::lock_guard<std::mutex> lock(m_ip_mutex);
-    return m_server_ip;
-}
-
-void NetworkMonitor::set_on_ping_update(std::function<void(double)> cb) {
-    std::lock_guard<std::mutex> lock(m_callback_mutex);
-    m_on_ping_update = std::move(cb);
-}
-
 void NetworkMonitor::set_mock_ping(double ping_ms) noexcept {
     m_current_ping_ms.store(ping_ms);
-    m_has_connection.store(ping_ms >= 0.0);
-    std::function<void(double)> cb;
-    {
-        std::lock_guard<std::mutex> lock(m_callback_mutex);
-        cb = m_on_ping_update;
-    }
-    if (cb && ping_ms >= 0.0) {
-        cb(ping_ms);
-    }
 }
 
 void NetworkMonitor::worker_loop() {
@@ -157,7 +85,6 @@ void NetworkMonitor::worker_loop() {
 bool NetworkMonitor::probe_once() {
     const uint32_t pid = m_target_pid.load();
     if (pid == 0) {
-        m_has_connection.store(false);
         m_current_ping_ms.store(-1.0);
         return false;
     }
@@ -205,21 +132,8 @@ bool NetworkMonitor::probe_once() {
     }
 
     if (target_ip == 0) {
-        m_has_connection.store(false);
         return false;
     }
-
-    // Convert IP to string for diagnostics and tracking
-    in_addr addr;
-    addr.s_addr = target_ip;
-    char ip_str[INET_ADDRSTRLEN] = {0};
-    inet_ntop(AF_INET, &addr, ip_str, INET_ADDRSTRLEN);
-
-    {
-        std::lock_guard<std::mutex> lock(m_ip_mutex);
-        m_server_ip = ip_str;
-    }
-    m_has_connection.store(true);
 
     // 2. Perform ICMP Echo Probe
     HANDLE hIcmpFile = IcmpCreateFile();
@@ -255,15 +169,6 @@ bool NetworkMonitor::probe_once() {
 
     m_current_ping_ms.store(ping_result);
 
-    std::function<void(double)> cb;
-    {
-        std::lock_guard<std::mutex> lock(m_callback_mutex);
-        cb = m_on_ping_update;
-    }
-    if (cb) {
-        cb(ping_result);
-    }
-
     return (ping_result >= 0.0);
 }
 
@@ -278,53 +183,6 @@ NetworkMonitor::NetworkMonitor(uint32_t target_pid)
 
 NetworkMonitor::~NetworkMonitor() {
     stop();
-}
-
-NetworkMonitor::NetworkMonitor(NetworkMonitor&& other) noexcept {
-    stop();
-    m_target_pid.store(other.m_target_pid.load());
-    m_probe_interval_ms.store(other.m_probe_interval_ms.load());
-    m_current_ping_ms.store(other.m_current_ping_ms.load());
-    m_has_connection.store(other.m_has_connection.load());
-
-    {
-        std::lock_guard<std::mutex> lock(other.m_ip_mutex);
-        m_server_ip = std::move(other.m_server_ip);
-    }
-    {
-        std::lock_guard<std::mutex> lock(other.m_callback_mutex);
-        m_on_ping_update = std::move(other.m_on_ping_update);
-    }
-
-    if (other.m_running.load()) {
-        other.stop();
-        start(m_target_pid.load());
-    }
-}
-
-NetworkMonitor& NetworkMonitor::operator=(NetworkMonitor&& other) noexcept {
-    if (this != &other) {
-        stop();
-        m_target_pid.store(other.m_target_pid.load());
-        m_probe_interval_ms.store(other.m_probe_interval_ms.load());
-        m_current_ping_ms.store(other.m_current_ping_ms.load());
-        m_has_connection.store(other.m_has_connection.load());
-
-        {
-            std::lock_guard<std::mutex> lock(other.m_ip_mutex);
-            m_server_ip = std::move(other.m_server_ip);
-        }
-        {
-            std::lock_guard<std::mutex> lock(other.m_callback_mutex);
-            m_on_ping_update = std::move(other.m_on_ping_update);
-        }
-
-        if (other.m_running.load()) {
-            other.stop();
-            start(m_target_pid.load());
-        }
-    }
-    return *this;
 }
 
 void NetworkMonitor::start(uint32_t target_pid) {
@@ -347,14 +205,12 @@ void NetworkMonitor::stop() {
         m_worker_thread->join();
     }
     m_worker_thread.reset();
-    m_has_connection.store(false);
     m_current_ping_ms.store(-1.0);
 }
 
 void NetworkMonitor::set_target_pid(uint32_t target_pid) {
     m_target_pid.store(target_pid);
     if (target_pid == 0) {
-        m_has_connection.store(false);
         m_current_ping_ms.store(-1.0);
     }
 }
@@ -371,31 +227,8 @@ bool NetworkMonitor::is_running() const noexcept {
     return m_running.load();
 }
 
-bool NetworkMonitor::has_valid_connection() const noexcept {
-    return m_has_connection.load();
-}
-
-std::string NetworkMonitor::get_server_ip() const {
-    std::lock_guard<std::mutex> lock(m_ip_mutex);
-    return m_server_ip;
-}
-
-void NetworkMonitor::set_on_ping_update(std::function<void(double)> cb) {
-    std::lock_guard<std::mutex> lock(m_callback_mutex);
-    m_on_ping_update = std::move(cb);
-}
-
 void NetworkMonitor::set_mock_ping(double ping_ms) noexcept {
     m_current_ping_ms.store(ping_ms);
-    m_has_connection.store(ping_ms >= 0.0);
-    std::function<void(double)> cb;
-    {
-        std::lock_guard<std::mutex> lock(m_callback_mutex);
-        cb = m_on_ping_update;
-    }
-    if (cb && ping_ms >= 0.0) {
-        cb(ping_ms);
-    }
 }
 
 void NetworkMonitor::worker_loop() {
@@ -413,31 +246,15 @@ void NetworkMonitor::worker_loop() {
 bool NetworkMonitor::probe_once() {
     const uint32_t pid = m_target_pid.load();
     if (pid == 0) {
-        m_has_connection.store(false);
         m_current_ping_ms.store(-1.0);
         return false;
     }
-
-    {
-        std::lock_guard<std::mutex> lock(m_ip_mutex);
-        m_server_ip = "204.2.229.10"; // Simulated FFXIV NA Datacenter IP
-    }
-    m_has_connection.store(true);
 
     // If a mock ping was manually set, maintain it, otherwise default to 32.0ms mock
     double current = m_current_ping_ms.load();
     if (current < 0.0) {
         current = 32.0;
         m_current_ping_ms.store(current);
-    }
-
-    std::function<void(double)> cb;
-    {
-        std::lock_guard<std::mutex> lock(m_callback_mutex);
-        cb = m_on_ping_update;
-    }
-    if (cb) {
-        cb(current);
     }
 
     return true;

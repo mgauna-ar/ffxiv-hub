@@ -19,7 +19,6 @@ enum class LogLevel : uint8_t {
 class Logger {
 public:
     static bool init(const std::string& custom_path = "", bool rotate = true);
-    static void set_echo_stdout(bool echo) noexcept;
     static void log(LogLevel level, std::string_view message);
 
     static void debug(std::string_view message) { log(LogLevel::Debug, message); }

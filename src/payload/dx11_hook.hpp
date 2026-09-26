@@ -24,7 +24,6 @@ public:
 
     [[nodiscard]] bool is_installed() const noexcept { return m_installed.load(); }
     [[nodiscard]] const char* last_error() const noexcept { return m_last_error; }
-    [[nodiscard]] void* game_hwnd() const noexcept { return m_game_hwnd; }
 
     /// True once the payload is unloading, the game window is gone for good, or
     /// the process is exiting. The one exit signal for Present, ResizeBuffers,
@@ -65,7 +64,6 @@ private:
 
     std::atomic<bool> m_installed{false};
     const char* m_last_error{"OK"};
-    void* m_game_hwnd{nullptr};
 };
 
 } // namespace hub::payload

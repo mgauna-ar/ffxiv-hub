@@ -316,7 +316,7 @@ TEST_CASE(MeterRdps, RateEstimateStartsAtThePriorAndStaysInRange) {
 
 TEST_CASE(MeterRdps, CreditsMoveDamageWithoutCreatingIt) {
     EncounterEngine engine;
-    register_party(engine.registry());
+    register_party(engine.registry_unlocked());
     const auto start = std::chrono::steady_clock::now();
 
     hub::ipc::CombatActionPacket sam_hit{};
@@ -372,7 +372,7 @@ TEST_CASE(MeterRdps, CreditsMoveDamageWithoutCreatingIt) {
 
 TEST_CASE(MeterRdps, LimitBreakAndOversizedCreditsAreIgnored) {
     EncounterEngine engine;
-    register_party(engine.registry());
+    register_party(engine.registry_unlocked());
     const auto start = std::chrono::steady_clock::now();
 
     hub::ipc::CombatActionPacket limit_break{};
@@ -407,9 +407,9 @@ TEST_CASE(MeterRdps, LimitBreakAndOversizedCreditsAreIgnored) {
 
 TEST_CASE(MeterRdps, LatePetMergeMovesItsCredits) {
     EncounterEngine engine;
-    register_party(engine.registry());
+    register_party(engine.registry_unlocked());
     constexpr EntityId kPet = 0x40000050;
-    engine.registry().register_actor(kPet, "Automaton Queen", Job::None, 0, ActorType::Pet);
+    engine.registry_unlocked().register_actor(kPet, "Automaton Queen", Job::None, 0, ActorType::Pet);
     const auto start = std::chrono::steady_clock::now();
 
     hub::ipc::CombatActionPacket opener{};
@@ -428,7 +428,7 @@ TEST_CASE(MeterRdps, LatePetMergeMovesItsCredits) {
     pet_hit.credits.entries[0] = {kMonk, 100, 0, {}};
     engine.process_action(pet_hit, start);
 
-    engine.registry().set_pet_owner(kPet, kSam);
+    engine.registry_unlocked().set_pet_owner(kPet, kSam);
     engine.end_encounter(EncounterEndReason::Manual, start + std::chrono::seconds(10));
     const auto pull = engine.latest_pull();
     const CombatantStats* sam = row_of(*pull, kSam);
@@ -442,7 +442,7 @@ TEST_CASE(MeterRdps, PluginCreditsHitsAndShipsThem) {
     plugin.initialize();
     hub::ipc::PacketRingBuffer ring;
     plugin.set_ring_buffer(&ring);
-    register_party(plugin.engine().registry());
+    register_party(plugin.engine().registry_unlocked());
 
     FakeStatuses statuses;
     statuses.by_actor[kSam] = {status(kBrotherhood, kMonk)};
@@ -466,20 +466,19 @@ TEST_CASE(MeterRdps, PluginCreditsHitsAndShipsThem) {
 
     // The app's engine books what was shipped and lands on the same numbers.
     EncounterEngine mirror;
-    register_party(mirror.registry());
+    register_party(mirror.registry_unlocked());
     mirror.process_action(shipped[0]);
-    const auto* sam_in_game = plugin.engine().accumulator().find_stats(kSam);
-    const auto* sam_mirrored = mirror.accumulator().find_stats(kSam);
+    const auto* sam_in_game = plugin.engine().accumulator_unlocked().find_stats(kSam);
+    const auto* sam_mirrored = mirror.accumulator_unlocked().find_stats(kSam);
     TEST_ASSERT_EQ(sam_in_game->buff_received, sam_mirrored->buff_received);
-    TEST_ASSERT_EQ(plugin.engine().accumulator().find_stats(kMonk)->buff_given,
-                   mirror.accumulator().find_stats(kMonk)->buff_given);
-    plugin.shutdown();
+    TEST_ASSERT_EQ(plugin.engine().accumulator_unlocked().find_stats(kMonk)->buff_given,
+                   mirror.accumulator_unlocked().find_stats(kMonk)->buff_given);
 }
 
 TEST_CASE(MeterRdps, UnreadableStatusesEarnNothing) {
     CombatPlugin plugin;
     plugin.initialize();
-    register_party(plugin.engine().registry());
+    register_party(plugin.engine().registry_unlocked());
     plugin.set_status_reader([](uint32_t, const void*, std::span<hub::ipc::CombatStatusEntry>) {
         return std::optional<size_t>{};
     });
@@ -493,14 +492,13 @@ TEST_CASE(MeterRdps, UnreadableStatusesEarnNothing) {
     entries[0].value = 10500;
     plugin.on_receive_action_effect(kSam, nullptr, &header, entries.data(), nullptr);
 
-    TEST_ASSERT_EQ(plugin.engine().accumulator().find_stats(kSam)->buff_received, 0u);
-    plugin.shutdown();
+    TEST_ASSERT_EQ(plugin.engine().accumulator_unlocked().find_stats(kSam)->buff_received, 0u);
 }
 
 TEST_CASE(MeterRdps, DotTicksKeepTheBuffsTheyWereAppliedUnder) {
     CombatPlugin plugin;
     plugin.initialize();
-    register_party(plugin.engine().registry());
+    register_party(plugin.engine().registry_unlocked());
     FakeStatuses statuses;
     statuses.by_actor[kSam] = {status(kBrotherhood, kMonk)};
     plugin.set_status_reader(statuses.reader());
@@ -521,15 +519,14 @@ TEST_CASE(MeterRdps, DotTicksKeepTheBuffsTheyWereAppliedUnder) {
     // Brotherhood wears off; the ticks still carry it.
     statuses.by_actor[kSam].clear();
     plugin.on_status_tick(kBoss, kSam, kDot, 4200, /*is_heal=*/false);
-    TEST_ASSERT_NEAR(static_cast<double>(plugin.engine().accumulator().find_stats(kMonk)->buff_given),
+    TEST_ASSERT_NEAR(static_cast<double>(plugin.engine().accumulator_unlocked().find_stats(kMonk)->buff_given),
                      expected_credit(2000.0, 1.05) + 200.0, 2.0);
 
     // A status never seen applied has nothing to go on.
-    const uint64_t before = plugin.engine().accumulator().find_stats(kMonk)->buff_given;
+    const uint64_t before = plugin.engine().accumulator_unlocked().find_stats(kMonk)->buff_given;
     statuses.by_actor[kSam] = {status(kBrotherhood, kMonk)};
     plugin.on_status_tick(kBoss, kSam, 1229, 4200, false);
-    TEST_ASSERT_EQ(plugin.engine().accumulator().find_stats(kMonk)->buff_given, before);
-    plugin.shutdown();
+    TEST_ASSERT_EQ(plugin.engine().accumulator_unlocked().find_stats(kMonk)->buff_given, before);
 }
 
 TEST_CASE(MeterRdps, DpsMetricSurvivesTheAutosave) {
