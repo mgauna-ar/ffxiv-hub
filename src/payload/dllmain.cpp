@@ -1,11 +1,13 @@
 #include "payload/hook_manager.hpp"
 #include "payload/dx11_hook.hpp"
 #include "hub/game_definitions.hpp"
+#include "hub/plugin_registry.hpp"
 #include "payload/overlay_host.hpp"
 #include "payload/game_state_reader.hpp"
 #include "payload/object_reader.hpp"
 #include "payload/command_dispatcher.hpp"
 #include "payload/command_queue.hpp"
+#include "payload/orchestration_intervals.hpp"
 #include "common/ipc/ring_buffer.hpp"
 #include "common/ipc/pipe_client.hpp"
 #include "common/config/config_manager.hpp"
@@ -30,6 +32,8 @@
 #include <windows.h>
 
 namespace {
+
+namespace intervals = hub::payload::intervals;
 
 std::atomic<bool> g_shutdown_requested{false};
 
@@ -90,10 +94,10 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
     // 3. Bootstrap plugin config from disk now that overlays are wired, so
     //    persisted desktop settings apply in-game without waiting for a live command.
     //    The payload writes back only its plugin sections; the rest belongs to the app.
-    hub::config::ConfigManager::instance().set_owned_sections({"combat_meter", "latency_mitigator"});
+    hub::config::ConfigManager::instance().set_owned_sections(hub::plugins::config_sections());
     hub::config::ConfigManager::instance().load();
-    combat_plugin->deserialize_config(hub::config::ConfigManager::instance().root()["combat_meter"]);
-    latency_plugin->deserialize_config(hub::config::ConfigManager::instance().root()["latency_mitigator"]);
+    combat_plugin->deserialize_config(hub::config::ConfigManager::instance().root()[hub::plugins::COMBAT_METER.config_section]);
+    latency_plugin->deserialize_config(hub::config::ConfigManager::instance().root()[hub::plugins::LATENCY_MITIGATOR.config_section]);
 
     // 4. Connect to the desktop app's pipe before touching any game memory below,
     //    so a hook/sigscan failure still leaves the app able to report it.
@@ -231,7 +235,7 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
     combat_plugin->set_connected(prev_connected);
 
     while (!g_shutdown_requested.load() && !hub::payload::Dx11Hook::is_shutting_down()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        std::this_thread::sleep_for(intervals::TICK);
 
         auto now = std::chrono::steady_clock::now();
 
@@ -265,15 +269,15 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
         }
 
         if (!connected &&
-            std::chrono::duration_cast<std::chrono::milliseconds>(now - last_reconnect_attempt).count() > 2000) {
-            pipe_client->connect(500);
+            now - last_reconnect_attempt > intervals::RECONNECT) {
+            pipe_client->connect(static_cast<uint32_t>(intervals::RECONNECT_TIMEOUT.count()));
             last_reconnect_attempt = now;
         }
 
-        // Deaths and status lists every 250 ms. Ahead of the party sync, so a death
+        // Deaths and status lists every intervals::VITALS. Ahead of the party sync, so a death
         // lands in its pull before the wipe check can close it. With track_vitals off
         // nothing is read; on_vitals then only clears what was published before.
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_vitals).count() >= 250) {
+        if (now - last_vitals >= intervals::VITALS) {
             const auto pass_start = std::chrono::steady_clock::now();
             size_t vitals_count = 0;
             if (combat_plugin->vitals_enabled()) {
@@ -294,8 +298,8 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
             last_vitals = now;
         }
 
-        // Sync party composition every 1.5 seconds
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_party_sync).count() > 1500) {
+        // Sync party composition every intervals::PARTY_SYNC
+        if (now - last_party_sync > intervals::PARTY_SYNC) {
             combat_plugin->engine().with_registry([&](hub::meter::CombatantRegistry& registry) {
                 object_reader->sync_party(&registry);
             });
@@ -311,8 +315,9 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
         game_state.set_in_lobby(object_reader->in_lobby());
 
         // Update plugin logic
-        combat_plugin->update(0.05);
-        latency_plugin->update(0.05);
+        constexpr double tick_seconds = std::chrono::duration<double>(intervals::TICK).count();
+        combat_plugin->update(tick_seconds);
+        latency_plugin->update(tick_seconds);
 
         // Update latency overlay with smoothed RTT and what mitigation is doing
         latency_overlay->update_rtt(
@@ -324,7 +329,7 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
 
         // Report combat-meter activity so an empty overlay can be told apart from
         // an overlay that never received any action data.
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_meter_report).count() > 3000) {
+        if (now - last_meter_report > intervals::METER_REPORT) {
             const auto summary = combat_plugin->engine().current_rankings();
             if (summary.combatants.size() != last_combatant_count) {
                 hub::os::Logger::info(
@@ -341,7 +346,7 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
         // whether the hooks are actually installed rather than only that the
         // pipe came up.
         if (connected &&
-            std::chrono::duration_cast<std::chrono::milliseconds>(now - last_heartbeat).count() > 1000) {
+            now - last_heartbeat > intervals::HEARTBEAT) {
             hub::ipc::HeartbeatPayload hb{};
             hb.timestamp_ms = static_cast<uint64_t>(
                 std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -385,7 +390,7 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
             const uint32_t client_flags = game_state.client_flags();
             const bool changed = flags != last_game_state_flags || client_flags != last_client_flags;
             if (changed ||
-                std::chrono::duration_cast<std::chrono::milliseconds>(now - last_game_state_push).count() > 1000) {
+                now - last_game_state_push > intervals::GAME_STATE_KEEPALIVE) {
                 hub::ipc::GameStatePayload gs{};
                 gs.flags = flags;
                 gs.client_flags = client_flags;
@@ -401,7 +406,7 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
         // Overlay geometry, so the desktop app can show where an overlay actually
         // sits after the player drags it in-game.
         if (connected &&
-            std::chrono::duration_cast<std::chrono::milliseconds>(now - last_geometry_sync).count() > 1000) {
+            now - last_geometry_sync > intervals::GEOMETRY_SYNC) {
             auto push_geometry = [&](hub::PluginId id, const hub::ui::OverlayBase& overlay) {
                 const auto geom = overlay.get_geometry();
                 hub::ipc::OverlayGeometryPayload g{};
@@ -431,10 +436,10 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
         // app-only key is never reverted. Throttled since it hits disk and
         // the game process can be killed outright on exit rather than reaching
         // the graceful teardown path below.
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_config_save).count() > 5000) {
+        if (now - last_config_save > intervals::CONFIG_AUTOSAVE) {
             auto& config_mgr = hub::config::ConfigManager::instance();
-            combat_plugin->serialize_config(config_mgr.root()["combat_meter"]);
-            latency_plugin->serialize_config(config_mgr.root()["latency_mitigator"]);
+            combat_plugin->serialize_config(config_mgr.root()[hub::plugins::COMBAT_METER.config_section]);
+            latency_plugin->serialize_config(config_mgr.root()[hub::plugins::LATENCY_MITIGATOR.config_section]);
             config_mgr.save();
             last_config_save = now;
         }
@@ -455,8 +460,8 @@ DWORD WINAPI PayloadMainThread(LPVOID module_handle) {
     hub::os::Logger::info("Payload shutting down.");
     {
         auto& config_mgr = hub::config::ConfigManager::instance();
-        combat_plugin->serialize_config(config_mgr.root()["combat_meter"]);
-        latency_plugin->serialize_config(config_mgr.root()["latency_mitigator"]);
+        combat_plugin->serialize_config(config_mgr.root()[hub::plugins::COMBAT_METER.config_section]);
+        latency_plugin->serialize_config(config_mgr.root()[hub::plugins::LATENCY_MITIGATOR.config_section]);
         config_mgr.save();
     }
     hook_mgr.uninstall();

@@ -61,6 +61,13 @@ Both binaries must stay in the same directory when extracted: the desktop app re
 - **Publish GitHub Release** (`release`): only on tags matching `v*.*.*`, after every
   job above has passed. It downloads the archive and sidecar and publishes them.
 
+Before tagging, set the release's number in `include/hub/version.hpp`, the only place it
+is written, and tag the same number. CMake parses `HUB_VERSION_MAJOR`/`MINOR`/`PATCH` from
+it for `project(VERSION)` and CPack, `app.rc` includes it for the executable's version
+resource, and the sidebar, the plugins and the payload's status report read it too.
+`HUB_VERSION_STRING` must spell the same three numbers; a `static_assert` there fails the
+build otherwise.
+
 The workflow's token is `contents: read`; only the `release` job gets `contents: write`.
 A new job that needs to write gets its own `permissions:` block, never a wider default.
 

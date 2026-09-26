@@ -423,7 +423,8 @@ The full runtime topology, and the invariants any change has to keep, are in
 
 ```
 ffxiv-hub/
-├── include/hub/                 Plugin interfaces, shared types, game offsets and signatures
+├── include/hub/                 Plugin interfaces and descriptors, the version, shared types,
+│                                game offsets and signatures
 ├── src/common/                  IPC, config, signature scanning, OS integration, shared UI
 ├── src/payload/                 The injected DLL: hooks, overlay host, game memory readers
 ├── src/app/                     The desktop manager: app state, views, entry point

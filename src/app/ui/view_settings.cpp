@@ -165,7 +165,7 @@ void render_log_card() {
     }
     same_line_if_room(logs_folder_w);
     if (button(logs_folder_label, ButtonKind::Secondary, ButtonSize::Medium)) {
-        os::Logger::open_config_folder();
+        os::Logger::open_log_folder();
     }
     end_section_header();
 

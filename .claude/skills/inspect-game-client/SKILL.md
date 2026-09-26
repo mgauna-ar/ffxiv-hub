@@ -37,7 +37,8 @@ reaches the client through a signature in `include/hub/game_definitions.hpp`, an
 ## Recipes
 
 **Find a manager's instance.** Resolve its signature with `sig NAME --rip <disp offset>
-<insn end>`, counted from the match start: the same numbers the payload passes to
+<insn end>`, counted from the match start: the signature's `<NAME>_RIP_DISP_OFFSET` and
+`<NAME>_RIP_INSN_END` in `game_definitions.hpp`, which the payload passes to
 `resolve_rip_relative`. The target lands in `.data`.
 
 **Find what fills a field.** `field <offset> --writes` lists the stores. A field set

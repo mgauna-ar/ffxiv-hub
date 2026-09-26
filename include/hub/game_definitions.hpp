@@ -14,10 +14,6 @@ namespace definitions {
     /// Current game client release supported by these signatures and offsets
     constexpr std::string_view SUPPORTED_GAME_VERSION = "7.x (Dawntrail)";
 
-    /// Instruction displacement and length for RIP-relative LEA/MOV rcx, [rip + disp32] (48 8D 0D [disp32])
-    constexpr size_t ACTION_MGR_RIP_DISP_OFFSET = 3;
-    constexpr size_t ACTION_MGR_RIP_INSN_LEN = 7;
-
     /// Total number of detours managed in game hooks
     constexpr uint32_t TOTAL_AVAILABLE_HOOKS = 3; // ReceiveActionEffect, UseActionLocation, ProcessHotDot
 
@@ -37,22 +33,8 @@ namespace definitions {
     /// Maximum party members supported by game client
     constexpr size_t MAX_PARTY_MEMBERS = 8;
 
-    /// Maximum entries in the game's ObjectTable array
-    constexpr size_t OBJECT_TABLE_MAX_ENTRIES = 424;
-
-    /// Instruction displacement and length for the Conditions singleton LEA (48 8D 0D [disp32])
-    constexpr size_t CONDITIONS_RIP_DISP_OFFSET = 3;
-    constexpr size_t CONDITIONS_RIP_INSN_LEN = 7;
-
     /// Size of the Conditions flag array: 112 contiguous bools, one per condition
     constexpr size_t CONDITIONS_FLAG_COUNT = 112;
-
-    /// RIP operand of the local player id signatures, counted from the match start
-    /// (the primary match begins two bytes before its MOV).
-    constexpr size_t LOCAL_PLAYER_ID_PRIMARY_RIP_DISP_OFFSET = 4;
-    constexpr size_t LOCAL_PLAYER_ID_PRIMARY_RIP_INSN_END = 12;
-    constexpr size_t LOCAL_PLAYER_ID_FALLBACK_RIP_DISP_OFFSET = 2;
-    constexpr size_t LOCAL_PLAYER_ID_FALLBACK_RIP_INSN_END = 6;
 
     /// The local player's Character* sits right after its entity id global.
     constexpr size_t LOCAL_PLAYER_OBJECT_FROM_ID = 0x8;
@@ -103,6 +85,10 @@ namespace offsets {
     constexpr size_t CHARACTER_MAX_MP = 0x1B8;
     constexpr size_t CHARACTER_CLASS_JOB = 0x1CA;
 
+    // GameObjectManager: GetObjectByEntityId takes the object arrays at this offset,
+    // not the manager itself.
+    constexpr size_t GAME_OBJECT_MANAGER_OBJECT_ARRAYS = 0x20;
+
     // StatusManager, embedded in BattleChara and in each party list slot
     constexpr size_t BATTLE_CHARA_STATUS_MANAGER = 0x23B0;  // GetStatusManager, vtable slot 0x278
     constexpr size_t STATUS_MANAGER_STATUSES = 0x8;
@@ -114,7 +100,6 @@ namespace offsets {
     constexpr size_t ACTION_MANAGER_IS_CASTING = 0x28;         // Cast action type (dword), set at cast start
     constexpr size_t ACTION_MANAGER_ELAPSED_CAST_TIME = 0x30;  // Reset to 0 at cast start
     constexpr size_t ACTION_MANAGER_CAST_TIME = 0x34;
-    constexpr size_t ACTION_MANAGER_COMBO_TIME = 0x60;
     constexpr size_t ACTION_MANAGER_IS_QUEUED = 0x68;          // Still set while the queued action is sent
     constexpr size_t ACTION_MANAGER_CURRENT_SEQUENCE = 0x120;  // Incremented inside UseActionLocation
 
@@ -187,6 +172,58 @@ namespace signatures {
         "8B 1D ? ? ? ? 45 8B E6 89 5C 24 4C 44 38 A5 ? ? ? ? 0F 86";
 } // namespace signatures
 
+/// Where the RIP-relative operand sits in each signature that resolves a static
+/// global, for resolve_rip_relative(match, DISP_OFFSET, INSN_END). Both are counted
+/// from the start of the match: DISP_OFFSET to the disp32, INSN_END to the end of
+/// the instruction the displacement is relative to. Each pair is named after its
+/// signature plus _RIP_DISP_OFFSET / _RIP_INSN_END, so tooling can pair them.
+namespace definitions {
+    // 48 8D 0D [disp32]: lea rcx, [rip + disp32]
+    constexpr size_t ACTION_MANAGER_INSTANCE_PRIMARY_RIP_DISP_OFFSET = 3;
+    constexpr size_t ACTION_MANAGER_INSTANCE_PRIMARY_RIP_INSN_END = 7;
+    constexpr size_t ACTION_MANAGER_INSTANCE_FALLBACK_RIP_DISP_OFFSET = 3;
+    constexpr size_t ACTION_MANAGER_INSTANCE_FALLBACK_RIP_INSN_END = 7;
+
+    // 48 8D 35 [disp32]: lea rsi, [rip + disp32]
+    constexpr size_t GAME_OBJECT_MANAGER_INSTANCE_RIP_DISP_OFFSET = 3;
+    constexpr size_t GAME_OBJECT_MANAGER_INSTANCE_RIP_INSN_END = 7;
+
+    // 33 D2, then 48 8D 0D [disp32]: the match begins with the two-byte xor edx, edx.
+    constexpr size_t GROUP_MANAGER_INSTANCE_RIP_DISP_OFFSET = 5;
+    constexpr size_t GROUP_MANAGER_INSTANCE_RIP_INSN_END = 9;
+
+    // 48 8D 0D [disp32]: lea rcx, [rip + disp32]
+    constexpr size_t CONDITIONS_INSTANCE_RIP_DISP_OFFSET = 3;
+    constexpr size_t CONDITIONS_INSTANCE_RIP_INSN_END = 7;
+
+    // 33 C0, then C7 05 [disp32] [imm32]: the match begins with the two-byte
+    // xor eax, eax, and the MOV's immediate follows the displacement.
+    constexpr size_t LOCAL_PLAYER_ENTITY_ID_PRIMARY_RIP_DISP_OFFSET = 4;
+    constexpr size_t LOCAL_PLAYER_ENTITY_ID_PRIMARY_RIP_INSN_END = 12;
+    // 8B 1D [disp32]: mov ebx, [rip + disp32]
+    constexpr size_t LOCAL_PLAYER_ENTITY_ID_FALLBACK_RIP_DISP_OFFSET = 2;
+    constexpr size_t LOCAL_PLAYER_ENTITY_ID_FALLBACK_RIP_INSN_END = 6;
+} // namespace definitions
+
+/// GameObject::ObjectKind, the byte at offsets::CHARACTER_OBJECT_KIND. Named as in
+/// Dalamud's ObjectKind, except 5.
+enum class ObjectKind : uint8_t {
+    None = 0,
+    Player = 1,
+    BattleNpc = 2,
+    EventNpc = 3,
+    /// Classified as a pet since the meter was written, and the payload still does.
+    /// Unverified: Dalamud names 5 Aetheryte, and has pets as BattleNpcs with an
+    /// owner. Check it against the client with the inspect-game-client skill before
+    /// relying on it or renaming it.
+    Kind5 = 5,
+};
+
+/// Kinds whose object is a BattleChara, so it has HP and a StatusManager.
+[[nodiscard]] constexpr bool is_battle_chara_kind(ObjectKind kind) noexcept {
+    return kind == ObjectKind::Player || kind == ObjectKind::BattleNpc;
+}
+
 #pragma pack(push, 1)
 
 /// 3D floating point coordinate struct
@@ -235,10 +272,10 @@ struct CharacterObject {
     uint8_t pad_70[0x08]{0};                 // 0x70 - 0x78
     uint32_t entity_id{0};                   // 0x78 - 0x7C: 32-bit entity ID
     uint8_t pad_7c[0x0C]{0};                 // 0x7C - 0x88: LayoutId, GimmickId, BaseId
-    uint32_t owner_id{0};                    // 0x88 - 0x8C: Pet master entity ID (0 / 0xE0000000 if none)
+    uint32_t owner_id{0};                    // 0x88 - 0x8C: Pet master entity ID (0 / NO_ENTITY_ID if none)
     uint16_t object_index{0};                // 0x8C - 0x8E: Object index in table
     uint8_t pad_8e[0x02]{0};                 // 0x8E - 0x90
-    uint8_t object_kind{0};                  // 0x90 - 0x91: 1=Player, 2=Monster, 3=NPC, 5=Pet
+    ObjectKind object_kind{ObjectKind::None}; // 0x90 - 0x91: see ObjectKind
     uint8_t pad_91[0x11B]{0};                // 0x91 - 0x1AC
     uint32_t current_hp{0};                  // 0x1AC - 0x1B0: Current health points
     uint32_t max_hp{0};                      // 0x1B0 - 0x1B4: Maximum health points
@@ -247,6 +284,16 @@ struct CharacterObject {
     uint8_t pad_1bc[0x0E]{0};                // 0x1BC - 0x1CA
     uint8_t class_job{0};                    // 0x1CA: Job ID (e.g. 21=WAR, 41=VPR, 42=PCT)
 };
+static_assert(sizeof(ObjectKind) == 1, "ObjectKind is read in place as one byte");
+static_assert(offsetof(CharacterObject, name) == offsets::CHARACTER_NAME, "CharacterObject::name offset mismatch");
+static_assert(offsetof(CharacterObject, entity_id) == offsets::CHARACTER_ENTITY_ID, "CharacterObject::entity_id offset mismatch");
+static_assert(offsetof(CharacterObject, owner_id) == offsets::CHARACTER_OWNER_ID, "CharacterObject::owner_id offset mismatch");
+static_assert(offsetof(CharacterObject, object_kind) == offsets::CHARACTER_OBJECT_KIND, "CharacterObject::object_kind offset mismatch");
+static_assert(offsetof(CharacterObject, current_hp) == offsets::CHARACTER_CURRENT_HP, "CharacterObject::current_hp offset mismatch");
+static_assert(offsetof(CharacterObject, max_hp) == offsets::CHARACTER_MAX_HP, "CharacterObject::max_hp offset mismatch");
+static_assert(offsetof(CharacterObject, current_mp) == offsets::CHARACTER_CURRENT_MP, "CharacterObject::current_mp offset mismatch");
+static_assert(offsetof(CharacterObject, max_mp) == offsets::CHARACTER_MAX_MP, "CharacterObject::max_mp offset mismatch");
+static_assert(offsetof(CharacterObject, class_job) == offsets::CHARACTER_CLASS_JOB, "CharacterObject::class_job offset mismatch");
 
 /// One StatusManager slot (0x10 bytes)
 struct StatusEntry {

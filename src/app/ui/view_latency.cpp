@@ -7,6 +7,7 @@
 #include "app/ui/widgets.hpp"
 #include "mitigator/types.hpp"
 #include "hub/game/actions.hpp"
+#include "hub/plugin_registry.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <cmath>
@@ -22,7 +23,7 @@ namespace hub::app::ui {
 
 namespace {
 
-constexpr const char* MITI = "latency_mitigator";
+constexpr const char* MITI = plugins::LATENCY_MITIGATOR.config_section;
 
 /// Same grading bands as the in-game HUD dot.
 uint32_t ping_grade_color(double ping_ms) {

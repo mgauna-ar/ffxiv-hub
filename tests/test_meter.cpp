@@ -855,6 +855,38 @@ TEST_CASE(MeterEngine, ZoneChangeArchivesPullAndTagsSummary) {
     TEST_ASSERT_EQ(pull->zone_id, 1000u);
 }
 
+TEST_CASE(MeterEngine, ControlCommandsKeepTheirWireValues) {
+    // An older or newer payload sends these as bare bytes.
+    using hub::ipc::EncounterControlCommand;
+    TEST_ASSERT_EQ(static_cast<int>(EncounterControlCommand::None), 0);
+    TEST_ASSERT_EQ(static_cast<int>(EncounterControlCommand::End), 1);
+    TEST_ASSERT_EQ(static_cast<int>(EncounterControlCommand::Reset), 2);
+    TEST_ASSERT_EQ(static_cast<int>(EncounterControlCommand::Split), 3);
+
+    EncounterEngine engine;
+    const auto t0 = std::chrono::steady_clock::now();
+    hub::ipc::CombatActionPacket act{};
+    act.source_id = 1;
+    act.damage = 4200;
+    act.effect_type = static_cast<uint16_t>(EffectType::Damage);
+    engine.process_action(act, t0);
+    TEST_ASSERT_EQ(engine.state(), EncounterState::InCombat);
+
+    // Split archives the running pull and opens the next one straight away.
+    hub::ipc::EncounterControlPacket split{};
+    split.control_command = EncounterControlCommand::Split;
+    engine.process_encounter_control(split, t0 + std::chrono::seconds(5));
+    TEST_ASSERT_EQ(engine.state(), EncounterState::InCombat);
+    const auto pull = engine.latest_pull();
+    TEST_ASSERT(pull.has_value());
+    TEST_ASSERT_EQ(pull->end_reason, EncounterEndReason::Manual);
+
+    hub::ipc::EncounterControlPacket end{};
+    end.control_command = EncounterControlCommand::End;
+    engine.process_encounter_control(end, t0 + std::chrono::seconds(6));
+    TEST_ASSERT(engine.state() != EncounterState::InCombat);
+}
+
 TEST_CASE(MeterEngine, ZoneOnlyAnnouncementOfZeroClearsZone) {
     EncounterEngine engine;
     const auto t0 = std::chrono::steady_clock::now();
@@ -1245,8 +1277,8 @@ TEST_CASE(MeterPlugin, HookConsumerDispatch) {
     std::string test_name = "Krile";
     std::copy(test_name.begin(), test_name.end(), chr.name);
     chr.class_job = static_cast<uint8_t>(Job::PCT);
-    chr.object_kind = 1; // Player
-    chr.owner_id = 0xE0000000; // Game's "no owner" sentinel
+    chr.object_kind = hub::game::ObjectKind::Player;
+    chr.owner_id = hub::game::NO_ENTITY_ID; // Game's "no owner" sentinel
     chr.current_hp = 50000;
     chr.max_hp = 50000;
 
@@ -1292,8 +1324,8 @@ TEST_CASE(MeterPlugin, CountsDamageOverTimeTicks) {
 
     hub::game::CharacterObject chr{};
     chr.entity_id = 777;
-    chr.object_kind = 1;
-    chr.owner_id = 0xE0000000;
+    chr.object_kind = hub::game::ObjectKind::Player;
+    chr.owner_id = hub::game::NO_ENTITY_ID;
     chr.current_hp = 50000;
     chr.max_hp = 50000;
 
@@ -1340,12 +1372,12 @@ TEST_CASE(MeterPlugin, MapsGameObjectKindToActorType) {
     entries[0].effect_type = 0x03;
     entries[0].value = 1000;
 
-    // object_kind 2 is a monster in the game, but 2 is ActorType::Pet - a direct
-    // cast would file every enemy as a friendly pet.
+    // ObjectKind::BattleNpc is 2, but 2 is ActorType::Pet - a direct cast would
+    // file every enemy as a friendly pet.
     hub::game::CharacterObject monster{};
     monster.entity_id = 0x40000123;
-    monster.object_kind = 2;
-    monster.owner_id = 0xE0000000;
+    monster.object_kind = hub::game::ObjectKind::BattleNpc;
+    monster.owner_id = hub::game::NO_ENTITY_ID;
     monster.current_hp = 9000;
     monster.max_hp = 9000;
 
@@ -1356,10 +1388,10 @@ TEST_CASE(MeterPlugin, MapsGameObjectKindToActorType) {
     TEST_ASSERT_EQ(enemy->actor_type, ActorType::Monster);
     TEST_ASSERT_FALSE(plugin.engine().registry_unlocked().is_friendly(0x40000123));
 
-    // object_kind 5 is a pet, which ActorType spells 2.
+    // ObjectKind 5 is classified as a pet, which ActorType spells 2.
     hub::game::CharacterObject pet{};
     pet.entity_id = 888;
-    pet.object_kind = 5;
+    pet.object_kind = hub::game::ObjectKind::Kind5;
     pet.owner_id = 777;
     pet.current_hp = 100;
     pet.max_hp = 100;
@@ -2203,8 +2235,8 @@ TEST_CASE(MeterPlugin, PublishesActorInfoForSourceWithCharacterPointer) {
     const std::string test_name = "Krile Baldesion";
     std::copy(test_name.begin(), test_name.end(), chr.name);
     chr.class_job = static_cast<uint8_t>(Job::PCT);
-    chr.object_kind = 1;       // Player
-    chr.owner_id = 0xE0000000; // Game's "no owner" sentinel
+    chr.object_kind = hub::game::ObjectKind::Player;
+    chr.owner_id = hub::game::NO_ENTITY_ID; // Game's "no owner" sentinel
     chr.current_hp = 50000;
     chr.max_hp = 50000;
 
@@ -2253,8 +2285,8 @@ TEST_CASE(MeterPlugin, RepublishesActorInfoOnlyWhenItChanges) {
     const std::string test_name = "Krile";
     std::copy(test_name.begin(), test_name.end(), chr.name);
     chr.class_job = static_cast<uint8_t>(Job::PCT);
-    chr.object_kind = 1;
-    chr.owner_id = 0xE0000000;
+    chr.object_kind = hub::game::ObjectKind::Player;
+    chr.owner_id = hub::game::NO_ENTITY_ID;
     chr.current_hp = 50000;
     chr.max_hp = 50000;
 
@@ -2306,8 +2338,8 @@ TEST_CASE(MeterPlugin, ArchivedPullCarriesNameIntoMirrorEngine) {
     const std::string test_name = "Krile";
     std::copy(test_name.begin(), test_name.end(), chr.name);
     chr.class_job = static_cast<uint8_t>(Job::PCT);
-    chr.object_kind = 1;
-    chr.owner_id = 0xE0000000;
+    chr.object_kind = hub::game::ObjectKind::Player;
+    chr.owner_id = hub::game::NO_ENTITY_ID;
     chr.current_hp = 50000;
     chr.max_hp = 50000;
 
@@ -2454,8 +2486,8 @@ TEST_CASE(PayloadObjectReader, InvalidateCacheRepublishesEverything) {
     const std::string test_name = "Krile";
     std::copy(test_name.begin(), test_name.end(), chr.name);
     chr.class_job = static_cast<uint8_t>(Job::PCT);
-    chr.object_kind = 1;
-    chr.owner_id = 0xE0000000;
+    chr.object_kind = hub::game::ObjectKind::Player;
+    chr.owner_id = hub::game::NO_ENTITY_ID;
     chr.current_hp = 50000;
     chr.max_hp = 50000;
 
@@ -2873,7 +2905,7 @@ TEST_CASE(MeterPlugin, DeathAndRaiseAreRepublished) {
 
     hub::game::CharacterObject chr{};
     chr.entity_id = 1001;
-    chr.object_kind = 1;
+    chr.object_kind = hub::game::ObjectKind::Player;
     chr.class_job = static_cast<uint8_t>(Job::WAR);
     chr.max_hp = 80000;
     chr.current_hp = 80000;

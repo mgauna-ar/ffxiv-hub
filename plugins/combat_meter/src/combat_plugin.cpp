@@ -22,17 +22,17 @@ namespace hub::meter {
 
 namespace {
 
-// The game's object_kind values (1=Player, 2=Monster, 3=NPC, 5=Pet) do not line
-// up with ActorType, so only Player survives a direct cast.
-ActorType actor_type_from_object_kind(uint8_t object_kind, uint32_t owner_id) {
-    if (object_kind == 5 || owner_id != 0) return ActorType::Pet;
-    if (object_kind == 1) return ActorType::Player;
+// game::ObjectKind does not line up with ActorType, so only Player would survive
+// a direct cast.
+ActorType actor_type_from_object_kind(game::ObjectKind object_kind, uint32_t owner_id) {
+    if (object_kind == game::ObjectKind::Kind5 || owner_id != 0) return ActorType::Pet;
+    if (object_kind == game::ObjectKind::Player) return ActorType::Player;
     return ActorType::Monster;
 }
 
-/// The game writes 0xE0000000 rather than 0 when an actor has no owner.
+/// The game writes NO_ENTITY_ID rather than 0 when an actor has no owner.
 uint32_t normalize_owner_id(uint32_t owner_id) {
-    return (owner_id != 0xE0000000) ? owner_id : 0;
+    return (owner_id != game::NO_ENTITY_ID) ? owner_id : 0;
 }
 
 /// The source Character fields this plugin reads, copied out in one guarded pass.
@@ -44,7 +44,7 @@ struct SourceFields {
     uint32_t max_hp{0};
     uint32_t current_hp{0};
     uint8_t class_job{0};
-    uint8_t object_kind{0};
+    game::ObjectKind object_kind{game::ObjectKind::None};
     char name[ipc::MAX_ACTOR_NAME_LEN]{};
 };
 

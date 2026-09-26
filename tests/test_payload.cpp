@@ -17,6 +17,7 @@
 #include <string>
 #include <thread>
 #include "hub/game_definitions.hpp"
+#include "hub/game/entity.hpp"
 
 using namespace hub;
 
@@ -1060,8 +1061,8 @@ TEST_CASE(Payload, DisabledPluginsIgnoreHookDispatch) {
     game::CharacterObject chr{};
     chr.entity_id = 777;
     chr.class_job = 1;
-    chr.object_kind = 1;      // Player
-    chr.owner_id = 0xE0000000; // Game's "no owner" sentinel
+    chr.object_kind = hub::game::ObjectKind::Player;
+    chr.owner_id = hub::game::NO_ENTITY_ID; // Game's "no owner" sentinel
     chr.current_hp = 50000;
     chr.max_hp = 50000;
 

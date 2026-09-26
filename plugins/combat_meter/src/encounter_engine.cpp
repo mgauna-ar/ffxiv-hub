@@ -100,17 +100,18 @@ void EncounterEngine::process_encounter_control(const ipc::EncounterControlPacke
 
     // A zone-only announcement is authoritative, 0 (unknown) included. On any
     // other control packet 0 just means it carries no zone.
-    const bool zone_only = packet.in_combat_flag == 0 && packet.control_command == 0;
+    const bool zone_only = packet.in_combat_flag == 0 &&
+                           packet.control_command == ipc::EncounterControlCommand::None;
     if (zone_only || packet.zone_id != 0) {
         set_zone_locked(packet.zone_id, "", now);
     }
 
-    // control_command: 1 = EndEncounter, 2 = ResetEncounter, 3 = SplitEncounter
-    if (packet.control_command == 1) {
+    // An unknown command value from a newer payload falls through to the combat flag.
+    if (packet.control_command == ipc::EncounterControlCommand::End) {
         end_encounter_locked(EncounterEndReason::Manual, now, packet.timestamp_us);
-    } else if (packet.control_command == 2) {
+    } else if (packet.control_command == ipc::EncounterControlCommand::Reset) {
         reset_current_locked();
-    } else if (packet.control_command == 3) {
+    } else if (packet.control_command == ipc::EncounterControlCommand::Split) {
         if (m_state == EncounterState::InCombat) {
             end_encounter_locked(EncounterEndReason::Manual, now);
             start_encounter_locked(now);

@@ -234,7 +234,7 @@ Combatant& CombatantRegistry::get_or_create(EntityId entity_id, std::string_view
 
 void CombatantRegistry::sync_party(const ipc::PartySyncPacket& packet) {
     m_party_members.clear();
-    const uint32_t count = std::min(packet.party_count, static_cast<uint32_t>(constants::MAX_PARTY_MEMBERS));
+    const uint32_t count = std::min(packet.party_count, static_cast<uint32_t>(ipc::MAX_PARTY_MEMBERS));
 
     for (uint32_t i = 0; i < count; ++i) {
         const EntityId id = packet.entity_ids[i];

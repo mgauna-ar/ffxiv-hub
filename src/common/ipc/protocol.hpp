@@ -1,6 +1,8 @@
 #pragma once
 
 #include "hub/types.hpp"
+#include "hub/game_definitions.hpp"
+#include "hub/version.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <vector>
@@ -14,7 +16,9 @@ constexpr uint16_t IPC_VERSION = 1;
 constexpr const char* DEFAULT_PIPE_NAME = "\\\\.\\pipe\\ffxiv_hub_pipe";
 constexpr size_t MAX_PAYLOAD_SIZE = 65536; // 64 KB safety limit
 constexpr size_t MAX_ACTOR_NAME_LEN = 32;
-constexpr size_t MAX_PARTY_MEMBERS = 8;
+/// The party sync packet carries every slot the client has. Its sizeof assert pins
+/// the wire, so a client that grows its party breaks the build, not the protocol.
+constexpr size_t MAX_PARTY_MEMBERS = game::definitions::MAX_PARTY_MEMBERS;
 constexpr size_t MAX_STATUS_LIST_ENTRIES = 30;
 constexpr size_t MAX_LIFE_EVENT_RECAP = 10;
 constexpr size_t MAX_BUFF_CREDITS = 8;
@@ -27,6 +31,16 @@ constexpr uint8_t STATUS_LIST_NO_DETAIL = 0x01;
 enum class LifeEventKind : uint8_t {
     Death = 1,
     Raise = 2,
+};
+
+/// CombatControlPayload::control_command. No payload has sent anything but None
+/// yet; the app still acts on the others, since the wire already carries them.
+enum class EncounterControlCommand : uint8_t {
+    None = 0,
+    End = 1,
+    Reset = 2,
+    /// Ends a running pull and starts the next one at once.
+    Split = 3,
 };
 
 /// CombatRecapEntry::kind
@@ -75,8 +89,8 @@ static_assert(sizeof(CommandPayload) == 24, "CommandPayload must be 24 bytes");
 struct StatusPayload {
     uint32_t game_pid{0};
     uint32_t active_plugins_mask{0};
-    uint16_t version_major{1};
-    uint16_t version_minor{0};
+    uint16_t version_major{VERSION_MAJOR};  // The payload build's hub/version.hpp
+    uint16_t version_minor{VERSION_MINOR};
     char     status_message[64]{0};
 };
 static_assert(sizeof(StatusPayload) == 76, "StatusPayload must be 76 bytes");
@@ -216,10 +230,11 @@ static_assert(sizeof(CombatPartySyncPayload) == 72, "CombatPartySyncPayload must
 struct CombatControlPayload {
     uint32_t zone_id{0};
     uint8_t  in_combat_flag{0};
-    uint8_t  control_command{0};
+    EncounterControlCommand control_command{EncounterControlCommand::None};
     uint8_t  pad[2]{0};
     uint64_t timestamp_us{0};
 };
+static_assert(sizeof(EncounterControlCommand) == 1, "control_command is one byte on the wire");
 static_assert(sizeof(CombatControlPayload) == 16, "CombatControlPayload must be 16 bytes");
 
 /// One status in a CombatStatusListPayload

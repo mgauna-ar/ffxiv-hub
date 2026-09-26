@@ -1,4 +1,5 @@
 #include <windows.h>
+#include "hub/version.hpp"
 
 // 1. Primary Application Icon
 101 ICON "app.ico"
@@ -8,8 +9,8 @@
 
 // 3. Native Windows Version Information
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION     1,0,0,0
-PRODUCTVERSION  1,0,0,0
+FILEVERSION     HUB_VERSION_MAJOR,HUB_VERSION_MINOR,HUB_VERSION_PATCH,0
+PRODUCTVERSION  HUB_VERSION_MAJOR,HUB_VERSION_MINOR,HUB_VERSION_PATCH,0
 FILEFLAGSMASK   0x3fL
 FILEFLAGS       0x0L
 FILEOS          VOS_NT_WINDOWS32
@@ -22,12 +23,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "FFXIV Hub Contributors\0"
             VALUE "FileDescription",  "FFXIV Hub Unified Desktop Manager\0"
-            VALUE "FileVersion",      "1.0.0.0\0"
+            VALUE "FileVersion",      HUB_VERSION_STRING
             VALUE "InternalName",     "ffxiv-hub\0"
             VALUE "LegalCopyright",   "Copyright (C) 2026\0"
             VALUE "OriginalFilename", "ffxiv-hub.exe\0"
             VALUE "ProductName",      "FFXIV Hub\0"
-            VALUE "ProductVersion",   "1.0.0.0\0"
+            VALUE "ProductVersion",   HUB_VERSION_STRING
         END
     END
     BLOCK "VarFileInfo"

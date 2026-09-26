@@ -5,6 +5,7 @@
 #include "common/os/unique_handle.hpp"
 #include "common/os/logger.hpp"
 #include "common/os/auto_start.hpp"
+#include "hub/plugin_registry.hpp"
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
@@ -21,24 +22,29 @@
 
 namespace hub::app {
 
-AppState::AppState() {
-    m_plugins.push_back({
-        PluginId::CombatMeter,
-        "Combat Meter",
-        "1.0.0",
-        "High-precision real-time DPS/HPS analytics and pull drilldowns",
-        true,
-        DesktopView::CombatMeter
-    });
+namespace {
+DesktopView view_for_plugin(PluginId id) noexcept {
+    switch (id) {
+        case PluginId::CombatMeter:      return DesktopView::CombatMeter;
+        case PluginId::LatencyMitigator: return DesktopView::LatencyMitigator;
+        case PluginId::None:
+        case PluginId::Core:             break;
+    }
+    return DesktopView::Dashboard;
+}
+} // namespace
 
-    m_plugins.push_back({
-        PluginId::LatencyMitigator,
-        "Latency Mitigator",
-        "1.0.0",
-        "Client-side animation lock compensation & slide-cast preservation",
-        true,
-        DesktopView::LatencyMitigator
-    });
+AppState::AppState() {
+    for (const auto& plugin : plugins::ALL) {
+        m_plugins.push_back({
+            plugin.id,
+            plugin.name,
+            plugin.version,
+            plugin.description,
+            true,
+            view_for_plugin(plugin.id)
+        });
+    }
 
     // Only the desktop draws a timeline, so only this engine keeps one.
     m_engine.set_timeline_enabled(true);
@@ -64,13 +70,8 @@ bool AppState::initialize() {
 }
 
 const char* AppState::plugin_config_section(PluginId id) noexcept {
-    switch (id) {
-        case PluginId::CombatMeter:      return "combat_meter";
-        case PluginId::LatencyMitigator: return "latency_mitigator";
-        case PluginId::None:
-        case PluginId::Core:             break;
-    }
-    return nullptr;
+    const auto* plugin = plugins::find(id);
+    return plugin != nullptr ? plugin->config_section : nullptr;
 }
 
 bool AppState::is_plugin_enabled(PluginId id) const noexcept {
@@ -112,7 +113,7 @@ void AppState::set_plugin_enabled(PluginId id, bool enabled) {
 }
 
 void AppState::apply_config_to_mirror_engine() {
-    const auto& meter_cfg = config::ConfigManager::instance().root()["combat_meter"];
+    const auto& meter_cfg = config::ConfigManager::instance().root()[plugins::COMBAT_METER.config_section];
     // Only this engine keeps pulls to browse, so the limit is the app's alone.
     if (meter_cfg.contains("pull_history_limit")) {
         set_pull_history_limit(meter_cfg["pull_history_limit"].as_int(
@@ -278,8 +279,8 @@ void AppState::mirror_geometry_to_config() {
         combat = m_combat_geometry;
         latency = m_latency_geometry;
     }
-    fold("combat_meter", combat);
-    fold("latency_mitigator", latency);
+    fold(plugins::COMBAT_METER.config_section, combat);
+    fold(plugins::LATENCY_MITIGATOR.config_section, latency);
 }
 
 void AppState::update() {

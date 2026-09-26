@@ -334,22 +334,20 @@ bool HookManager::install() {
         }
     }
 
-    uintptr_t action_mgr_insn = common::pe::scan_module_section(h_game, ".text", game::signatures::ACTION_MANAGER_INSTANCE_PRIMARY);
-    if (!action_mgr_insn) {
-        action_mgr_insn = common::pe::scan_module_section(h_game, ".text", game::signatures::ACTION_MANAGER_INSTANCE_FALLBACK);
+    namespace defs = game::definitions;
+    uintptr_t action_mgr = 0;
+    if (uintptr_t ins = common::pe::scan_module_section(h_game, ".text", game::signatures::ACTION_MANAGER_INSTANCE_PRIMARY)) {
+        action_mgr = hub::memory::resolve_rip_relative(
+            ins, defs::ACTION_MANAGER_INSTANCE_PRIMARY_RIP_DISP_OFFSET, defs::ACTION_MANAGER_INSTANCE_PRIMARY_RIP_INSN_END);
+    } else if (uintptr_t fb = common::pe::scan_module_section(h_game, ".text", game::signatures::ACTION_MANAGER_INSTANCE_FALLBACK)) {
+        action_mgr = hub::memory::resolve_rip_relative(
+            fb, defs::ACTION_MANAGER_INSTANCE_FALLBACK_RIP_DISP_OFFSET, defs::ACTION_MANAGER_INSTANCE_FALLBACK_RIP_INSN_END);
     }
-    if (action_mgr_insn) {
-        const uintptr_t action_mgr = hub::memory::resolve_rip_relative(
-            action_mgr_insn,
-            game::definitions::ACTION_MGR_RIP_DISP_OFFSET,
-            game::definitions::ACTION_MGR_RIP_INSN_LEN
-        );
-        if (action_mgr) {
-            m_action_manager.store(reinterpret_cast<void*>(action_mgr));
-            for_each_consumer([&](IHookConsumer* c) {
-                c->on_action_manager_resolved(reinterpret_cast<void*>(action_mgr));
-            });
-        }
+    if (action_mgr) {
+        m_action_manager.store(reinterpret_cast<void*>(action_mgr));
+        for_each_consumer([&](IHookConsumer* c) {
+            c->on_action_manager_resolved(reinterpret_cast<void*>(action_mgr));
+        });
     }
 
     m_active_hooks.store(installed_count);

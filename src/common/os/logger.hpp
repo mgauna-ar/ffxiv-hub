@@ -31,6 +31,9 @@ public:
     [[nodiscard]] static std::string default_log_path();
 
     static void open_log_file();
+    /// Folder holding the log file in use, which a custom log path can move.
+    static void open_log_folder();
+    /// Folder holding config.json.
     static void open_config_folder();
     static void shutdown();
 };

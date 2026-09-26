@@ -144,10 +144,8 @@ void Logger::open_log_file() {
 #endif
 }
 
-void Logger::open_config_folder() {
-    const std::string path = log_file_path();
-    std::filesystem::path fspath(path);
-    std::string folder = fspath.has_parent_path() ? fspath.parent_path().string() : ".";
+namespace {
+void open_folder(const std::string& folder) {
 #ifdef _WIN32
     std::wstring wfolder(folder.begin(), folder.end());
     ShellExecuteW(nullptr, L"open", wfolder.c_str(), nullptr, nullptr, SW_SHOW);
@@ -155,6 +153,17 @@ void Logger::open_config_folder() {
     std::string cmd = "open \"" + folder + "\" 2>/dev/null || xdg-open \"" + folder + "\" 2>/dev/null &";
     (void)std::system(cmd.c_str());
 #endif
+}
+} // namespace
+
+void Logger::open_log_folder() {
+    const std::filesystem::path log_path(log_file_path());
+    open_folder(log_path.has_parent_path() ? log_path.parent_path().string() : ".");
+}
+
+void Logger::open_config_folder() {
+    const auto cfg_path = hub::config::ConfigManager::instance().get_config_path();
+    open_folder(cfg_path.has_parent_path() ? cfg_path.parent_path().string() : ".");
 }
 
 void Logger::shutdown() {

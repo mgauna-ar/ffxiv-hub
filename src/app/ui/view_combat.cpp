@@ -13,6 +13,7 @@
 #include "app/ui/theme.hpp"
 #include "app/ui/widgets.hpp"
 #include "meter/pull_grouping.hpp"
+#include "hub/plugin_registry.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -27,7 +28,7 @@ namespace hub::app::ui {
 #ifdef HAVE_IMGUI
 namespace {
 
-constexpr const char* METER = "combat_meter";
+constexpr const char* METER = plugins::COMBAT_METER.config_section;
 
 /// Keyed on encounter_id, not on a position in the archive: the history deque
 /// evicts from the front at capacity, so an index stops meaning the same pull.

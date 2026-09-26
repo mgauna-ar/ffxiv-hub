@@ -95,7 +95,7 @@ MitigationResult AnimationLockMitigator::calculate_mitigation(
             const double jitter = m_rtt_tracker.get_jitter_ms();
             const double outlier_tolerance = std::max({
                 constants::MIN_OUTLIER_TOLERANCE_MS,
-                median_rtt * 0.5,
+                median_rtt * constants::RELATIVE_OUTLIER_TOLERANCE,
                 m_config.spike_multiplier * jitter
             });
             const double outlier_threshold = median_rtt + outlier_tolerance;
@@ -107,8 +107,9 @@ MitigationResult AnimationLockMitigator::calculate_mitigation(
             }
         } else {
             const double cold_start_cap = (samples_before == 0)
-                ? 200.0
-                : (baseline_rtt + std::max(constants::MIN_OUTLIER_TOLERANCE_MS, baseline_rtt * 0.5));
+                ? constants::COLD_START_FIRST_SAMPLE_CAP_MS
+                : (baseline_rtt + std::max(constants::MIN_OUTLIER_TOLERANCE_MS,
+                                           baseline_rtt * constants::RELATIVE_OUTLIER_TOLERANCE));
             if (effective_rtt > cold_start_cap) {
                 effective_rtt = cold_start_cap;
                 window_sample = cold_start_cap;
