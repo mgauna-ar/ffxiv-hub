@@ -84,7 +84,8 @@ TEST_CASE(Config, ConfigManagerDefaults) {
     TEST_ASSERT_TRUE(root.contains("combat_meter"));
     TEST_ASSERT_TRUE(root.contains("latency_mitigator"));
 
-    TEST_ASSERT_EQ(root["hub"]["refresh_interval_ms"].as_int(), 500);
+    // hub.refresh_interval_ms was never read by anything, and is no default.
+    TEST_ASSERT_FALSE(root["hub"].contains("refresh_interval_ms"));
     TEST_ASSERT_NEAR(root["combat_meter"]["overlay_hide_after_combat_seconds"].as_float(), 5.0f, 0.1f);
     TEST_ASSERT_NEAR(root["latency_mitigator"]["overlay_hide_after_combat_seconds"].as_float(), 5.0f, 0.1f);
     TEST_ASSERT_NEAR(root["latency_mitigator"]["target_ping_ms"].as_float(), 15.0f, 0.1f);
@@ -489,6 +490,56 @@ TEST_CASE(Config, SetDefaultsKeepsWhatIsAlreadyInMemory) {
     TEST_ASSERT_TRUE(cfg.get("hub", "show_notifications", false));
     cfg.reset_to_defaults();
     TEST_ASSERT_TRUE(cfg.get("hub", "minimize_to_tray", false));
+}
+
+TEST_CASE(Config, ReloadRebuildsFromTheDefaultsAndTheFile) {
+    // load() used to merge over memory, so a key deleted from the file by hand
+    // outlived "Reload from disk" until the next reset.
+    ConfigManager cfg;
+    const auto tmp = std::filesystem::temp_directory_path() / "hub_reload_test.json";
+    std::filesystem::remove(tmp);
+    cfg.set_custom_path_for_testing(tmp);
+    cfg.set_defaults(hub::app::AppState::default_config());
+    cfg.set("hub", "minimize_to_tray", JsonValue(false));
+    TEST_ASSERT(cfg.save());
+
+    {
+        std::ofstream edited(tmp, std::ios::trunc);
+        edited << R"({ "hub": { "show_notifications": false } })";
+    }
+    TEST_ASSERT(cfg.load());
+    TEST_ASSERT_TRUE(cfg.get("hub", "minimize_to_tray", false));
+    TEST_ASSERT_FALSE(cfg.get("hub", "show_notifications", true));
+
+    // No file leaves the document as it was.
+    std::filesystem::remove(tmp);
+    TEST_ASSERT_FALSE(cfg.load());
+    TEST_ASSERT_FALSE(cfg.get("hub", "show_notifications", true));
+}
+
+TEST_CASE(Config, JsonEscapesKeysAndControlCharacters) {
+    JsonValue doc{JsonValue::ObjectType{}};
+    doc["a \"quoted\" key"] = JsonValue(std::string("bell\x07" "and\x1f" "unit"));
+    const std::string text = doc.stringify(2);
+    // Nothing below 0x20 goes out raw, or the file would not parse again.
+    for (const char c : text) {
+        TEST_ASSERT(static_cast<unsigned char>(c) >= 0x20 || c == '\n');
+    }
+    TEST_ASSERT(text.find("\\u0007") != std::string::npos);
+
+    const auto back = JsonValue::parse(text);
+    TEST_ASSERT(back.has_value());
+    TEST_ASSERT(back->contains("a \"quoted\" key"));
+    TEST_ASSERT_EQ((*back)["a \"quoted\" key"].as_string(), std::string("bell\x07" "and\x1f" "unit"));
+}
+
+TEST_CASE(Config, JsonDecodesUnicodeEscapes) {
+    const auto doc = JsonValue::parse(R"({ "s": "café — 😀", "lone": "\ud83d!" })");
+    TEST_ASSERT(doc.has_value());
+    TEST_ASSERT_EQ((*doc)["s"].as_string(), std::string("caf\xc3\xa9 \xe2\x80\x94 \xf0\x9f\x98\x80"));
+    // An unpaired surrogate is replaced, not dropped with what follows it.
+    TEST_ASSERT_EQ((*doc)["lone"].as_string(), std::string("\xef\xbf\xbd!"));
+    TEST_ASSERT_FALSE(JsonValue::parse(R"({ "bad": "\u12G4" })").has_value());
 }
 
 TEST_CASE(Config, JsonNumbersIgnoreTheGlobalLocale) {

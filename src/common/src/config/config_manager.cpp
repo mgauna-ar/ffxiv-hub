@@ -85,7 +85,11 @@ bool ConfigManager::load() {
     if (!parsed) {
         return false;
     }
-    merge_document(m_root, *parsed);
+    // From the defaults, not from memory: a key deleted from the file by hand goes
+    // back to its default instead of surviving until the next reset.
+    JsonValue root = m_defaults;
+    merge_document(root, *parsed);
+    m_root = std::move(root);
     return true;
 }
 

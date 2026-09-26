@@ -40,7 +40,9 @@ public:
     void set_defaults(JsonValue defaults);
     [[nodiscard]] JsonValue defaults() const;
 
-    /// Merges config.json over the document in memory.
+    /// Rebuilds the document as config.json laid over the defaults. Keys set in
+    /// memory and never saved are dropped, which is what "Reload from disk" means.
+    /// False, with the document untouched, when the file is missing or unreadable.
     bool load();
 
     /// Writes the document to disk through a temp file and a rename. With owned

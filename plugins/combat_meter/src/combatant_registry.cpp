@@ -19,75 +19,11 @@ Job CombatantRegistry::infer_pet_job(std::string_view name) {
 void CombatantRegistry::register_actor(const ipc::ActorInfoPacket& packet) {
     char name_buf[constants::MAX_NAME_LENGTH + 1] = {0};
     std::memcpy(name_buf, packet.name, constants::MAX_NAME_LENGTH);
-    std::string name(name_buf);
-    if (name.empty()) {
-        name = "Actor_" + std::to_string(packet.entity_id);
-    }
-
-    Job job = static_cast<Job>(packet.job_id);
-    const bool pet_by_name = is_known_pet_name(name);
-    const bool is_pet_actor = (packet.owner_id != 0) || pet_by_name;
-
-    if (job == Job::None && is_pet_actor) {
-        job = infer_pet_job(name);
-    }
-
-    ActorType actor_type = static_cast<ActorType>(packet.actor_type);
-    if (actor_type == ActorType::Unknown) {
-        if (is_pet_actor) {
-            actor_type = ActorType::Pet;
-        } else if (job_to_role(job) != Role::None) {
-            actor_type = ActorType::Player;
-        }
-    }
-
-    EntityId resolved_owner_id = packet.owner_id;
-    if (resolved_owner_id == 0 && is_pet_actor) {
-        const Job pet_job = (job != Job::None) ? job : infer_pet_job(name);
-        if (pet_job != Job::None) {
-            if (m_local_player_id != 0) {
-                auto lp = m_actors.find(m_local_player_id);
-                if (lp != m_actors.end() && lp->second.job == pet_job) {
-                    resolved_owner_id = m_local_player_id;
-                }
-            }
-            if (resolved_owner_id == 0) {
-                EntityId candidate = 0;
-                size_t matches = 0;
-                for (EntityId pm_id : m_party_members) {
-                    auto pm = m_actors.find(pm_id);
-                    if (pm != m_actors.end() && pm->second.job == pet_job) {
-                        candidate = pm_id;
-                        matches++;
-                    }
-                }
-                if (matches == 1) {
-                    resolved_owner_id = candidate;
-                }
-            }
-        }
-    }
-
-    Combatant& actor = m_actors[packet.entity_id];
-    actor.entity_id = packet.entity_id;
-    actor.owner_id = resolved_owner_id;
-    actor.name = std::move(name);
-    actor.job = job;
-    actor.role = job_to_role(job);
-    actor.actor_type = actor_type;
-    actor.max_hp = packet.max_hp;
-    actor.current_hp = packet.current_hp;
+    Combatant& actor = register_actor(packet.entity_id, std::string(name_buf),
+                                      static_cast<Job>(packet.job_id), packet.owner_id,
+                                      static_cast<ActorType>(packet.actor_type),
+                                      packet.max_hp, packet.current_hp);
     actor.world_id = packet.world_id;
-    actor.is_pet = is_pet_actor;
-    actor.is_party_member = is_party_member(packet.entity_id);
-    actor.is_local_player = (packet.entity_id == m_local_player_id);
-
-    if (resolved_owner_id != 0) {
-        m_pet_to_owner[packet.entity_id] = resolved_owner_id;
-    } else if (!is_pet_actor) {
-        // A recycled pet id must not keep merging into the old owner.
-        m_pet_to_owner.erase(packet.entity_id);
-    }
 }
 
 Combatant& CombatantRegistry::register_actor(

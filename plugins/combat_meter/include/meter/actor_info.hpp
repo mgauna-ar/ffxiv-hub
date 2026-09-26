@@ -8,8 +8,8 @@
 namespace hub::meter {
 
 /// game::ObjectKind does not line up with ActorType, so only Player would survive a
-/// direct cast. Anything with an owner, and kind 5, is a pet. `owner_id` is already
-/// normalized: 0 for none.
+/// direct cast. Anything with an owner is a pet; no object kind makes one (kind 5 is
+/// an aetheryte). `owner_id` is already normalized: 0 for none.
 [[nodiscard]] ActorType actor_type_from_object_kind(game::ObjectKind object_kind, uint32_t owner_id) noexcept;
 
 /// The one Character-to-ActorInfo extraction, shared by the payload's object reader
