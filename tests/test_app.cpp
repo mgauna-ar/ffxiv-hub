@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 #include "app/app_state.hpp"
 #include "app/ui/theme.hpp"
+#include "app/ui/view_settings.hpp"
 #include "common/ui/job_style.hpp"
 #include "common/ipc/pipe_server.hpp"
 #include "hub/game_state.hpp"
@@ -14,6 +15,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 
 using namespace hub;
 
@@ -950,4 +952,29 @@ TEST_CASE(AppState, PullHistoryLimitComesFromTheConfig) {
     std::filesystem::remove(tmp);
     cfg.set("combat_meter", "pull_history_limit", config::JsonValue(before));
     cfg.set_custom_path_for_testing({});
+}
+
+TEST_CASE(SettingsView, LogTailReadsOnlyTheEnd) {
+    // The Settings view used to read the whole of hub.log, on every frame.
+    const auto tmp = std::filesystem::temp_directory_path() / "hub_log_tail_test.log";
+    {
+        std::ofstream out(tmp, std::ios::binary);
+        out << "first\r\n\r\nsecond\r\nthird\n";
+    }
+    auto lines = app::ui::read_log_tail(tmp, 10);
+    TEST_ASSERT_EQ(lines.size(), 3u);
+    TEST_ASSERT_EQ(lines.front(), std::string("first"));
+    TEST_ASSERT_EQ(lines.back(), std::string("third"));
+
+    lines = app::ui::read_log_tail(tmp, 2);
+    TEST_ASSERT_EQ(lines.size(), 2u);
+    TEST_ASSERT_EQ(lines.front(), std::string("second"));
+
+    // Starting mid-file drops the line it lands in rather than showing half of it.
+    lines = app::ui::read_log_tail(tmp, 10, 12);
+    TEST_ASSERT_EQ(lines.size(), 1u);
+    TEST_ASSERT_EQ(lines.front(), std::string("third"));
+
+    std::filesystem::remove(tmp);
+    TEST_ASSERT(app::ui::read_log_tail(tmp, 10).empty());
 }

@@ -204,6 +204,9 @@ private:
 
         m_combat_plugin->set_actor_resolver(
             [reader = m_object_reader.get(), plugin = m_combat_plugin.get()](uint32_t entity_id) {
+                // Runs per decoded hit, nearly always on an actor read moments ago:
+                // settle that before taking the engine lock.
+                if (reader->recently_read(entity_id)) return;
                 plugin->engine().with_registry([&](hub::meter::CombatantRegistry& registry) {
                     reader->inspect_and_sync_actor(entity_id, &registry);
                 });
@@ -321,9 +324,9 @@ private:
         // config.json every few seconds, so in-game changes (dragging an overlay,
         // the padlock icon, desktop app commands) survive a restart. Only the keys
         // each plugin serializes are merged into the file as it is now, so an
-        // app-only key is never reverted. Throttled since it hits disk and
-        // the game process can be killed outright on exit rather than reaching
-        // the graceful teardown path below.
+        // app-only key is never reverted. Throttled, and skipped when nothing
+        // changed, since it hits disk; periodic because the game process can be
+        // killed outright on exit rather than reaching the graceful teardown below.
         if (m_schedule.config_autosave.fire(now)) {
             hub::payload::save_plugin_config(m_combat_plugin.get(), m_latency_plugin.get());
         }

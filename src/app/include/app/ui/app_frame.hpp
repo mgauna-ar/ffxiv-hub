@@ -2,6 +2,7 @@
 
 #include "app/app_state.hpp"
 #include "app/ui/view_combat.hpp"
+#include "app/ui/view_settings.hpp"
 #include <string>
 
 namespace hub::app::ui {
@@ -28,6 +29,7 @@ public:
 
 private:
     CombatViewState m_combat;
+    SettingsViewState m_settings;
 };
 
 } // namespace hub::app::ui

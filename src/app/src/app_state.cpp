@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
+#include <utility>
 
 namespace hub::app {
 
@@ -223,8 +224,10 @@ void AppState::register_ipc_callbacks() {
         std::lock_guard<std::mutex> lock(m_status_mutex);
         if (id == PluginId::CombatMeter) {
             m_combat_geometry = geom;
+            m_combat_geometry_new = true;
         } else if (id == PluginId::LatencyMitigator) {
             m_latency_geometry = geom;
+            m_latency_geometry_new = true;
         }
     });
 
@@ -276,13 +279,14 @@ void AppState::mirror_geometry_to_config() {
         config::ConfigManager::instance().merge_section(section, keys);
     };
 
-    // Copy under the status lock, then write under the config's own.
+    // Copy under the status lock, then write under the config's own. Only a report
+    // not folded yet, so one arriving at 1 Hz is not merged again on every frame.
     std::optional<ipc::OverlayGeometryPayload> combat;
     std::optional<ipc::OverlayGeometryPayload> latency;
     {
         std::lock_guard<std::mutex> lock(m_status_mutex);
-        combat = m_combat_geometry;
-        latency = m_latency_geometry;
+        if (std::exchange(m_combat_geometry_new, false)) combat = m_combat_geometry;
+        if (std::exchange(m_latency_geometry_new, false)) latency = m_latency_geometry;
     }
     fold(plugins::COMBAT_METER.config_section, combat);
     fold(plugins::LATENCY_MITIGATOR.config_section, latency);

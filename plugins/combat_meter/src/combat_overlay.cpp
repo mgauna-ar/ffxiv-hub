@@ -250,8 +250,9 @@ void CombatOverlay::render_top_bar(const EncounterSummary& current, float scale)
     const bool roomy = avail_w >= 700.0f * scale;
     const bool healing = (m_metric.load() == MeterMetric::Healing);
 
-    // Status pill: whether the numbers below are still moving.
-    if (m_engine && m_engine->in_combat()) {
+    // Status pill: whether the numbers below are still moving. Read from the cached
+    // summary, since asking the engine would take its lock on every frame.
+    if (current.state == EncounterState::InCombat) {
         ImGui::TextColored(rgba(palette::Live), "LIVE");
     } else {
         ImGui::TextColored(rgba(palette::Muted), "IDLE");

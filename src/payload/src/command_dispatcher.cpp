@@ -42,7 +42,7 @@ bool save_plugin_config(meter::CombatPlugin* combat, mitigator::LatencyPlugin* l
         latency->serialize_config(section);
         config.set_section(plugins::LATENCY_MITIGATOR.config_section, std::move(section));
     }
-    return config.save();
+    return config.save_if_changed();
 }
 
 namespace {

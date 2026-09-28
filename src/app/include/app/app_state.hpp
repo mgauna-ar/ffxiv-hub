@@ -203,6 +203,9 @@ private:
     std::string m_payload_status_message;
     std::optional<ipc::OverlayGeometryPayload> m_combat_geometry;
     std::optional<ipc::OverlayGeometryPayload> m_latency_geometry;
+    /// A report arrived that mirror_geometry_to_config() has not folded yet.
+    bool m_combat_geometry_new{false};
+    bool m_latency_geometry_new{false};
     std::chrono::steady_clock::time_point m_last_process_check{};
 
     os::NetworkMonitor m_network_monitor;

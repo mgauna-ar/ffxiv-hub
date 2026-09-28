@@ -55,7 +55,9 @@ JsonValue ConfigManager::defaults() const {
 
 void ConfigManager::reset_to_defaults() {
     std::lock_guard<std::mutex> lock(m_mutex);
+    if (m_root == m_defaults) return;
     m_root = m_defaults;
+    m_changed = true;
 }
 
 std::optional<JsonValue> ConfigManager::read_disk_document(const std::filesystem::path& path) {
@@ -90,6 +92,7 @@ bool ConfigManager::load() {
     JsonValue root = m_defaults;
     merge_document(root, *parsed);
     m_root = std::move(root);
+    m_changed = false;
     return true;
 }
 
@@ -131,6 +134,7 @@ bool ConfigManager::save() {
         }
         was_failing = m_save_failing;
         m_save_failing = !error.empty();
+        if (error.empty()) m_changed = false;
     }
 
     // Outside the lock: the logger reads the config path to find its own file.
@@ -141,6 +145,14 @@ bool ConfigManager::save() {
         os::Logger::info("Saved " + os::to_utf8(path) + " again.");
     }
     return error.empty();
+}
+
+bool ConfigManager::save_if_changed() {
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (!m_changed) return true;
+    }
+    return save();
 }
 
 std::string ConfigManager::write_atomic(const std::filesystem::path& path, const JsonValue& doc) {
@@ -214,20 +226,30 @@ JsonValue& ConfigManager::section_locked(std::string_view name) {
 
 void ConfigManager::set(std::string_view section, std::string_view key, JsonValue value) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    section_locked(section)[std::string(key)] = std::move(value);
+    auto& sec = section_locked(section);
+    const std::string k(key);
+    if (sec.contains(k) && std::as_const(sec)[k] == value) return;
+    sec[k] = std::move(value);
+    m_changed = true;
 }
 
 void ConfigManager::merge_section(std::string_view section, const JsonValue& keys) {
     std::lock_guard<std::mutex> lock(m_mutex);
     auto& sec = section_locked(section);
     for (const auto& [k, v] : keys.as_object()) {
+        if (sec.contains(k) && std::as_const(sec)[k] == v) continue;
         sec[k] = v;
+        m_changed = true;
     }
 }
 
 void ConfigManager::set_section(std::string_view section, JsonValue object) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_root[std::string(section)] = object.is_object() ? std::move(object) : JsonValue(JsonValue::ObjectType{});
+    JsonValue next = object.is_object() ? std::move(object) : JsonValue(JsonValue::ObjectType{});
+    auto& slot = m_root[std::string(section)];
+    if (slot == next) return;
+    slot = std::move(next);
+    m_changed = true;
 }
 
 Rect ConfigManager::clamp_geometry_to_screen(

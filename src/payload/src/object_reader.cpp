@@ -95,6 +95,13 @@ void ObjectReader::note_status_layout(bool ok) {
     }
 }
 
+bool ObjectReader::recently_read(uint32_t entity_id) {
+    const auto now = std::chrono::steady_clock::now();
+    std::lock_guard<std::mutex> lock(m_cache_mutex);
+    const auto it = m_actor_cache.find(entity_id);
+    return it != m_actor_cache.end() && (now - it->second.last_read) < kActorCacheTtl;
+}
+
 bool ObjectReader::publish_actor(const ipc::ActorInfoPacket& packet, meter::CombatantRegistry* registry) {
     bool changed = true;
     {
@@ -482,13 +489,8 @@ void ObjectReader::inspect_and_sync_actor(uint32_t entity_id, meter::CombatantRe
     // was last read, not on the actor being "identified": monsters and NPCs have
     // job_id 0 permanently, so that test never passed for them and every hit on
     // a boss re-ran the lookup and re-sent an ActorInfo packet.
-    const auto now = std::chrono::steady_clock::now();
-    {
-        std::lock_guard<std::mutex> lock(m_cache_mutex);
-        auto it = m_actor_cache.find(entity_id);
-        if (it != m_actor_cache.end() && (now - it->second.last_read) < kActorCacheTtl) {
-            return;
-        }
+    if (recently_read(entity_id)) {
+        return;
     }
 
     ipc::ActorInfoPacket packet{};

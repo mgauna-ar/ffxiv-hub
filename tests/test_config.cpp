@@ -324,6 +324,70 @@ TEST_CASE(Config, PayloadAutosaveKeepsTheDesktopRate) {
     std::filesystem::remove(tmp);
 }
 
+TEST_CASE(Config, SaveIfChangedWritesOnlyAChange) {
+    // The payload's autosave used to re-read, merge and rename config.json every
+    // 5 s whether or not anything had changed.
+    const auto dir = std::filesystem::temp_directory_path() / "hub_save_if_changed_test";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    const auto path = dir / "config.json";
+    const auto blocker = dir / "blocker";
+    { std::ofstream touch(blocker); touch << "not a directory"; }
+
+    ConfigManager cfg;
+    cfg.set_custom_path_for_testing(path);
+    JsonValue section{JsonValue::ObjectType{}};
+    section["overlay_opacity"] = JsonValue(0.8);
+    cfg.set_section("combat_meter", section);
+    TEST_ASSERT_TRUE(cfg.save_if_changed());
+    TEST_ASSERT_TRUE(std::filesystem::exists(path));
+
+    // The same section again, and a set to the value it holds: nothing to write.
+    std::filesystem::remove(path);
+    cfg.set_section("combat_meter", section);
+    cfg.set("combat_meter", "overlay_opacity", JsonValue(0.8));
+    TEST_ASSERT_TRUE(cfg.save_if_changed());
+    TEST_ASSERT_FALSE(std::filesystem::exists(path));
+
+    section["overlay_opacity"] = JsonValue(0.5);
+    cfg.set_section("combat_meter", section);
+    TEST_ASSERT_TRUE(cfg.save_if_changed());
+    TEST_ASSERT_TRUE(std::filesystem::exists(path));
+
+    // A failed save stays pending until one succeeds.
+    cfg.set("combat_meter", "overlay_opacity", JsonValue(0.4));
+    cfg.set_custom_path_for_testing(blocker / "config.json");
+    TEST_ASSERT_FALSE(cfg.save_if_changed());
+    cfg.set_custom_path_for_testing(path);
+    TEST_ASSERT_TRUE(cfg.save_if_changed());
+    ConfigManager reader;
+    reader.set_custom_path_for_testing(path);
+    TEST_ASSERT_TRUE(reader.load());
+    TEST_ASSERT_EQ(reader.get("combat_meter", "overlay_opacity", 0.0), 0.4);
+
+    // A load is what is on disk, so it leaves nothing to save.
+    std::filesystem::remove(dir / "config.json.tmp");
+    TEST_ASSERT_TRUE(cfg.load());
+    std::filesystem::remove(path);
+    TEST_ASSERT_TRUE(cfg.save_if_changed());
+    TEST_ASSERT_FALSE(std::filesystem::exists(path));
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE(Config, JsonEqualityIsDeep) {
+    JsonValue a{JsonValue::ObjectType{}};
+    a["list"] = JsonValue(JsonValue::ArrayType{JsonValue(1), JsonValue("x")});
+    a["nested"] = JsonValue(JsonValue::ObjectType{});
+    a["nested"]["flag"] = JsonValue(true);
+    JsonValue b = a;
+    TEST_ASSERT_TRUE(a == b);
+    b["nested"]["flag"] = JsonValue(false);
+    TEST_ASSERT_FALSE(a == b);
+    TEST_ASSERT_FALSE(JsonValue(1) == JsonValue("1"));
+    TEST_ASSERT_TRUE(JsonValue() == JsonValue());
+}
+
 TEST_CASE(Config, ResetToDefaultsDiscardsEveryChange) {
     // "Reset everything" used to delete the file and call load(), which returns
     // early with no file and left every in-memory value as it was.

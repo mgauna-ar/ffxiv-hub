@@ -64,6 +64,9 @@ public:
     static std::optional<JsonValue> parse(std::string_view json);
     [[nodiscard]] std::string stringify(int indent = 2) const;
 
+    /// Same type and same contents, compared recursively.
+    [[nodiscard]] bool operator==(const JsonValue&) const = default;
+
 private:
     std::variant<std::monostate, bool, double, std::string, ArrayType, ObjectType> m_value;
     static const JsonValue s_null_value;

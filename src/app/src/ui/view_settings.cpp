@@ -7,43 +7,73 @@
 #include "common/os/logger.hpp"
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
+#include <system_error>
+#include <utility>
 #include <vector>
 
 namespace hub::app::ui {
+
+std::vector<std::string> read_log_tail(const std::filesystem::path& path, size_t max_lines,
+                                       std::uintmax_t max_bytes) {
+    std::vector<std::string> lines;
+    std::ifstream file(path, std::ios::binary);
+    if (!file.is_open()) return lines;
+
+    file.seekg(0, std::ios::end);
+    const std::streamoff size = file.tellg();
+    if (size < 0) return lines;
+    const auto limit = static_cast<std::streamoff>(max_bytes);
+    const std::streamoff start = size > limit ? size - limit : 0;
+    file.seekg(start);
+
+    std::string line;
+    // Mid-file, the first line read is cut off at its front.
+    if (start > 0) std::getline(file, line);
+    while (std::getline(file, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (!line.empty()) lines.push_back(std::move(line));
+    }
+    if (lines.size() > max_lines) {
+        lines.erase(lines.begin(), std::prev(lines.end(), static_cast<std::ptrdiff_t>(max_lines)));
+    }
+    return lines;
+}
 
 #ifdef HAVE_IMGUI
 namespace {
 
 constexpr const char* HUB = "hub";
+constexpr size_t kLogLines = 200;
+constexpr auto kLogPollInterval = std::chrono::milliseconds(500);
+constexpr auto kAutoStartPollInterval = std::chrono::seconds(1);
 
-std::vector<std::string> read_recent_log_lines(size_t max_lines = 50) {
-    std::vector<std::string> lines;
+/// Re-reads the log's tail when the poll is due and the file changed since.
+void refresh_log(SettingsViewState& state, std::chrono::steady_clock::time_point now) {
+    if (now - state.last_log_poll < kLogPollInterval) return;
+    state.last_log_poll = now;
+
     std::filesystem::path path = os::Logger::log_file_path();
     if (path.empty()) {
         path = os::Logger::default_log_path();
     }
-
-    std::ifstream file(path);
-    if (!file.is_open()) return lines;
-
-    std::string line;
-    std::vector<std::string> all_lines;
-    while (std::getline(file, line)) {
-        if (!line.empty()) {
-            all_lines.push_back(line);
-        }
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(path, ec);
+    const auto write_time = ec ? std::filesystem::file_time_type{} : std::filesystem::last_write_time(path, ec);
+    if (ec) {
+        state.log_lines.clear();
+        state.log_size = 0;
+        state.log_write_time = {};
+        return;
     }
-
-    const size_t start = (all_lines.size() > max_lines) ? (all_lines.size() - max_lines) : 0;
-    for (size_t i = start; i < all_lines.size(); ++i) {
-        lines.push_back(all_lines[i]);
-    }
-
-    return lines;
+    if (size == state.log_size && write_time == state.log_write_time) return;
+    state.log_size = size;
+    state.log_write_time = write_time;
+    state.log_lines = read_log_tail(path, kLogLines);
 }
 
-void render_integration_card() {
+void render_integration_card(SettingsViewState& state) {
     CardOptions opts{};
     opts.auto_height = true;
     begin_card("##IntegrationCard", ImVec2(0.0f, 0.0f), opts);
@@ -51,11 +81,18 @@ void render_integration_card() {
 
     // The registry is the real source of truth here, so config follows it rather
     // than the other way round.
-    bool auto_start = os::AutoStart::is_enabled();
+    const auto now = std::chrono::steady_clock::now();
+    if (now - state.last_auto_start_poll >= kAutoStartPollInterval) {
+        state.auto_start = os::AutoStart::is_enabled();
+        state.last_auto_start_poll = now;
+    }
+    bool auto_start = state.auto_start;
     if (setting_toggle("Start with Windows",
                        "Registers FFXIV Hub in the current user's run key.", &auto_start)) {
         os::AutoStart::set_enabled(auto_start);
         cfg_store(HUB, "start_with_windows", auto_start);
+        state.auto_start = os::AutoStart::is_enabled();
+        state.last_auto_start_poll = now;
     }
 
     bool minimize_to_tray = cfg_get(HUB, "minimize_to_tray", true);
@@ -153,7 +190,7 @@ void render_config_card(AppState& app_state) {
     end_card();
 }
 
-void render_log_card() {
+void render_log_card(SettingsViewState& state) {
     begin_card("##LogCard", ImVec2(0.0f, fill_h(0.0f)));
     const char* open_log_label = ICON_FILE "  Open log in editor";
     const char* logs_folder_label = ICON_FOLDER "  Logs folder";
@@ -175,7 +212,8 @@ void render_log_card() {
     ImGui::BeginChild("##LogViewerChild", ImVec2(0.0f, fill_h(0.0f)), ImGuiChildFlags_Border,
                       ImGuiWindowFlags_HorizontalScrollbar);
 
-    const auto log_lines = read_recent_log_lines(200);
+    refresh_log(state, std::chrono::steady_clock::now());
+    const auto& log_lines = state.log_lines;
     if (log_lines.empty()) {
         empty_state(ICON_TERMINAL, "No log entries yet",
                     "hub.log fills in as the hub attaches and runs.");
@@ -199,7 +237,7 @@ void render_log_card() {
 } // namespace
 #endif
 
-void render_view_settings(AppState& app_state) {
+void render_view_settings(AppState& app_state, SettingsViewState& state) {
 #ifdef HAVE_IMGUI
     page_header(ICON_SETTINGS, "Hub Settings",
                 "Desktop manager options, system integration and diagnostic logs");
@@ -212,7 +250,7 @@ void render_view_settings(AppState& app_state) {
 
     ImGui::BeginChild("##SettingsTopLeft", ImVec2(columns > 1 ? col_w : 0.0f, 0.0f),
                       ImGuiChildFlags_AutoResizeY, ImGuiWindowFlags_NoBackground);
-    render_integration_card();
+    render_integration_card(state);
     if (columns == 1) {
         ImGui::Dummy(ImVec2(0.0f, m(metrics::Gutter)));
         render_config_card(app_state);
@@ -228,9 +266,10 @@ void render_view_settings(AppState& app_state) {
     }
 
     ImGui::Dummy(ImVec2(0.0f, m(metrics::Gutter)));
-    render_log_card();
+    render_log_card(state);
 #else
     (void)app_state;
+    (void)state;
 #endif
 }
 

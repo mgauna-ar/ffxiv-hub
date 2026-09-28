@@ -85,7 +85,7 @@ void AppFrame::render(AppState& app_state) {
             render_view_latency(app_state);
             break;
         case DesktopView::Settings:
-            render_view_settings(app_state);
+            render_view_settings(app_state, m_settings);
             break;
     }
 

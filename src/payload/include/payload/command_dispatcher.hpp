@@ -33,8 +33,9 @@ struct CommandDispatchTargets {
 /// written from that plugin's key table.
 [[nodiscard]] config::JsonValue plugin_config_defaults();
 
-/// Serializes each plugin into its section and saves. Only those sections reach
-/// the file (ConfigManager::set_owned_sections). A null plugin is skipped.
+/// Serializes each plugin into its section and saves when one changed since the
+/// last load or save. Only those sections reach the file
+/// (ConfigManager::set_owned_sections). A null plugin is skipped.
 bool save_plugin_config(hub::meter::CombatPlugin* combat, hub::mitigator::LatencyPlugin* latency);
 
 /// Routes an incoming CommandPayload (received from the desktop app over the

@@ -59,6 +59,10 @@ public:
     bool initialize();
     bool read_character(uint32_t entity_id, ipc::ActorInfoPacket& out_packet);
     void inspect_and_sync_actor(uint32_t entity_id, meter::CombatantRegistry* registry = nullptr);
+    /// True while the object table read for `entity_id` is fresh enough that
+    /// inspect_and_sync_actor() would return without reading it again. Takes only
+    /// the cache's own lock, so a caller can check it before the engine's.
+    [[nodiscard]] bool recently_read(uint32_t entity_id);
     void inspect_and_sync_actor_direct(const void* character_ptr, meter::CombatantRegistry* registry = nullptr);
     void sync_party(meter::CombatantRegistry* registry = nullptr);
 

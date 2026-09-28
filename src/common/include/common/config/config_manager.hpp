@@ -50,6 +50,12 @@ public:
     /// now on disk. A failure is logged when it starts and when it clears.
     bool save();
 
+    /// save(), but only when a write changed the document since the last load() or
+    /// successful save(). A failed save stays pending, so the next call retries it.
+    /// The payload's autosave goes through this: every write re-reads, merges and
+    /// renames the file, and each one is a window in which it can lose an app write.
+    bool save_if_changed();
+
     /// Replaces the in-memory document with the defaults. Does not touch disk.
     void reset_to_defaults();
 
@@ -87,7 +93,8 @@ public:
         }
     }
 
-    // Writes. Memory only; save() persists them.
+    // Writes. Memory only; save() persists them. A write that leaves the
+    // document as it was does not count as a change for save_if_changed().
 
     /// Sets one key, creating its section.
     void set(std::string_view section, std::string_view key, JsonValue value);
@@ -122,6 +129,8 @@ private:
     std::vector<std::string> m_owned_sections;
     /// The last save failed, so the next failure is not logged again.
     bool m_save_failing{false};
+    /// A write changed the document since the last load() or successful save().
+    bool m_changed{false};
 };
 
 } // namespace hub::config
