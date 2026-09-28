@@ -214,10 +214,8 @@ private:
         );
 
         m_combat_plugin->set_actor_object_resolver(
-            [reader = m_object_reader.get(), plugin = m_combat_plugin.get()](const void* character) {
-                plugin->engine().with_registry([&](hub::meter::CombatantRegistry& registry) {
-                    reader->inspect_and_sync_actor_direct(character, &registry);
-                });
+            [reader = m_object_reader.get(), plugin = m_combat_plugin.get()](const hub::ipc::ActorInfoPacket& actor) {
+                reader->sync_actor(actor, plugin->engine());
             }
         );
 

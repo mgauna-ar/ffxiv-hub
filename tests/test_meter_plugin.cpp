@@ -10,10 +10,13 @@
 #include "common/config/json.hpp"
 #include "payload/object_reader.hpp"
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstring>
+#include <future>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace hub::meter;
@@ -40,11 +43,17 @@ std::vector<hub::ipc::ActorInfoPacket> drain_actor_info(hub::ipc::PacketRingBuff
 /// Wires a plugin the way dllmain does, so the source-character path publishes
 /// instead of only registering locally.
 void attach_object_resolver(CombatPlugin& plugin, hub::payload::ObjectReader& reader) {
-    plugin.set_actor_object_resolver([&](const void* character) {
-        plugin.engine().with_registry([&](CombatantRegistry& registry) {
-            reader.inspect_and_sync_actor_direct(character, &registry);
-        });
+    plugin.set_actor_object_resolver([&](const hub::ipc::ActorInfoPacket& actor) {
+        reader.sync_actor(actor, plugin.engine());
     });
+}
+
+/// What the source-character path does with a character: read it, then sync it.
+void sync_character(hub::payload::ObjectReader& reader, EncounterEngine& engine,
+                    const hub::game::CharacterObject& chr) {
+    hub::ipc::ActorInfoPacket actor{};
+    TEST_ASSERT_TRUE(hub::meter::read_actor_info(&chr, actor));
+    reader.sync_actor(actor, engine);
 }
 
 } // namespace
@@ -593,11 +602,57 @@ TEST_CASE(MeterPlugin, ArchivedPullCarriesNameIntoMirrorEngine) {
 
 }
 
+TEST_CASE(PayloadObjectReader, UnchangedSourceSkipsTheEngineLock) {
+    // Every action effect syncs its source on the game thread. The engine's lock is
+    // also held by the overlay and the orchestration thread, so an actor already
+    // cached as it is must not wait on it.
+    hub::ipc::PacketRingBuffer ring;
+    hub::payload::ObjectReader reader(&ring);
+    EncounterEngine engine;
+
+    hub::game::CharacterObject chr{};
+    chr.entity_id = 4242;
+    chr.object_kind = hub::game::ObjectKind::Player;
+    chr.class_job = static_cast<uint8_t>(Job::DRG);
+    chr.owner_id = hub::game::NO_ENTITY_ID;
+    chr.max_hp = 90000;
+    chr.current_hp = 90000;
+    sync_character(reader, engine, chr);
+    TEST_ASSERT_EQ(drain_actor_info(ring).size(), 1u);
+    TEST_ASSERT_TRUE(engine.with_registry([](CombatantRegistry& registry) {
+        return registry.find_actor(4242) != nullptr;
+    }));
+
+    std::atomic<bool> held{false};
+    std::atomic<bool> release{false};
+    std::thread holder([&] {
+        engine.with_registry([&](CombatantRegistry&) {
+            held.store(true);
+            while (!release.load()) std::this_thread::yield();
+        });
+    });
+    while (!held.load()) std::this_thread::yield();
+
+    chr.current_hp = 45000;  // HP alone is not a change
+    hub::ipc::ActorInfoPacket actor{};
+    const bool read = hub::meter::read_actor_info(&chr, actor);
+    auto synced = std::async(std::launch::async, [&] { reader.sync_actor(actor, engine); });
+    const bool finished = synced.wait_for(std::chrono::seconds(2)) == std::future_status::ready;
+    release.store(true);
+    holder.join();
+    synced.wait();
+
+    TEST_ASSERT_TRUE(read);
+    TEST_ASSERT_TRUE(finished);
+    TEST_ASSERT_EQ(drain_actor_info(ring).size(), 0u);
+}
+
 TEST_CASE(PayloadObjectReader, InvalidateCacheRepublishesEverything) {
     // A desktop app that reconnects mid-session has none of the names already
     // sent, and the dedupe cache would otherwise never offer them again.
     hub::ipc::PacketRingBuffer ring;
     hub::payload::ObjectReader reader(&ring);
+    EncounterEngine engine;
 
     hub::game::CharacterObject chr{};
     chr.entity_id = 777;
@@ -609,14 +664,14 @@ TEST_CASE(PayloadObjectReader, InvalidateCacheRepublishesEverything) {
     chr.current_hp = 50000;
     chr.max_hp = 50000;
 
-    reader.inspect_and_sync_actor_direct(&chr, nullptr);
+    sync_character(reader, engine, chr);
     TEST_ASSERT_EQ(drain_actor_info(ring).size(), 1u);
 
-    reader.inspect_and_sync_actor_direct(&chr, nullptr);
+    sync_character(reader, engine, chr);
     TEST_ASSERT_EQ(drain_actor_info(ring).size(), 0u);
 
     reader.invalidate_cache();
-    reader.inspect_and_sync_actor_direct(&chr, nullptr);
+    sync_character(reader, engine, chr);
 
     const auto republished = drain_actor_info(ring);
     TEST_ASSERT_EQ(republished.size(), 1u);
@@ -725,6 +780,7 @@ TEST_CASE(MeterPlugin, DeathAndRaiseAreRepublished) {
     // alive/dead bit is what the app's wipe detection runs on.
     hub::ipc::PacketRingBuffer ring;
     hub::payload::ObjectReader reader(&ring);
+    EncounterEngine engine;
 
     hub::game::CharacterObject chr{};
     chr.entity_id = 1001;
@@ -733,21 +789,21 @@ TEST_CASE(MeterPlugin, DeathAndRaiseAreRepublished) {
     chr.max_hp = 80000;
     chr.current_hp = 80000;
 
-    reader.inspect_and_sync_actor_direct(&chr);
+    sync_character(reader, engine, chr);
     TEST_ASSERT_EQ(drain_actor_info(ring).size(), 1u);
 
     chr.current_hp = 40000;
-    reader.inspect_and_sync_actor_direct(&chr);
+    sync_character(reader, engine, chr);
     TEST_ASSERT_EQ(drain_actor_info(ring).size(), 0u);
 
     chr.current_hp = 0;
-    reader.inspect_and_sync_actor_direct(&chr);
+    sync_character(reader, engine, chr);
     auto published = drain_actor_info(ring);
     TEST_ASSERT_EQ(published.size(), 1u);
     TEST_ASSERT_EQ(published[0].current_hp, 0u);
 
     chr.current_hp = 20000;
-    reader.inspect_and_sync_actor_direct(&chr);
+    sync_character(reader, engine, chr);
     published = drain_actor_info(ring);
     TEST_ASSERT_EQ(published.size(), 1u);
     TEST_ASSERT_EQ(published[0].current_hp, 20000u);

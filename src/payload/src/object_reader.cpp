@@ -2,6 +2,7 @@
 #include "meter/actor_info.hpp"
 #include "meter/buff_attribution.hpp"
 #include "meter/combatant_registry.hpp"
+#include "meter/encounter_engine.hpp"
 #include "common/sigscan.hpp"
 #include "common/pe_scanner.hpp"
 #include "common/os/logger.hpp"
@@ -75,10 +76,6 @@ bool reads_as_lobby(const uint32_t* local_player_id) noexcept {
 ObjectReader::ObjectReader(RingBuffer* ring_buffer)
     : m_ring_buffer(ring_buffer) {}
 
-bool ObjectReader::read_character_object(const void* character_ptr, ipc::ActorInfoPacket& out_packet) {
-    return meter::read_actor_info(character_ptr, out_packet);
-}
-
 void ObjectReader::note_status_layout(bool ok) {
     if (ok) {
         m_status_layout_confirmed = true;
@@ -102,26 +99,27 @@ bool ObjectReader::recently_read(uint32_t entity_id) {
     return it != m_actor_cache.end() && (now - it->second.last_read) < kActorCacheTtl;
 }
 
+bool ObjectReader::refresh_if_unchanged(const ipc::ActorInfoPacket& packet) {
+    const auto now = std::chrono::steady_clock::now();
+    std::lock_guard<std::mutex> lock(m_cache_mutex);
+    const auto it = m_actor_cache.find(packet.entity_id);
+    if (it == m_actor_cache.end() || !it->second.matches(packet)) {
+        return false;
+    }
+    it->second.last_read = now;
+    return true;
+}
+
 bool ObjectReader::publish_actor(const ipc::ActorInfoPacket& packet, meter::CombatantRegistry* registry) {
-    bool changed = true;
+    if (refresh_if_unchanged(packet)) {
+        return false;
+    }
     {
         std::lock_guard<std::mutex> lock(m_cache_mutex);
-        const bool dead = is_dead(packet.current_hp, packet.max_hp);
-        auto it = m_actor_cache.find(packet.entity_id);
-        if (it != m_actor_cache.end()) {
-            changed = it->second.owner_id != packet.owner_id ||
-                      it->second.job_id != packet.job_id ||
-                      it->second.max_hp != packet.max_hp ||
-                      it->second.name != packet.name ||
-                      it->second.dead != dead;
-        }
         m_actor_cache[packet.entity_id] = CachedActor{
             packet.owner_id, packet.job_id, packet.max_hp, packet.name,
-            std::chrono::steady_clock::now(), dead
+            std::chrono::steady_clock::now(), is_dead(packet.current_hp, packet.max_hp)
         };
-    }
-    if (!changed) {
-        return false;
     }
 
     if (registry) {
@@ -144,15 +142,16 @@ bool ObjectReader::publish_actor(const ipc::ActorInfoPacket& packet, meter::Comb
     return true;
 }
 
-void ObjectReader::inspect_and_sync_actor_direct(const void* character_ptr, meter::CombatantRegistry* registry) {
-    if (!character_ptr) return;
-    ipc::ActorInfoPacket packet{};
-    // The action hook fires several times a second per actor, so this goes
-    // through the same cache as the object-table path rather than pushing an
-    // identical packet on every effect.
-    if (read_character_object(character_ptr, packet)) {
-        publish_actor(packet, registry);
+void ObjectReader::sync_actor(const ipc::ActorInfoPacket& packet, meter::EncounterEngine& engine) {
+    // Every action effect's source comes through here, nearly always an actor
+    // already cached as it is. The engine's lock is also taken by the overlay and
+    // the orchestration thread, so the game thread only waits on it for a change.
+    if (refresh_if_unchanged(packet)) {
+        return;
     }
+    engine.with_registry([&](meter::CombatantRegistry& registry) {
+        publish_actor(packet, &registry);
+    });
 }
 
 void ObjectReader::invalidate_cache() {

@@ -262,7 +262,7 @@ void CombatPlugin::on_receive_action_effect(
                 // Registers *and* publishes, so the desktop app's engine learns
                 // the name too. Without this the app only ever sees the source
                 // as Entity_<id>, which its pull history then archives forever.
-                m_actor_object_resolver(source_character);
+                m_actor_object_resolver(src);
             } else {
                 m_engine.with_registry([&](CombatantRegistry& registry) {
                     registry.register_actor(

@@ -193,7 +193,7 @@ be preserved. Plugin-specific invariants live in the two plugin `AGENTS.md` file
 
   The mitigator detects whether an action was its own by diffing its pre-snapshot against the value the original wrote (`lock_changed` in `latency_plugin.cpp`). Collapsing or reordering these phases silently breaks mitigation.
 
-**Consumer ordering is a convention, not a data dependency.** `dllmain.cpp` registers the mitigator before the meter, and registration order is dispatch order. The two share no mutable state - the meter never touches `ActionManager` - so the order is kept for determinism and because the mitigator's write-back is racing the client's next frame, not because swapping them would produce a wrong result. Do not rely on it for correctness in a new plugin.
+**Consumer ordering is a convention, not a data dependency.** `dllmain.cpp` registers the mitigator before the meter, and registration order is dispatch order. The two share no mutable state - the meter never touches `ActionManager` - so the order is kept for determinism and because the mitigator's write-back is racing the client's next frame, not because swapping them would produce a wrong result. It is also what keeps the meter's work, and any wait on the engine lock inside it, off the write for the packet being handled. Do not rely on it for correctness in a new plugin.
 
 - Never alter packet contents in any consumer.
 

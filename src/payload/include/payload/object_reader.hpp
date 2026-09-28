@@ -16,6 +16,7 @@
 
 namespace hub::meter {
     class CombatantRegistry;
+    class EncounterEngine;
 }
 
 namespace hub::payload {
@@ -63,7 +64,11 @@ public:
     /// inspect_and_sync_actor() would return without reading it again. Takes only
     /// the cache's own lock, so a caller can check it before the engine's.
     [[nodiscard]] bool recently_read(uint32_t entity_id);
-    void inspect_and_sync_actor_direct(const void* character_ptr, meter::CombatantRegistry* registry = nullptr);
+    /// Registers and publishes an actor the caller has already read, such as an
+    /// action's source. An actor unchanged since it was cached only has its cache
+    /// entry refreshed, under the cache's lock alone; `engine`'s lock is taken only
+    /// to register one that is new or changed.
+    void sync_actor(const ipc::ActorInfoPacket& packet, meter::EncounterEngine& engine);
     void sync_party(meter::CombatantRegistry* registry = nullptr);
 
     /// HP and status lists for one vitals pass: each party member (the local player
@@ -103,12 +108,13 @@ public:
 private:
     using FnGetObjectByEntityId = game::CharacterObject*(void*, uint32_t);
 
-    /// Fields of a Character the game handed us a pointer to; SEH-guarded on Windows.
-    static bool read_character_object(const void* character_ptr, ipc::ActorInfoPacket& out_packet);
-
     /// Cache, register and publish a freshly read actor. Returns false when the
     /// cached copy is identical, i.e. nothing was sent.
     bool publish_actor(const ipc::ActorInfoPacket& packet, meter::CombatantRegistry* registry);
+
+    /// True, with its read time refreshed, when the cached copy of `packet`'s actor
+    /// is identical to it: publish_actor() would then send nothing.
+    bool refresh_if_unchanged(const ipc::ActorInfoPacket& packet);
 
     /// Counts a status read against the layout check. Until one read has passed,
     /// kStatusLayoutStrikes failures switch status reads off.
@@ -134,6 +140,11 @@ private:
         /// HP is left out of the change test so it does not resend every tick, but
         /// a death or a raise has to reach the app's wipe detection.
         bool dead{false};
+
+        [[nodiscard]] bool matches(const ipc::ActorInfoPacket& packet) const {
+            return owner_id == packet.owner_id && job_id == packet.job_id && max_hp == packet.max_hp &&
+                   name == packet.name && dead == is_dead(packet.current_hp, packet.max_hp);
+        }
     };
 
     [[nodiscard]] static bool is_dead(uint32_t current_hp, uint32_t max_hp) noexcept {

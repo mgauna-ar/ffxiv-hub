@@ -98,11 +98,12 @@ public:
     /// detour thread reads them without a lock.
     void set_actor_resolver(std::function<void(uint32_t)> resolver) { m_actor_resolver = std::move(resolver); }
 
-    /// Same job for a source the hook did hand a character pointer for. The
-    /// pointer path is the common one, and registering it locally is not enough:
-    /// the desktop app runs its own engine and only ever learns a name from an
-    /// ActorInfo packet, so that read has to reach the wire too.
-    void set_actor_object_resolver(std::function<void(const void*)> resolver) {
+    /// Same job for a source the hook did hand a character pointer for, given the
+    /// actor the plugin already read from it. The pointer path is the common one,
+    /// and registering it locally is not enough: the desktop app runs its own
+    /// engine and only ever learns a name from an ActorInfo packet, so that read
+    /// has to reach the wire too.
+    void set_actor_object_resolver(std::function<void(const ipc::ActorInfoPacket&)> resolver) {
         m_actor_object_resolver = std::move(resolver);
     }
 
@@ -190,7 +191,7 @@ private:
     std::atomic<bool> m_connected{true};
     ipc::PacketRingBuffer* m_ring_buffer{nullptr};
     std::function<void(uint32_t)> m_actor_resolver;
-    std::function<void(const void*)> m_actor_object_resolver;
+    std::function<void(const ipc::ActorInfoPacket&)> m_actor_object_resolver;
     HpResolver m_hp_resolver;
     StatusReader m_status_reader;
 
