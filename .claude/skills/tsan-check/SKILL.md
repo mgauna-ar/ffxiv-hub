@@ -1,6 +1,6 @@
 ---
 name: tsan-check
-description: Build and run the test suite under ThreadSanitizer to prove EncounterEngine locking and the multi-producer IPC ring buffer are intact. Use after touching any EncounterEngine, CombatantRegistry or MetricsAccumulator entry point, when changing what locks the combat meter takes, or when touching src/common/include/common/ipc/ring_buffer.hpp or adding a thread that pushes outbound packets - a race there is invisible to a normal `make test` and only reports under TSan.
+description: Build and run the test suite under ThreadSanitizer to prove EncounterEngine locking and the multi-producer IPC ring buffer are intact. Use after touching any EncounterEngine, CombatantRegistry or MetricsAccumulator entry point, when changing what locks the combat meter takes, or when touching src/common/include/common/ipc/ring_buffer.hpp or adding a thread that pushes outbound packets - a race there is invisible to a normal `make` run and only reports under TSan.
 ---
 
 # Checking `EncounterEngine` Locking

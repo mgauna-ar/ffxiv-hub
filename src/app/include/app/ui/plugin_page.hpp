@@ -53,9 +53,8 @@ struct SettingsSection {
 /// each plugin view used to carry, which is how the two drifted apart.
 void render_settings_grid(const SettingsSection* sections, size_t count);
 
-/// Opens the standard "Plugin" section every settings tab starts with: the
-/// master enable switch, followed by whatever the plugin adds. Always paired
-/// with end_settings_card().
+/// Opens a titled card in a plugin's settings tab (the master enable switch
+/// lives in render_plugin_header()). Always paired with end_settings_card().
 void begin_settings_card(const char* id, const char* icon, const char* label,
                          uint32_t accent);
 void end_settings_card();

@@ -170,7 +170,7 @@ same wording as the sidebar), or right-click for the menu:
 |---|---|
 | Open FFXIV Hub | Shows the desktop window. |
 | Start with Windows | Launches the Hub when you log on. |
-| Open Logs Folder | Opens the folder that holds `hub.log`. |
+| Open Logs Folder | Opens the folder that holds `hub.log` and `hub_payload.log`. |
 | Open Configuration File | Opens `config.json` in your editor. |
 | Exit | Closes the Hub. The game keeps running. |
 
@@ -298,8 +298,10 @@ mouse always goes to the game anyway, so the camera never catches on an overlay.
 
 <br>
 
-`%APPDATA%/ffxiv-hub/hub.log`. **Hub Settings** shows it live, and the tray's *Open Logs
-Folder* takes you to it.
+`%APPDATA%/ffxiv-hub/hub.log` (the desktop app) and `hub_payload.log` (the in-game
+payload). Each start moves the previous run's log to `hub.prev.log` and
+`hub_payload.prev.log`. **Hub Settings** shows `hub.log` live, and the tray's *Open Logs
+Folder* takes you to the folder.
 
 </details>
 
@@ -316,11 +318,11 @@ from under a running DirectX pipeline is riskier than leaving it dormant. While 
 is closed it only keeps the combat meter counting, and reconnects within a second when
 you open the Hub again.
 
-To switch it off for the rest of the session, use **Hub Settings → Unload payload**. Its
-hooks become pass-throughs and it stops talking to the Hub, which then reads **Payload
-unloaded**. The DLL itself stays in the game's memory, for the same reason as above, so
-the Hub cannot attach again until you restart the game; after the restart it attaches as
-usual.
+To switch it off for the rest of the session, use **Hub Settings → Unload payload**. It
+removes its game hooks, turns its DirectX and window hooks into pass-throughs, and stops
+talking to the Hub, which then reads **Payload unloaded**. The DLL itself stays in the
+game's memory, for the same reason as above, so the Hub cannot attach again until you
+restart the game; after the restart it attaches as usual.
 
 To uninstall, delete the folder you extracted. Settings live in `%APPDATA%/ffxiv-hub/`;
 delete that too if you want no trace left.
@@ -333,8 +335,8 @@ delete that too if you want no trace left.
 <br>
 
 A patch can move the memory locations the Hub relies on. Check [Releases](../../releases)
-for an updated build. Nothing is damaged in the meantime: if the Hub can't find what it
-needs, it reports the failure and does not attach.
+for an updated build. Nothing is damaged in the meantime: if the payload can't find what
+it needs, it leaves the game unhooked and the Hub reads **Hooks missing**.
 
 </details>
 
@@ -401,8 +403,8 @@ flowchart LR
 - **One payload, one of each hook.** The Hub injects a single DLL, which installs:
   - one DirectX 11 hook
   - one window-procedure hook
-  - one detour on the game's action-effect handler, which hands each packet to the
-    plugins in a fixed order
+  - one detour on each of three game functions — action dispatch, action effects, and
+    DoT/HoT ticks — handing each event to the plugins in a fixed order
 - **Analytics in the game, detail on the desktop.** The plugins run inside the payload,
   so overlays update without a round trip. The same events stream to the desktop app as
   framed binary packets over a single named pipe.

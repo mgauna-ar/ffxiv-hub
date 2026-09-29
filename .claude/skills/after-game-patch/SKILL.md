@@ -278,6 +278,20 @@ in [How the client applies statuses](../../../plugins/combat_meter/AGENTS.md#how
 Re-run `tools/inspect_exe.py jumptable` on the per-effect handler's switch (see 4e for how
 to find it) and confirm both still reach the handler that prints "gains the effect of".
 
+## 4g. Re-check the combat condition byte
+
+The meter ends pulls from `Conditions[26]` (`game::conditions::IN_COMBAT`), as recorded in
+[How the client marks combat](../../../plugins/combat_meter/AGENTS.md#how-the-client-marks-combat).
+A patch can renumber the `Conditions` indices without breaking `CONDITIONS_INSTANCE`. With
+`tools/inspect_exe.py`, find `Conditions::Set` through callers of the global
+`CONDITIONS_INSTANCE` resolves to and confirm:
+
+- The ActorControl category 4 handler still sets `Conditions[26]` when the target character
+  matches the local player's `Character*`, alongside bit `0x2` of `Character + 0x1D4`.
+
+If the index moved, update `game::conditions::IN_COMBAT` in
+`include/hub/game_definitions.hpp` and that section together.
+
 ## 5. Verify
 
 ```bash

@@ -421,7 +421,7 @@ not the intended interface.
 | `dps_metric` | int | `0` | Damage rate the in-game meter ranks by: `0` DPS, `1` rDPS, `2` aDPS, `3` nDPS, `4` cDPS. |
 | `desktop_dps_metric` | int | `0` | Damage rate the desktop's Damage tab ranks by and its Timeline draws, with the same values as `dps_metric`. Set with the buttons above the Damage table; the game never writes it. |
 | `pull_history_limit` | int | `100` | Pulls the desktop's pull history keeps, `10`–`500`; the oldest is dropped first. Only the app reads it: the game keeps just the latest pull. |
-| `track_vitals` | bool | `true` | Read HP and status lists four times a second for deaths, buffs, debuffs and the boss's HP. Off, nothing is read. |
+| `track_vitals` | bool | `true` | Poll HP and status lists four times a second for deaths, buff/debuff uptime and the boss's HP. Off skips that poll (heals still read target HP for overheal, hits and ticks still read statuses for raid-buff credit, and party sync still reads HP for wipes). |
 | `overlay_visible` | bool | `true` | Draw the in-game overlay. |
 | `overlay_x`, `overlay_y` | float | `-1.0` | Position. Negative means never placed — the overlay picks its own default. |
 | `overlay_width`, `overlay_height` | float | `800.0`, `480.0` | Size. |
@@ -566,8 +566,9 @@ since there is no party list to filter by.
 
 <br>
 
-Check that *Track deaths, buffs and debuffs* is on. With it off, the meter doesn't read HP
-or status lists at all. See [Deaths, buffs and debuffs](#deaths-buffs-and-debuffs).
+Check that *Track deaths, buffs and debuffs* is on. With it off, the meter skips the
+four-times-a-second vitals pass that records deaths, buff/debuff uptime and the boss's
+HP. See [Deaths, buffs and debuffs](#deaths-buffs-and-debuffs).
 
 </details>
 

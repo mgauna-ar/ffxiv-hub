@@ -63,9 +63,11 @@ example "entry i goes to slot i", which is exactly the kind of fact premises dep
   one are found by call target rather than by function.
 - **Findings belong next to the code they justify, not here.** Record a verified model in
   the relevant `AGENTS.md`, with the patch it was read from. The mitigator's lives in
-  "How the client dispatches an action". The party list and status lists live in the
-  combat meter's "How the client fills the party list" and "How the client keeps status
-  lists", ticks and effect entries in its "How the client reports DoT and HoT ticks" and
-  "How the client reads an effect entry", and status applications in its "How the client
-  applies statuses". The lobby marker lives in the root
-  `AGENTS.md`'s "How the client marks the lobby".
+  "How the client dispatches an action". In the combat meter's `AGENTS.md`: combat state
+  in "How the client marks combat", status lists and the party list in "How the client
+  keeps status lists" and "How the client fills the party list", effect entries, ticks
+  and status applications in "How the client reads an effect entry", "How the client
+  reports DoT and HoT ticks" and "How the client applies statuses", and GCD/button flags
+  in "How the Action sheet marks a button". In the root `AGENTS.md`: "How the client
+  builds an aetheryte", "How the client marks the lobby", and "How the client keeps its
+  window and swap chain".

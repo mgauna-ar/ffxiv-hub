@@ -4,9 +4,10 @@ Plugin-local rules. The cross-cutting ones - single `ReceiveActionEffect` hook a
 phase ordering, IPC and ring buffer safety, hook lifecycle and teardown, tray and
 dashboard decoupling - live in the root [`AGENTS.md`](../../AGENTS.md) and apply here too.
 
-Two meter invariants deliberately stay in the root as well, because code outside this
+Three meter invariants deliberately stay in the root as well, because code outside this
 directory can violate them: `EncounterEngine` is shared state reached from three threads,
-and derived rates are recomputed on the tick rather than per packet.
+derived rates are recomputed on the tick rather than per packet, and pulls end on the
+client's combat flag alone (`client_flags()`, never `flags()`).
 
 ## Combat Analytics Invariants
 
