@@ -35,7 +35,7 @@ executable. A signature never depends on the `datN` files.
 python3 tools/gen_game_tables.py
 ```
 
-Writes `include/hub/game/{actions,status,territory,limit_break,job,guaranteed_hits}.hpp`
+Writes `include/hub/game/{actions,status,territory,limit_break,job,guaranteed_hits,world}.hpp`
 and `src/common/src/game_tables.cpp`. Review `git diff` on those: it shows exactly which
 actions, statuses, duties and jobs the patch added or renamed. Regeneration is
 deterministic - an unchanged install must produce byte-identical files.
@@ -76,6 +76,12 @@ Litany (786, a buff) and Vulnerability Up (638, a debuff); check both in the dif
   whose names collide with ordinary enemies; generating it would merge bosses into player
   rows. It stays hand-curated, and matching is exact - a substring test previously
   classified every Titan/Garuda/Ifrit/Bahamut boss as a pet and dropped it from the meter.
+- **`world.hpp` maps each public world to its data center** (World column 3, a
+  WorldDCGroupType row), and names the data centers. The column is pinned against
+  Ravana/21 (Materia), Balmung/91 (Crystal), Alpha/402 (Light) and Jenova/40 (Aether);
+  `OS.PingTargetLobbyPerDataCenter` checks a few of them. A new data center needs a
+  lobby address in the hand-curated `data_centers.hpp`, or its players' ping has no
+  lobby to fall back to; a patch does not move those addresses.
 - **Column indices are positional**, pinned at the top of the generator and verified
   against known rows (Braver/200 in ActionCategory 9, territory 1238 ->
   "Futures Rewritten (Ultimate)"). If a patch reorders sheet columns the generator will
@@ -291,6 +297,23 @@ A patch can renumber the `Conditions` indices without breaking `CONDITIONS_INSTA
 
 If the index moved, update `game::conditions::IN_COMBAT` in
 `include/hub/game_definitions.hpp` and that section together.
+
+## 4h. Re-check the character's worlds
+
+The network ping falls back to the lobby of the data center the local player is on,
+read from `CHARACTER_CURRENT_WORLD`, as recorded in [How the client keeps a character's
+worlds](../../../AGENTS.md#how-the-client-keeps-a-characters-worlds). A patch can move
+the pair without breaking a signature. With `tools/inspect_exe.py` confirm:
+
+- `field <current world offset> --writes` and the home world's still reach the player
+  spawn handler, which copies its packet's two world words into them, and the home world
+  has no other store.
+- `IsWanderer` (its `MemberFunction` call site is `E8 ?? ?? ?? ?? 84 C0 8B CF`) still
+  compares the same two words, with `0xFFFD` as the last valid value.
+
+If they moved, update `CHARACTER_CURRENT_WORLD` and `CHARACTER_HOME_WORLD` in
+`include/hub/game_definitions.hpp` and that section together. A wrong offset leaves the
+ping N/A behind a gaming VPN, or pings the wrong data center.
 
 ## 5. Verify
 

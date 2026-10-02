@@ -42,6 +42,10 @@ LIMIT_BREAK_CATEGORY = 9
 # Pinned against Battle Litany/786 (1) and Vulnerability Up/638 (2).
 STATUS_DESCRIPTION, STATUS_CATEGORY, STATUS_DETRIMENTAL = 1, 6, 2
 ACTION_TRANSIENT_DESCRIPTION = 0
+# Pinned against Ravana/21 (Materia, 9), Balmung/91 (Crystal, 8), Alpha/402 (Light, 7)
+# and Jenova/40 (Aether, 4). Columns 2 and 3 hold the same data center on every row.
+WORLD_NAME, WORLD_DATA_CENTER, WORLD_IS_PUBLIC = 1, 3, 8
+DATA_CENTER_NAME = 0
 
 # The sentence the game adds to every guaranteed hit since rate buffs started
 # raising its damage. Actions put "is increased" first, statuses last.
@@ -140,6 +144,17 @@ def load(game_dir):
     sheets["classjob"] = sorted(
         (r, jobs[r][CLASSJOB_NAME].title(), jobs[r][CLASSJOB_ABBR], _role_of(jobs, r))
         for r in jobs
+    )
+
+    sheets["world"] = sorted(
+        (r, row[WORLD_DATA_CENTER], row[WORLD_NAME])
+        for r, row in Sheet(pack, "World").rows()
+        if row[WORLD_IS_PUBLIC] and row[WORLD_DATA_CENTER] and row[WORLD_NAME]
+    )
+    sheets["data_center"] = sorted(
+        (r, row[DATA_CENTER_NAME])
+        for r, row in Sheet(pack, "WorldDCGroupType").rows()
+        if r and row[DATA_CENTER_NAME]
     )
     return sheets
 
@@ -526,6 +541,62 @@ enum class Role : uint8_t {{
 """
 
 
+def gen_world_header(worlds, data_centers):
+    if max(r for r, _, _ in worlds) > 0xFFFF or max(r for r, _ in data_centers) > 0xFF:
+        raise SystemExit("World or WorldDCGroupType ids outgrew their table types")
+    world_entries = "\n".join(
+        f"    {{{r:>5}u, {dc:>3}}}, // {name}" for r, dc, name in worlds
+    )
+    dc_entries = "\n".join(
+        f"    {{{r:>3}, {cpp_string(name)}}}," for r, name in data_centers
+    )
+    return f"""{BANNER}#pragma once
+
+#include <algorithm>
+#include <array>
+#include <cstdint>
+#include <string_view>
+
+namespace hub::game {{
+
+struct WorldEntry {{
+    uint16_t id;
+    uint8_t data_center;
+}};
+
+/// Every public world and its data center, a WorldDCGroupType row.
+inline constexpr std::array<WorldEntry, {len(worlds)}> WORLD_TABLE{{{{
+{world_entries}
+}}}};
+
+struct DataCenterEntry {{
+    uint8_t id;
+    std::string_view name;
+}};
+
+/// Data center names, from the WorldDCGroupType sheet.
+inline constexpr std::array<DataCenterEntry, {len(data_centers)}> DATA_CENTER_TABLE{{{{
+{dc_entries}
+}}}};
+
+/// The data center `world` belongs to; 0 for a world the table lacks.
+[[nodiscard]] constexpr uint8_t world_data_center(uint16_t world) noexcept {{
+    const auto it = std::lower_bound(WORLD_TABLE.begin(), WORLD_TABLE.end(), world,
+        [](const WorldEntry& entry, uint16_t value) {{ return entry.id < value; }});
+    return (it != WORLD_TABLE.end() && it->id == world) ? it->data_center : 0;
+}}
+
+/// Name of data center `id`, or an empty view when the sheet lacks it.
+[[nodiscard]] constexpr std::string_view data_center_name(uint8_t id) noexcept {{
+    const auto it = std::lower_bound(DATA_CENTER_TABLE.begin(), DATA_CENTER_TABLE.end(), id,
+        [](const DataCenterEntry& entry, uint8_t value) {{ return entry.id < value; }});
+    return (it != DATA_CENTER_TABLE.end() && it->id == id) ? it->name : std::string_view{{}};
+}}
+
+}} // namespace hub::game
+"""
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -580,6 +651,7 @@ struct GcdTiming {{
         sheets["guaranteed_actions"], sheets["guaranteed_statuses"],
         sheets["form_bonus_actions"], sheets["form_bonus_statuses"]))
     write("include/hub/game/job.hpp", gen_job_header(sheets["classjob"]))
+    write("include/hub/game/world.hpp", gen_world_header(sheets["world"], sheets["data_center"]))
 
 
 if __name__ == "__main__":

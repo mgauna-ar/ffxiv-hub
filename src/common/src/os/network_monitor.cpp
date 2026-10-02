@@ -1,5 +1,7 @@
 #include "common/os/network_monitor.hpp"
+#include "common/os/logger.hpp"
 #include "common/os/unique_handle.hpp"
+#include "hub/game/world.hpp"
 #include <algorithm>
 #include <vector>
 
@@ -26,6 +28,18 @@ constexpr uint32_t kSleepStepMs = 100;
 #else
 constexpr uint32_t kSleepStepMs = 50;
 #endif
+
+// Probes in a row without a reply before that goes in the log: one lost echo is noise.
+constexpr uint32_t kSilentProbesBeforeLog = 3;
+
+std::string describe(const PingTarget& target, uint16_t world) {
+    const std::string address = format_ipv4(target.address);
+    if (target.source == PingSource::DataCenterLobby) {
+        const std::string_view name = game::data_center_name(game::world_data_center(world));
+        return std::string(name.empty() ? "data center" : name) + " lobby " + address;
+    }
+    return "game server " + address;
+}
 
 #ifdef _WIN32
 /// An IcmpCreateFile handle, which only IcmpCloseHandle may close.
@@ -70,7 +84,9 @@ void NetworkMonitor::stop() {
 }
 
 void NetworkMonitor::set_target_pid(uint32_t target_pid) {
-    m_target_pid.store(target_pid);
+    if (m_target_pid.exchange(target_pid) != target_pid) {
+        m_fallback_world.store(0);
+    }
     if (target_pid == 0) {
         m_current_ping_ms.store(-1.0);
     }
@@ -92,6 +108,32 @@ void NetworkMonitor::set_mock_ping(double ping_ms) noexcept {
     m_current_ping_ms.store(ping_ms);
 }
 
+void NetworkMonitor::note_outcome(std::span<const PingTarget> candidates, const PingTarget* answered,
+                                  uint16_t world) {
+    std::string outcome;
+    if (answered != nullptr) {
+        m_silent_probes = 0;
+        outcome = "pinging " + describe(*answered, world);
+        if (answered->source == PingSource::DataCenterLobby && candidates.size() > 1) {
+            outcome += " (the game server does not answer)";
+        } else if (answered->source == PingSource::DataCenterLobby) {
+            outcome += " (no game server connection is visible)";
+        }
+    } else if (candidates.empty()) {
+        outcome = "nothing to ping: no game server connection is visible and the character's world is unknown";
+    } else {
+        if (++m_silent_probes < kSilentProbesBeforeLog) return;
+        outcome = "no reply from";
+        for (size_t i = 0; i < candidates.size(); ++i) {
+            outcome += (i == 0 ? " " : " or ") + describe(candidates[i], world);
+        }
+    }
+    if (outcome != m_logged_outcome) {
+        Logger::info("Network ping: " + outcome);
+        m_logged_outcome = std::move(outcome);
+    }
+}
+
 void NetworkMonitor::worker_loop() {
     while (m_running.load()) {
         if (const uint32_t pid = m_target_pid.load(); pid != 0) {
@@ -111,86 +153,61 @@ void NetworkMonitor::worker_loop() {
 #ifdef _WIN32
 
 bool NetworkMonitor::probe_target(uint32_t pid) {
+    const uint16_t world = m_fallback_world.load();
 
-    // 1. Locate active game TCP connection via GetExtendedTcpTable
-    DWORD dwSize = 0;
-    GetExtendedTcpTable(nullptr, &dwSize, TRUE, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0);
-    if (dwSize == 0) {
-        return false;
+    // The game's TCP connections. The table can grow between the size query and the
+    // read, hence the retries. A failed read leaves only the lobby to ping.
+    std::vector<TcpConnection> connections;
+    std::vector<uint8_t> buffer;
+    DWORD size = 0;
+    DWORD status = ERROR_INSUFFICIENT_BUFFER;
+    for (int attempt = 0; attempt < 3 && status == ERROR_INSUFFICIENT_BUFFER; ++attempt) {
+        buffer.resize(size);
+        status = GetExtendedTcpTable(buffer.empty() ? nullptr : buffer.data(), &size, FALSE, AF_INET,
+                                     TCP_TABLE_OWNER_PID_ALL, 0);
     }
-
-    std::vector<uint8_t> buffer(dwSize);
-    auto* pTcpTable = reinterpret_cast<PMIB_TCPTABLE_OWNER_PID>(buffer.data());
-
-    if (GetExtendedTcpTable(pTcpTable, &dwSize, TRUE, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0) != NO_ERROR) {
-        return false;
-    }
-
-    DWORD target_ip = 0;
-
-    for (DWORD i = 0; i < pTcpTable->dwNumEntries; ++i) {
-        const auto& row = pTcpTable->table[i];
-        if (row.dwOwningPid != pid || row.dwState != MIB_TCP_STATE_ESTAB) {
-            continue;
-        }
-
-        // Filter out loopback (127.x.x.x) and invalid 0.0.0.0 addresses
-        const uint32_t remote_addr = row.dwRemoteAddr;
-        if ((remote_addr & 0xFF) == 127 || remote_addr == 0) {
-            continue;
-        }
-
-        const uint16_t remote_port = ntohs(static_cast<u_short>(row.dwRemotePort));
-
-        // FFXIV lobby and game zone servers listen between 54992 and 55007
-        if (remote_port >= 54992 && remote_port <= 55007) {
-            target_ip = remote_addr;
-            break;
-        }
-
-        // Generic fallback to any established remote connection
-        if (target_ip == 0) {
-            target_ip = remote_addr;
+    if (status == NO_ERROR && !buffer.empty()) {
+        const auto* table = reinterpret_cast<const MIB_TCPTABLE_OWNER_PID*>(buffer.data());
+        connections.reserve(table->dwNumEntries);
+        for (DWORD i = 0; i < table->dwNumEntries; ++i) {
+            const auto& row = table->table[i];
+            connections.push_back(TcpConnection{
+                row.dwOwningPid, row.dwRemoteAddr,
+                ntohs(static_cast<u_short>(row.dwRemotePort)),
+                row.dwState == MIB_TCP_STATE_ESTAB});
         }
     }
 
-    if (target_ip == 0) {
-        return false;
-    }
-
-    // 2. Perform ICMP Echo Probe
-    const UniqueIcmpHandle icmp(IcmpCreateFile());
-    if (!icmp) {
-        m_current_ping_ms.store(-1.0);
-        return false;
-    }
-
-    char send_data[32] = "FFXIV_HUB_PING";
-    const DWORD reply_size = sizeof(ICMP_ECHO_REPLY) + sizeof(send_data) + 8;
-    std::vector<uint8_t> reply_buf(reply_size);
-
-    DWORD replies = IcmpSendEcho(
-        icmp.get(),
-        target_ip,
-        send_data,
-        static_cast<WORD>(sizeof(send_data)),
-        nullptr,
-        reply_buf.data(),
-        reply_size,
-        1000 // 1-second timeout
-    );
-
+    const PingCandidates candidates = ping_candidates(connections, pid, world);
+    const PingTarget* answered = nullptr;
     double ping_result = -1.0;
-    if (replies > 0) {
-        auto* echo_reply = reinterpret_cast<PICMP_ECHO_REPLY>(reply_buf.data());
-        if (echo_reply->Status == IP_SUCCESS) {
-            ping_result = static_cast<double>(echo_reply->RoundTripTime);
+
+    if (candidates.count != 0) {
+        const UniqueIcmpHandle icmp(IcmpCreateFile());
+        if (icmp) {
+            char send_data[32] = "FFXIV_HUB_PING";
+            const DWORD reply_size = sizeof(ICMP_ECHO_REPLY) + sizeof(send_data) + 8;
+            std::vector<uint8_t> reply_buf(reply_size);
+
+            for (const PingTarget& target : candidates.view()) {
+                const DWORD replies = IcmpSendEcho(
+                    icmp.get(), target.address, send_data, static_cast<WORD>(sizeof(send_data)),
+                    nullptr, reply_buf.data(), reply_size,
+                    1000 // 1-second timeout
+                );
+                const auto* echo_reply = reinterpret_cast<const ICMP_ECHO_REPLY*>(reply_buf.data());
+                if (replies > 0 && echo_reply->Status == IP_SUCCESS) {
+                    ping_result = static_cast<double>(echo_reply->RoundTripTime);
+                    answered = &target;
+                    break;
+                }
+            }
         }
     }
 
     m_current_ping_ms.store(ping_result);
-
-    return (ping_result >= 0.0);
+    note_outcome(candidates.view(), answered, world);
+    return ping_result >= 0.0;
 }
 
 #else // !_WIN32

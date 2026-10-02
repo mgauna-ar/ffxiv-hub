@@ -229,6 +229,30 @@ TEST_CASE(PipeServer, GameStateFromAnOlderPayload) {
     TEST_ASSERT_EQ(received.client_flags, gs.client_flags);
 }
 
+TEST_CASE(PipeServer, GameStateFromAPayloadBeforeTheWorld) {
+    // A payload loaded before current_world sends flags and client_flags. They
+    // arrive, and the world reads as 0: the ping has no lobby to fall back to.
+    ipc::PipeServer server;
+    ipc::GameStatePayload received{};
+    received.current_world = 0xBEEF;
+    server.set_game_state_callback([&](const ipc::GameStatePayload& gs) { received = gs; });
+
+    ipc::GameStatePayload gs{};
+    gs.flags = to_bits(GameStateFlag::Valid);
+    gs.client_flags = gs.flags;
+    gs.current_world = 40;
+    const auto* bytes = reinterpret_cast<const uint8_t*>(&gs);
+    TEST_ASSERT(server.process_raw_packet(ipc::serialize_packet(
+        PluginId::Core, MessageType::GameState, 1,
+        std::span<const uint8_t>(bytes, ipc::GAME_STATE_V2_SIZE))));
+    TEST_ASSERT_EQ(received.client_flags, gs.client_flags);
+    TEST_ASSERT_EQ(received.current_world, uint16_t{0});
+
+    TEST_ASSERT(server.process_raw_packet(ipc::serialize_typed_packet(
+        PluginId::Core, MessageType::GameState, 2, gs)));
+    TEST_ASSERT_EQ(received.current_world, uint16_t{40});
+}
+
 TEST_CASE(PipeServer, StatusFromAnOlderPayload) {
     // A payload loaded before the status flags sends the 76-byte status. It must
     // still arrive, flags 0, and the hooks badge falls back to the message text.

@@ -162,12 +162,19 @@ struct GameStatePayload {
     uint32_t flags{0};
     /// The client's Conditions alone, which the meter ends its pulls on.
     uint32_t client_flags{0};
+    /// The World sheet row the character is on; 0 when unknown. Picks the data
+    /// center lobby the app pings when it cannot reach the game server.
+    uint16_t current_world{0};
+    uint16_t pad{0};
 };
-static_assert(sizeof(GameStatePayload) == 8, "GameStatePayload must be 8 bytes");
+static_assert(sizeof(GameStatePayload) == 12, "GameStatePayload must be 12 bytes");
 /// What a payload from before `client_flags` sends. Its missing field has no Valid
 /// bit, so the meter reads the game's combat as unknown.
 constexpr size_t GAME_STATE_V1_SIZE = 4;
 static_assert(offsetof(GameStatePayload, client_flags) == GAME_STATE_V1_SIZE, "client_flags must follow the old layout");
+/// What a payload from before `current_world` sends: no world, so no lobby fallback.
+constexpr size_t GAME_STATE_V2_SIZE = 8;
+static_assert(offsetof(GameStatePayload, current_world) == GAME_STATE_V2_SIZE, "current_world must follow the old layout");
 
 /// 0x0101: Latency Mitigator Telemetry payload
 struct MitigatorTelemetryPayload {
