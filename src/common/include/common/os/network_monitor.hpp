@@ -1,9 +1,13 @@
 #pragma once
 
+#include "common/os/ping_target.hpp"
+
 #include <cstdint>
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include <span>
+#include <string>
 #include <thread>
 
 namespace hub::os {
@@ -11,11 +15,13 @@ namespace hub::os {
 /**
  * @brief Background network ping prober.
  *
- * Automatically inspects the active TCP connections of the target FFXIV process,
- * extracts the remote game server IP, and conducts periodic ICMP Echo pings (1/sec)
- * via native Windows IP Helper APIs without game hooks or extra network overhead.
- * Runs in the desktop app process, independent of the in-game payload, so it can
- * report a connection ping immediately on login before any combat action occurs.
+ * Finds the game server among the target FFXIV process's TCP connections and
+ * pings it with an ICMP echo once a second, through the Windows IP Helper API. A
+ * gaming VPN hides or rewrites those connections, so when none is visible, or the
+ * server does not answer, it pings the lobby server of the data center the
+ * character is on instead (see ping_candidates()). Runs in the desktop app process,
+ * independent of the in-game payload's hooks, so it reports a ping on login before
+ * any combat action occurs.
  */
 class NetworkMonitor {
 public:
@@ -41,6 +47,12 @@ public:
     /// Returns the current target PID.
     [[nodiscard]] uint32_t target_pid() const noexcept;
 
+    /// The character's current world, which the payload reports; 0 when unknown.
+    /// Picks the data center lobby pinged when no game server answers. A new
+    /// target PID clears it.
+    void set_fallback_world(uint16_t world) noexcept { m_fallback_world.store(world); }
+    [[nodiscard]] uint16_t fallback_world() const noexcept { return m_fallback_world.load(); }
+
     /// Returns the most recently measured network ping in milliseconds (-1.0 if timeout/NA).
     [[nodiscard]] double get_current_ping_ms() const noexcept;
 
@@ -58,11 +70,19 @@ private:
     void worker_loop();
     /// One ping of `pid`'s game server; the platform part. `pid` is never 0.
     bool probe_target(uint32_t pid);
+    /// Logs what this probe pinged and whether it answered, when that changed.
+    /// `answered` is null when nothing replied. Worker thread only.
+    void note_outcome(std::span<const PingTarget> candidates, const PingTarget* answered, uint16_t world);
 
     std::atomic<bool> m_running{false};
     std::atomic<uint32_t> m_target_pid{0};
     std::atomic<uint32_t> m_probe_interval_ms{1000};
     std::atomic<double> m_current_ping_ms{-1.0};
+    std::atomic<uint16_t> m_fallback_world{0};
+
+    // note_outcome()'s state; worker thread only.
+    std::string m_logged_outcome;
+    uint32_t m_silent_probes{0};
 
     std::unique_ptr<std::thread> m_worker_thread;
 };

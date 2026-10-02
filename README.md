@@ -208,7 +208,8 @@ FFXIV Hub runs entirely on your PC and stays within what the server already allo
 - **What it never does.** Modify, send or delay network packets. Automate any input.
   Change cooldowns or the GCD.
 - **Nothing leaves your PC.** The only network traffic the Hub makes is an ICMP ping to
-  the game server you are already connected to.
+  the game server you are already connected to, or, when that server can't be reached,
+  to the lobby server of the data center your character is on.
 - **It goes quiet when you close it.** With the Hub closed, the payload is dormant until
   the Hub reconnects: the overlays hide, mitigation stops and nothing is queued for the
   Hub. The combat meter keeps counting in the background.
@@ -337,6 +338,20 @@ delete that too if you want no trace left.
 A patch can move the memory locations the Hub relies on. Check [Releases](../../releases)
 for an updated build. Nothing is damaged in the meantime: if the payload can't find what
 it needs, it leaves the game unhooked and the Hub reads **Hooks missing**.
+
+</details>
+
+<details>
+<summary><b>The ping reads N/A, or I play through a gaming VPN</b></summary>
+
+<br>
+
+The Hub finds the game server among the game's own network connections and pings it. A
+gaming VPN hides or rewrites those connections, and may not carry the ping. The Hub then
+pings your data center's lobby server instead, which sits alongside its worlds; it
+learns your data center from the payload, so this needs the Hub attached and a character
+in the world. If the ping still reads N/A, `hub.log` has a *Network ping:* line saying
+what was pinged and what answered.
 
 </details>
 

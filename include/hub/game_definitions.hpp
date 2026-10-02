@@ -84,6 +84,9 @@ namespace offsets {
     constexpr size_t CHARACTER_CURRENT_MP = 0x1B4;
     constexpr size_t CHARACTER_MAX_MP = 0x1B8;
     constexpr size_t CHARACTER_CLASS_JOB = 0x1CA;
+    // Past the prefix CharacterObject copies, so read as CharacterWorlds on its own.
+    constexpr size_t CHARACTER_CURRENT_WORLD = 0x2360;
+    constexpr size_t CHARACTER_HOME_WORLD = 0x2362;
 
     // GameObjectManager: GetObjectByEntityId takes the object arrays at this offset,
     // not the manager itself.
@@ -292,6 +295,18 @@ static_assert(offsetof(CharacterObject, max_hp) == offsets::CHARACTER_MAX_HP, "C
 static_assert(offsetof(CharacterObject, current_mp) == offsets::CHARACTER_CURRENT_MP, "CharacterObject::current_mp offset mismatch");
 static_assert(offsetof(CharacterObject, max_mp) == offsets::CHARACTER_MAX_MP, "CharacterObject::max_mp offset mismatch");
 static_assert(offsetof(CharacterObject, class_job) == offsets::CHARACTER_CLASS_JOB, "CharacterObject::class_job offset mismatch");
+
+/// A player Character's two World sheet rows, at CHARACTER_CURRENT_WORLD. Both read
+/// 0xFFFF until the spawn packet fills them; the client takes anything above
+/// MAX_VALID_WORLD as unset.
+struct CharacterWorlds {
+    static constexpr uint16_t MAX_VALID_WORLD = 0xFFFD;
+
+    uint16_t current{0};                     // +0x0: The world the character is on now
+    uint16_t home{0};                        // +0x2: Home world
+};
+static_assert(offsetof(CharacterWorlds, current) == 0, "CharacterWorlds is read at CHARACTER_CURRENT_WORLD");
+static_assert(offsetof(CharacterWorlds, home) == offsets::CHARACTER_HOME_WORLD - offsets::CHARACTER_CURRENT_WORLD, "CharacterWorlds::home offset mismatch");
 
 /// One StatusManager slot (0x10 bytes)
 struct StatusEntry {

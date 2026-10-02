@@ -30,8 +30,11 @@ app, or from its card on the dashboard.
 The plugin measures two things that are easy to confuse:
 
 - **Network ping** is wire latency. A background ICMP prober measures it against the
-  game server IP, which it discovers from the client's own active TCP connections. It
-  updates continuously, in or out of combat.
+  game server IP, which it discovers from the client's own active TCP connections on
+  the game's ports. It updates continuously, in or out of combat. When no game server
+  connection is visible, or the server doesn't answer, as happens through a gaming VPN,
+  it pings the lobby server of the data center your character is on, which the payload
+  reports.
 - **Action RTT** is the true combat round trip: the time from your client dispatching an
   action (`UseActionLocation`) until the server's effect packet comes back
   (`ReceiveActionEffect`). This is the number that governs animation lock.
@@ -162,7 +165,7 @@ Below it are two tabs.
   | Tile | What it shows |
   |---|---|
   | Smoothed RTT | The latest smoothed round trip, with the raw sample below it |
-  | Network ping | The ICMP ping to the game server |
+  | Network ping | The ICMP ping to the game server, or to your data center's lobby server |
   | Jitter | The round-trip variance |
   | Latency saved | Total lock removed, with the count of actions mitigated. Dry-run and switched-off actions add nothing. |
   | Spikes filtered | Samples the filter rejected, with the count of mitigated locks clamped to the floor |

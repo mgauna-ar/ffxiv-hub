@@ -468,7 +468,8 @@ private:
     }
 
     // Game state, so the desktop app can show what the overlays are currently
-    // gating on, and its meter can end pulls when the game ends combat. Pushed on
+    // gating on, its meter can end pulls when the game ends combat, and its ping
+    // can fall back to the character's data center. Pushed on
     // change, plus a keepalive: a late-connecting app isn't left with a blank
     // indicator, and the app's meter takes the state as unknown after
     // EncounterEngine::kGameStateTtl without one.
@@ -481,6 +482,9 @@ private:
         hub::ipc::GameStatePayload gs{};
         gs.flags = flags;
         gs.client_flags = client_flags;
+        // Read here rather than every tick: it only changes with a zone change, and
+        // the keepalive brings it to the app within a second.
+        gs.current_world = m_object_reader->current_world();
         m_pipe_client->ring_buffer().push(hub::ipc::serialize_typed_packet(
             hub::PluginId::Core, hub::MessageType::GameState, m_heartbeat_sequence, gs));
         m_last_game_state_flags = flags;

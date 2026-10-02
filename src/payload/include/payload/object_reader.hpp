@@ -93,6 +93,10 @@ public:
     /// character select. False when unsure, so a missed signature shows overlays.
     [[nodiscard]] bool in_lobby() const;
 
+    /// The World sheet row the local player is on now, which a data center visit
+    /// changes. 0 when there is no character or it reads as unset.
+    [[nodiscard]] uint16_t current_world() const;
+
     /// Drops every cached actor, party and territory value so the next read
     /// republishes them. The caches exist to keep the same packet off the wire
     /// twice, which also means a listener that reconnects mid-session would

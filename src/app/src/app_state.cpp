@@ -233,6 +233,8 @@ void AppState::register_ipc_callbacks() {
 
     m_pipe_server.set_game_state_callback([this](const ipc::GameStatePayload& gs) {
         m_game_state_flags.store(gs.flags);
+        // 0 from a payload too old to report it, or with no character in the world.
+        m_network_monitor.set_fallback_world(gs.current_world);
         // The same word the in-game engine ends its pulls on, so both close together.
         std::lock_guard<std::mutex> lock(m_combat_mutex);
         m_engine.set_game_state(gs.client_flags);

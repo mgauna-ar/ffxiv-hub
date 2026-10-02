@@ -5,9 +5,11 @@
 #include "common/os/safe_memory.hpp"
 #include "common/os/local_time.hpp"
 #include "common/os/network_monitor.hpp"
+#include "common/os/ping_target.hpp"
 #include "common/os/paths.hpp"
 #include "common/os/unload_marker.hpp"
 #include "common/config/config_manager.hpp"
+#include "hub/game/data_centers.hpp"
 #include <chrono>
 #include <ctime>
 #include <filesystem>
@@ -293,4 +295,92 @@ TEST_CASE(OS, NetworkMonitorStopsWhenDestroyed) {
     // The destructor joins the worker; a detached or unjoined thread would abort here.
     monitor.reset();
     TEST_ASSERT_TRUE(monitor == nullptr);
+}
+
+TEST_CASE(OS, NetworkMonitorForgetsTheWorldOfAnotherGame) {
+    NetworkMonitor monitor(4242);
+    monitor.set_fallback_world(40);
+    monitor.set_target_pid(4242);
+    TEST_ASSERT_EQ(monitor.fallback_world(), uint16_t{40});
+
+    monitor.set_target_pid(4343);
+    TEST_ASSERT_EQ(monitor.fallback_world(), uint16_t{0});
+}
+
+namespace {
+
+constexpr uint32_t kGamePid = 4242;
+const uint32_t kServer = hub::game::ipv4(204, 2, 29, 80);
+
+TcpConnection game_connection(uint32_t address, uint16_t port) {
+    return TcpConnection{kGamePid, address, port, true};
+}
+
+} // namespace
+
+TEST_CASE(OS, PingTargetGamePortsAreSquareEnixsRanges) {
+    constexpr uint16_t kInside[] = {54992, 54994, 55006, 55007, 55021, 55040, 55296, 55551};
+    constexpr uint16_t kOutside[] = {80, 443, 54991, 54995, 55005, 55008, 55020, 55041, 55295, 55552};
+    for (const uint16_t port : kInside) TEST_ASSERT_TRUE(is_game_server_port(port));
+    for (const uint16_t port : kOutside) TEST_ASSERT_FALSE(is_game_server_port(port));
+}
+
+TEST_CASE(OS, PingTargetFindsTheGamesOwnServerConnection) {
+    const TcpConnection rows[] = {
+        {kGamePid + 1, kServer, 55021, true},                          // another process
+        game_connection(hub::game::ipv4(127, 0, 0, 1), 55021),        // a local proxy
+        game_connection(0, 55021),                                    // unset
+        {kGamePid, kServer, 55021, false},                            // not established
+        game_connection(hub::game::ipv4(151, 101, 1, 1), 443),        // not a game port
+        game_connection(kServer, 55296),
+    };
+    TEST_ASSERT_EQ(find_game_server(rows, kGamePid), kServer);
+    TEST_ASSERT_EQ(find_game_server(std::span(rows, 5), kGamePid), 0u);
+    TEST_ASSERT_EQ(find_game_server({}, kGamePid), 0u);
+}
+
+TEST_CASE(OS, PingTargetFallsBackToTheDataCenterLobby) {
+    constexpr uint16_t kJenova = 40; // Aether
+    const uint32_t aether_lobby = hub::game::ipv4(204, 2, 29, 6);
+
+    // A VPN that hides the game's connections leaves the lobby alone.
+    const TcpConnection proxied[] = {game_connection(hub::game::ipv4(127, 0, 0, 1), 55021)};
+    PingCandidates c = ping_candidates(proxied, kGamePid, kJenova);
+    TEST_ASSERT_EQ(c.count, size_t{1});
+    TEST_ASSERT(c.targets[0].source == PingSource::DataCenterLobby);
+    TEST_ASSERT_EQ(c.targets[0].address, aether_lobby);
+
+    // With the server visible it goes first, the lobby behind it.
+    const TcpConnection visible[] = {game_connection(kServer, 55021)};
+    c = ping_candidates(visible, kGamePid, kJenova);
+    TEST_ASSERT_EQ(c.count, size_t{2});
+    TEST_ASSERT(c.targets[0].source == PingSource::GameServer);
+    TEST_ASSERT_EQ(c.targets[0].address, kServer);
+    TEST_ASSERT(c.targets[1].source == PingSource::DataCenterLobby);
+
+    // Connected to the lobby itself, it is pinged once.
+    const TcpConnection at_lobby[] = {game_connection(aether_lobby, 54994)};
+    c = ping_candidates(at_lobby, kGamePid, kJenova);
+    TEST_ASSERT_EQ(c.count, size_t{1});
+    TEST_ASSERT(c.targets[0].source == PingSource::GameServer);
+
+    // An unknown world adds nothing.
+    TEST_ASSERT_EQ(ping_candidates(visible, kGamePid, 0).count, size_t{1});
+    TEST_ASSERT_EQ(ping_candidates(proxied, kGamePid, 0).count, size_t{0});
+}
+
+TEST_CASE(OS, PingTargetLobbyPerDataCenter) {
+    TEST_ASSERT_EQ(*hub::game::lobby_address(21), hub::game::ipv4(153, 254, 80, 103)); // Ravana, Materia
+    TEST_ASSERT_EQ(*hub::game::lobby_address(91), hub::game::ipv4(204, 2, 29, 8));     // Balmung, Crystal
+    TEST_ASSERT_EQ(*hub::game::lobby_address(39), hub::game::ipv4(80, 239, 145, 6));   // Omega, Chaos
+    TEST_ASSERT_EQ(*hub::game::lobby_address(45), hub::game::ipv4(119, 252, 36, 6));   // Carbuncle, Elemental
+    TEST_ASSERT_FALSE(hub::game::lobby_address(0).has_value());
+    TEST_ASSERT_FALSE(hub::game::lobby_address(0xFFFF).has_value());
+    TEST_ASSERT_FALSE(hub::game::lobby_address(3000).has_value()); // a test data center
+    TEST_ASSERT(hub::game::data_center_name(hub::game::world_data_center(40)) == "Aether");
+}
+
+TEST_CASE(OS, PingTargetFormatsAddresses) {
+    TEST_ASSERT(format_ipv4(hub::game::ipv4(204, 2, 29, 6)) == "204.2.29.6");
+    TEST_ASSERT(format_ipv4(0) == "0.0.0.0");
 }

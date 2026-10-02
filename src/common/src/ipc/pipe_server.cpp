@@ -266,7 +266,8 @@ bool PipeServer::process_raw_packet(std::span<const uint8_t> data) {
         case MessageType::Status:          deliver_versioned<StatusPayload>(p, STATUS_V1_SIZE, m_on_status); break;
         case MessageType::OverlayGeometry: deliver<OverlayGeometryPayload>(p, m_on_overlay_geometry); break;
         // A payload loaded before this app may send flags alone; its client_flags
-        // read as 0, which the meter takes as "unknown".
+        // read as 0, which the meter takes as "unknown". One from before
+        // current_world reads as world 0, which leaves the ping no lobby fallback.
         case MessageType::GameState:       deliver_versioned<GameStatePayload>(p, GAME_STATE_V1_SIZE, m_on_game_state); break;
         default: break;
     }

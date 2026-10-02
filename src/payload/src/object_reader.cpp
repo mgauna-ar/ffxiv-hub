@@ -294,6 +294,19 @@ const game::CharacterObject* SafeReadLocalPlayerObject(
     return obj;
 }
 
+uint16_t SafeReadCurrentWorld(uintptr_t id_addr) {
+    uint32_t id = 0;
+    uint32_t hp = 0;
+    uint32_t max_hp = 0;
+    const auto* obj = SafeReadLocalPlayerObject(id_addr, id, hp, max_hp);
+    game::CharacterWorlds worlds;
+    if (obj == nullptr ||
+        !hub::os::safe_read(reinterpret_cast<uintptr_t>(obj) + game::offsets::CHARACTER_CURRENT_WORLD, worlds)) {
+        return 0;
+    }
+    return worlds.current <= game::CharacterWorlds::MAX_VALID_WORLD ? worlds.current : 0;
+}
+
 /// False when the read faulted, which says nothing about the layout. Otherwise
 /// `layout_ok` carries the layout check's verdict.
 bool SafeExtractStatusList(
@@ -479,6 +492,10 @@ bool ObjectReader::in_lobby() const {
     return SafeReadInLobby(m_local_player_id_addr);
 }
 
+uint16_t ObjectReader::current_world() const {
+    return SafeReadCurrentWorld(m_local_player_id_addr);
+}
+
 void ObjectReader::inspect_and_sync_actor(uint32_t entity_id, meter::CombatantRegistry* registry) {
     if (!game::is_real_entity_id(entity_id)) {
         return;
@@ -631,6 +648,10 @@ bool ObjectReader::read_character(uint32_t, ipc::ActorInfoPacket&) {
 
 bool ObjectReader::in_lobby() const {
     return false;
+}
+
+uint16_t ObjectReader::current_world() const {
+    return 0;
 }
 
 void ObjectReader::inspect_and_sync_actor(uint32_t, meter::CombatantRegistry*) {}
