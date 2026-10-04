@@ -36,18 +36,15 @@ struct WeaveTiming {
     return t;
 }
 
-/// Averages over the most recent comparable actions, for the "without vs with" card.
+/// Averages over the most recent comparable actions, for the Time saved tile.
 struct ImpactSummary {
     std::size_t samples{0};
-    float avg_rtt_ms{0.0f};
-    float avg_server_lock_ms{0.0f};
-    float avg_applied_lock_ms{0.0f};
     float avg_without_ms{0.0f};
     float avg_with_ms{0.0f};
     [[nodiscard]] float avg_saved_ms() const { return avg_without_ms - avg_with_ms; }
 };
 
-/// Actions the card averages over: recent enough to follow a change of route or
+/// Actions the tile averages over: recent enough to follow a change of route or
 /// setting within a pull, long enough that one spike does not swing it.
 inline constexpr std::size_t kImpactWindow = 30;
 
@@ -57,22 +54,19 @@ inline constexpr std::size_t kImpactWindow = 30;
                                                     float ceiling_ms,
                                                     std::size_t window = kImpactWindow) {
     ImpactSummary out{};
-    double rtt = 0.0, server_lock = 0.0, applied_lock = 0.0;
+    double without_sum = 0.0, with_sum = 0.0;
     for (auto it = recent.rbegin(); it != recent.rend() && out.samples < window; ++it) {
-        if (!weave_timing(*it, ceiling_ms)) continue;
-        rtt += it->measured_rtt_ms;
-        server_lock += it->original_lock_ms;
-        applied_lock += it->adjusted_lock_ms;
+        const auto t = weave_timing(*it, ceiling_ms);
+        if (!t) continue;
+        without_sum += t->without_ms;
+        with_sum += t->with_ms;
         ++out.samples;
     }
     if (out.samples == 0) return out;
 
     const double n = static_cast<double>(out.samples);
-    out.avg_rtt_ms = static_cast<float>(rtt / n);
-    out.avg_server_lock_ms = static_cast<float>(server_lock / n);
-    out.avg_applied_lock_ms = static_cast<float>(applied_lock / n);
-    out.avg_without_ms = out.avg_rtt_ms + out.avg_server_lock_ms;
-    out.avg_with_ms = out.avg_rtt_ms + out.avg_applied_lock_ms;
+    out.avg_without_ms = static_cast<float>(without_sum / n);
+    out.avg_with_ms = static_cast<float>(with_sum / n);
     return out;
 }
 

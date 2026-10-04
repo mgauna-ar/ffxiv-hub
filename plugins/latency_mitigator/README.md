@@ -176,20 +176,15 @@ with mitigation:     round trip + applied lock   213 + 402 = 615 ms
   | Action delay | The latest smoothed action round trip, with the last raw sample below it |
   | Network ping | The ICMP ping to the game server, or to your data center's lobby server. *not measured yet* until it has an answer |
   | Stability | The round-trip jitter. Its tooltip also counts the spikes filtered and the trims that stopped at the floor |
-  | Time saved | Time removed per ability, averaged like the card below, with the session total. Dry-run and switched-off actions add nothing to the total. |
+  | Time saved | Time removed per ability, averaged over your last 30 abilities, with the session total. Casts are left out of the average, because their lock is never trimmed. Dry-run and switched-off actions add nothing to the total. |
 
   The round-trip tiles use the same colour bands as the HUD.
-- **Without vs with mitigation.** Two bars on one scale, each made of the round trip and
-  then the lock. *Without* uses the lock the server sent; *With* uses the lock written,
-  and outlines the part that was removed. The headline gives the difference per ability.
-  The averages cover your last 30 abilities. Casts are left out, because their lock is
-  never trimmed. In dry-run the bar turns violet and the headline reads *Would be*; with
-  *Enable animation lock mitigation* off, the headline says so.
-- **Time per ability, recent actions.** The same two figures for every ability: a grey
-  *without* line, a blue *with* line, and the time saved filled between them. With
-  mitigation off the two lines meet and the fill disappears. The axis starts at zero, so
-  the gap is to scale; a filtered spike runs off the top instead of setting the scale.
-  Hover it for any ability's name, round trip, without, with and saved.
+- **Time per ability.** The same two figures for every recent ability: a grey *without*
+  line, a blue *with* line (violet in dry-run), and the time saved filled between them.
+  With mitigation off the two lines meet and the fill disappears. The axis starts at
+  zero, so the gap is to scale, and reaches the highest ability, so a spike shows at its
+  real height. Where the spike filter rejected a round trip, both lines are drawn in
+  amber. Hover it for any ability's name, round trip, without, with and saved.
 - **Recent action telemetry.** Every ability the client sends, newest first, with the
   columns Time, Action, RTT, Server lock, Applied lock, Without, With, Saved and Status.
   Hover a header for what it means, and an action for its id and sequence number. Casts,
@@ -293,11 +288,11 @@ action feed as *Dry-run (not applied)*, but nothing is written to game memory.
 
 <br>
 
-Look at the *Without vs with mitigation* card on the Live telemetry tab. After every
-ability you wait your round trip plus the lock. Mitigation leaves the round trip alone and
-shortens the lock, so with a 213 ms round trip and a 600 ms lock you wait about 615 ms
-instead of 813 ms. That is roughly what a player sitting next to the datacenter waits.
-The chart below the card shows the same comparison ability by ability.
+Look at the *Time saved* tile on the Live telemetry tab. After every ability you wait
+your round trip plus the lock. Mitigation leaves the round trip alone and shortens the
+lock, so with a 213 ms round trip and a 600 ms lock you wait about 615 ms instead of
+813 ms. That is roughly what a player sitting next to the datacenter waits. The *Time
+per ability* chart below the tiles shows the same comparison ability by ability.
 
 </details>
 

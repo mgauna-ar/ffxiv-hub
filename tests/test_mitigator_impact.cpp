@@ -61,9 +61,6 @@ TEST_CASE(MitigatorImpact, SummaryAveragesOnlyComparableActions) {
     };
     const ImpactSummary s = summarize_impact(recent, kCeiling);
     TEST_ASSERT_EQ(s.samples, 2u);
-    TEST_ASSERT_NEAR(s.avg_rtt_ms, 210.0f, 0.01);
-    TEST_ASSERT_NEAR(s.avg_server_lock_ms, 600.0f, 0.01);
-    TEST_ASSERT_NEAR(s.avg_applied_lock_ms, 405.0f, 0.01);
     TEST_ASSERT_NEAR(s.avg_without_ms, 810.0f, 0.01);
     TEST_ASSERT_NEAR(s.avg_with_ms, 615.0f, 0.01);
     TEST_ASSERT_NEAR(s.avg_saved_ms(), 195.0f, 0.01);
@@ -75,7 +72,7 @@ TEST_CASE(MitigatorImpact, SummaryKeepsOnlyTheNewestWindow) {
     for (int i = 0; i < 3; ++i) recent.push_back(sample(200.0f, 600.0f, 415.0f)); // newest
     const ImpactSummary s = summarize_impact(recent, kCeiling, 3);
     TEST_ASSERT_EQ(s.samples, 3u);
-    TEST_ASSERT_NEAR(s.avg_rtt_ms, 200.0f, 0.01);
+    TEST_ASSERT_NEAR(s.avg_without_ms, 800.0f, 0.01);
     TEST_ASSERT_NEAR(s.avg_saved_ms(), 185.0f, 0.01);
 }
 

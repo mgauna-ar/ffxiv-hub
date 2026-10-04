@@ -28,15 +28,6 @@ namespace {
 
 constexpr const char* MITI = plugins::LATENCY_MITIGATOR.config_section;
 
-/// What the write-back is doing, as the page header names it.
-enum class MitigationMode { Mitigating, DryRun, Off };
-
-MitigationMode mitigation_mode() {
-    if (cfg_get(MITI, "dry_run", false)) return MitigationMode::DryRun;
-    if (!cfg_get(MITI, "enabled", true)) return MitigationMode::Off;
-    return MitigationMode::Mitigating;
-}
-
 float lock_ceiling_ms() {
     return cfg_get(MITI, "max_animation_lock_ms",
                    static_cast<float>(mitigator::constants::DEFAULT_MAX_ANIMATION_LOCK_MS));
@@ -51,15 +42,14 @@ uint32_t ping_grade_color(double ping_ms) {
     return colors::Danger;
 }
 
-// Colours of the with/without comparison, shared by the card, the chart and the table.
-constexpr uint32_t kRttColor      = colors::with_alpha(colors::TextFaint, 0.55f);
-constexpr uint32_t kWithoutColor  = colors::with_alpha(colors::TextMuted, 0.70f);
-constexpr uint32_t kWithLockColor = colors::Accent;
-constexpr uint32_t kWithLineColor = colors::AccentHover;
-constexpr uint32_t kSavedColor    = colors::Success;
+// Colours of the time per ability chart and its legend.
+constexpr uint32_t kWithoutColor = colors::with_alpha(colors::TextMuted, 0.70f);
+constexpr uint32_t kSavedColor   = colors::Success;
+constexpr uint32_t kSpikeColor   = colors::Warning;
 
-uint32_t with_color(MitigationMode mode) {
-    return mode == MitigationMode::DryRun ? colors::Violet : kWithLockColor;
+/// The "with" line, violet in dry-run, where none of it was written.
+uint32_t with_line_color() {
+    return cfg_get(MITI, "dry_run", false) ? colors::Violet : colors::AccentHover;
 }
 
 /// Width legend_entry() takes, so the header slot fits the legend exactly.
@@ -83,106 +73,6 @@ void legend_entry(const char* label, uint32_t color) {
 }
 
 // ---------------------------------------------------------------------------
-// Without vs with card
-// ---------------------------------------------------------------------------
-
-/// A filled bar segment, with its label centred inside when it fits.
-void bar_segment(ImDrawList* dl, float x0, float x1, float y0, float y1, uint32_t fill,
-                 const char* label) {
-    if (x1 <= x0) return;
-    dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), fill, m(3.0f));
-    const ImVec2 size = ImGui::CalcTextSize(label);
-    if (size.x + m(8.0f) <= x1 - x0) {
-        dl->AddText(ImVec2((x0 + x1 - size.x) * 0.5f, (y0 + y1 - size.y) * 0.5f),
-                    colors::TextPrimary, label);
-    }
-}
-
-void render_impact_card(const ImpactSummary& s, MitigationMode mode) {
-    CardOptions opts{};
-    opts.auto_height = true;
-    begin_card("##ImpactCard", ImVec2(0.0f, 0.0f), opts);
-    section_header(ICON_BOLT, "TIME PER ABILITY: WITHOUT VS WITH MITIGATION", kSavedColor);
-
-    if (s.samples == 0) {
-        text_dim("Use an ability in game and the comparison fills in.");
-        end_card();
-        return;
-    }
-
-    const float label_w = ImGui::CalcTextSize("Without").x + m(14.0f);
-    const float total_w = ImGui::CalcTextSize("0000 ms").x + m(12.0f);
-    const float bar_h = ImGui::GetTextLineHeight() + m(10.0f);
-    const float row_gap = m(6.0f);
-    const ImVec2 origin = ImGui::GetCursorScreenPos();
-    const float bar_x0 = origin.x + label_w;
-    const float bar_w = std::max(ImGui::GetContentRegionAvail().x - label_w - total_w, m(120.0f));
-    const float scale = bar_w / std::max(s.avg_without_ms, 1.0f);
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-
-    char rtt_label[48], lock_label[48], total[24];
-    std::snprintf(rtt_label, sizeof(rtt_label), "round trip %.0f ms", s.avg_rtt_ms);
-
-    // Without: the round trip, then the whole lock the server sent.
-    float y = origin.y;
-    const float text_dy = (bar_h - ImGui::GetTextLineHeight()) * 0.5f;
-    dl->AddText(ImVec2(origin.x, y + text_dy), colors::TextMuted, "Without");
-    const float rtt_x1 = bar_x0 + s.avg_rtt_ms * scale;
-    bar_segment(dl, bar_x0, rtt_x1, y, y + bar_h, kRttColor, rtt_label);
-    std::snprintf(lock_label, sizeof(lock_label), "lock %.0f ms", s.avg_server_lock_ms);
-    const float without_x1 = bar_x0 + s.avg_without_ms * scale;
-    bar_segment(dl, rtt_x1, without_x1, y, y + bar_h, kWithoutColor, lock_label);
-    std::snprintf(total, sizeof(total), "%.0f ms", s.avg_without_ms);
-    dl->AddText(ImVec2(without_x1 + m(8.0f), y + text_dy), colors::TextBody, total);
-
-    // With: the same round trip, then the lock actually written, then what was cut.
-    y += bar_h + row_gap;
-    dl->AddText(ImVec2(origin.x, y + text_dy), colors::TextBody, "With");
-    bar_segment(dl, bar_x0, rtt_x1, y, y + bar_h, kRttColor, rtt_label);
-    std::snprintf(lock_label, sizeof(lock_label), "lock %.0f ms", s.avg_applied_lock_ms);
-    const float with_x1 = bar_x0 + s.avg_with_ms * scale;
-    bar_segment(dl, rtt_x1, with_x1, y, y + bar_h, with_color(mode), lock_label);
-    if (without_x1 - with_x1 > m(2.0f)) {
-        dl->AddRectFilled(ImVec2(with_x1, y), ImVec2(without_x1, y + bar_h),
-                          colors::with_alpha(kSavedColor, 0.12f), m(3.0f));
-        dl->AddRect(ImVec2(with_x1, y), ImVec2(without_x1, y + bar_h),
-                    colors::with_alpha(kSavedColor, 0.65f), m(3.0f), 0, m(1.2f));
-        char saved[32];
-        std::snprintf(saved, sizeof(saved), "-%.0f ms", s.avg_saved_ms());
-        const ImVec2 size = ImGui::CalcTextSize(saved);
-        if (size.x + m(8.0f) <= without_x1 - with_x1) {
-            dl->AddText(ImVec2((with_x1 + without_x1 - size.x) * 0.5f, y + text_dy),
-                        colors::SuccessLight, saved);
-        }
-    }
-    std::snprintf(total, sizeof(total), "%.0f ms", s.avg_with_ms);
-    dl->AddText(ImVec2(without_x1 + m(8.0f), y + text_dy), colors::TextPrimary, total);
-
-    ImGui::Dummy(ImVec2(0.0f, bar_h * 2.0f + row_gap + m(4.0f)));
-
-    // The headline: one sentence that answers "what does it change for me".
-    const float saved_ms = s.avg_saved_ms();
-    const float percent = s.avg_without_ms > 0.0f ? 100.0f * saved_ms / s.avg_without_ms : 0.0f;
-    ImGui::PushFont(bold_font());
-    if (mode == MitigationMode::Off) {
-        text_colored_u32(colors::DangerLight,
-                         "Mitigation is off: new abilities wait the full time, like the Without bar.");
-    } else if (saved_ms < 1.0f) {
-        text_colored_u32(colors::TextMuted, "Nothing trimmed recently: your round trip is already near the target.");
-    } else if (mode == MitigationMode::DryRun) {
-        text_colored_u32(colors::Violet, "Would be %.0f ms sooner after every ability (-%.0f%%). Dry-run writes nothing.",
-                         saved_ms, percent);
-    } else {
-        text_colored_u32(colors::SuccessLight, "%.0f ms sooner after every ability (-%.0f%%)", saved_ms, percent);
-    }
-    ImGui::PopFont();
-    ImGui::SameLine(0.0f, m(12.0f));
-    text_dim("average of your last %zu abilities; casts are left out, their lock is never trimmed", s.samples);
-
-    end_card();
-}
-
-// ---------------------------------------------------------------------------
 // Time per ability chart
 // ---------------------------------------------------------------------------
 
@@ -192,7 +82,7 @@ struct ChartPoint {
     bool spike_filtered;
 };
 
-void render_weave_chart(const std::vector<ChartPoint>& points, MitigationMode mode, float height) {
+void render_weave_chart(const std::vector<ChartPoint>& points, uint32_t with_line, float height) {
     const ImVec2 canvas_size(ImGui::GetContentRegionAvail().x, height);
     const ImVec2 p_min = ImGui::GetCursorScreenPos();
     const ImVec2 p_max(p_min.x + canvas_size.x, p_min.y + canvas_size.y);
@@ -214,13 +104,10 @@ void render_weave_chart(const std::vector<ChartPoint>& points, MitigationMode mo
         return;
     }
 
-    // The axis starts at zero so the gap between the lines is to scale.
+    // The axis starts at zero so the gap between the lines is to scale, and reaches
+    // the highest action so every spike is drawn at its real height.
     float max_ms = 800.0f;
-    // Filtered spikes are left out of the scale: they run off the top rather than
-    // squash the two lines every ordinary action sits on.
-    for (const auto& p : points) {
-        if (!p.spike_filtered) max_ms = std::max(max_ms, p.timing.without_ms);
-    }
+    for (const auto& p : points) max_ms = std::max(max_ms, p.timing.without_ms);
     // The finest step whose labels still have room between them at this height.
     const float label_gap = ImGui::GetTextLineHeight() * 1.8f;
     const float plot_h = canvas_size.y - m(20.0f);
@@ -266,14 +153,19 @@ void render_weave_chart(const std::vector<ChartPoint>& points, MitigationMode mo
                           ImVec2(x0, y_for(points[i].timing.with_ms)),
                           colors::with_alpha(kSavedColor, 0.18f));
     }
-    const uint32_t with_line = mode == MitigationMode::DryRun ? colors::Violet : kWithLineColor;
+    // Both sides of a filtered spike are amber on both lines, so it reads as one peak.
+    const auto segment_color = [&](size_t i, uint32_t color) {
+        return points[i].spike_filtered || points[i + 1].spike_filtered ? kSpikeColor : color;
+    };
     for (size_t i = 0; i + 1 < points.size(); ++i) {
         dl->AddLine(ImVec2(x_for(i), y_for(points[i].timing.without_ms)),
-                    ImVec2(x_for(i + 1), y_for(points[i + 1].timing.without_ms)), kWithoutColor, m(1.5f));
+                    ImVec2(x_for(i + 1), y_for(points[i + 1].timing.without_ms)),
+                    segment_color(i, kWithoutColor), m(1.5f));
     }
     for (size_t i = 0; i + 1 < points.size(); ++i) {
         dl->AddLine(ImVec2(x_for(i), y_for(points[i].timing.with_ms)),
-                    ImVec2(x_for(i + 1), y_for(points[i + 1].timing.with_ms)), with_line, m(2.2f));
+                    ImVec2(x_for(i + 1), y_for(points[i + 1].timing.with_ms)),
+                    segment_color(i, with_line), m(2.2f));
     }
     dl->PopClipRect();
 
@@ -302,7 +194,7 @@ void render_weave_chart(const std::vector<ChartPoint>& points, MitigationMode mo
             text_colored_u32(with_line, "With: %.0f ms", p.timing.with_ms);
             text_colored_u32(colors::SuccessLight, "Saved: %.0f ms", p.timing.saved_ms());
             if (p.spike_filtered) {
-                text_colored_u32(colors::Warning, ICON_WARNING "  Spike: trimmed by the usual round trip");
+                text_colored_u32(kSpikeColor, ICON_WARNING "  Spike: trimmed by the usual round trip");
             }
             ImGui::EndTooltip();
         }
@@ -557,29 +449,27 @@ void render_action_feed(const std::vector<ipc::MitigatorTelemetryPayload>& telem
 
 void render_live_tab(AppState& app_state, const AppState::MitigatorMetrics& metrics,
                      const std::vector<ipc::MitigatorTelemetryPayload>& telemetry) {
-    const MitigationMode mode = mitigation_mode();
     const float ceiling_ms = lock_ceiling_ms();
-    const ImpactSummary impact = summarize_impact(telemetry, ceiling_ms);
-
-    render_metric_tiles(app_state, metrics, impact);
+    render_metric_tiles(app_state, metrics, summarize_impact(telemetry, ceiling_ms));
     ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
-    render_impact_card(impact, mode);
-    ImGui::Dummy(ImVec2(0.0f, m(2.0f)));
 
     // Chart takes a fixed share of what is left; the feed takes the rest, so both
     // reach the bottom of the window instead of stopping at a magic pixel height.
     const float remaining = fill_h(0.0f);
-    const float graph_card_h = std::max(remaining * 0.38f, m(170.0f));
+    const float graph_card_h = std::max(remaining * 0.46f, m(170.0f));
 
     begin_card("##RttGraphCard", ImVec2(0.0f, graph_card_h));
+    const uint32_t with_line = with_line_color();
     const float legend_w = legend_entry_width("without") + legend_entry_width("with") +
-                           legend_entry_width("saved") + m(12.0f) * 2.0f;
-    begin_section_header(ICON_TRENDING, "TIME PER ABILITY, RECENT ACTIONS", legend_w);
+                           legend_entry_width("saved") + legend_entry_width("spike") + m(12.0f) * 3.0f;
+    begin_section_header(ICON_TRENDING, "TIME PER ABILITY", legend_w);
     legend_entry("without", kWithoutColor);
     ImGui::SameLine(0.0f, m(12.0f));
-    legend_entry("with", mode == MitigationMode::DryRun ? colors::Violet : kWithLineColor);
+    legend_entry("with", with_line);
     ImGui::SameLine(0.0f, m(12.0f));
     legend_entry("saved", colors::with_alpha(kSavedColor, 0.75f));
+    ImGui::SameLine(0.0f, m(12.0f));
+    legend_entry("spike", kSpikeColor);
     end_section_header();
 
     std::vector<ChartPoint> points;
@@ -589,7 +479,7 @@ void render_live_tab(AppState& app_state, const AppState::MitigatorMetrics& metr
             points.push_back({ *t, s.action_id, s.spike_filtered != 0 });
         }
     }
-    render_weave_chart(points, mode, fill_h(0.0f));
+    render_weave_chart(points, with_line, fill_h(0.0f));
     end_card();
 
     ImGui::Dummy(ImVec2(0.0f, m(2.0f)));
