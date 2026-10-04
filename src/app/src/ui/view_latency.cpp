@@ -144,6 +144,15 @@ void render_weave_chart(const std::vector<ChartPoint>& points, uint32_t with_lin
     const auto x_for = [&](size_t i) { return plot_x0 + static_cast<float>(i) * dx; };
 
     dl->PushClipRect(p_min, p_max, true);
+    // The time you wait, shaded under the "with" line, so a spike reads as a taller
+    // wait rather than a dent in the saved band.
+    for (size_t i = 0; i + 1 < points.size(); ++i) {
+        const float x0 = x_for(i), x1 = x_for(i + 1);
+        dl->AddQuadFilled(ImVec2(x0, y_for(points[i].timing.with_ms)),
+                          ImVec2(x1, y_for(points[i + 1].timing.with_ms)),
+                          ImVec2(x1, plot_y1), ImVec2(x0, plot_y1),
+                          colors::with_alpha(with_line, 0.10f));
+    }
     // Saved time: the band between what it would have been and what it was.
     for (size_t i = 0; i + 1 < points.size(); ++i) {
         const float x0 = x_for(i), x1 = x_for(i + 1);
@@ -153,19 +162,17 @@ void render_weave_chart(const std::vector<ChartPoint>& points, uint32_t with_lin
                           ImVec2(x0, y_for(points[i].timing.with_ms)),
                           colors::with_alpha(kSavedColor, 0.18f));
     }
-    // Both sides of a filtered spike are amber on both lines, so it reads as one peak.
-    const auto segment_color = [&](size_t i, uint32_t color) {
-        return points[i].spike_filtered || points[i + 1].spike_filtered ? kSpikeColor : color;
-    };
+    // Both sides of a filtered spike are amber on the "without" line, so it reads as one
+    // peak; the "with" line keeps its colour.
     for (size_t i = 0; i + 1 < points.size(); ++i) {
+        const bool spike = points[i].spike_filtered || points[i + 1].spike_filtered;
         dl->AddLine(ImVec2(x_for(i), y_for(points[i].timing.without_ms)),
                     ImVec2(x_for(i + 1), y_for(points[i + 1].timing.without_ms)),
-                    segment_color(i, kWithoutColor), m(1.5f));
+                    spike ? kSpikeColor : kWithoutColor, m(1.5f));
     }
     for (size_t i = 0; i + 1 < points.size(); ++i) {
         dl->AddLine(ImVec2(x_for(i), y_for(points[i].timing.with_ms)),
-                    ImVec2(x_for(i + 1), y_for(points[i + 1].timing.with_ms)),
-                    segment_color(i, with_line), m(2.2f));
+                    ImVec2(x_for(i + 1), y_for(points[i + 1].timing.with_ms)), with_line, m(2.2f));
     }
     dl->PopClipRect();
 
@@ -215,8 +222,7 @@ void render_metric_tiles(AppState& app_state, const AppState::MitigatorMetrics& 
     char delay[32];
     std::snprintf(delay, sizeof(delay), "%.1f ms", metrics.latest_smoothed_rtt_ms);
     char delay_sub[48];
-    std::snprintf(delay_sub, sizeof(delay_sub), "press to server reply (last %.0f ms)",
-                  metrics.latest_measured_rtt_ms);
+    std::snprintf(delay_sub, sizeof(delay_sub), "last ability: %.0f ms", metrics.latest_measured_rtt_ms);
     char delay_tip[256];
     std::snprintf(delay_tip, sizeof(delay_tip),
                   "How long the server takes to answer an ability, averaged. Without mitigation you "
@@ -235,12 +241,17 @@ void render_metric_tiles(AppState& app_state, const AppState::MitigatorMetrics& 
 
     char jitter[32];
     std::snprintf(jitter, sizeof(jitter), "+/- %.1f ms", metrics.latest_jitter_ms);
-    char jitter_tip[256];
-    std::snprintf(jitter_tip, sizeof(jitter_tip),
-                  "How much the action delay moves from one ability to the next. Lower is steadier. "
-                  "%llu spikes were ignored so far, and %llu trims stopped at the %.0f ms safety floor.",
-                  static_cast<unsigned long long>(metrics.spike_filtered_count),
+
+    char spikes[32];
+    std::snprintf(spikes, sizeof(spikes), "%llu", static_cast<unsigned long long>(metrics.spike_filtered_count));
+    char floors[48];
+    std::snprintf(floors, sizeof(floors), "%llu trims at the %.0f ms floor",
                   static_cast<unsigned long long>(metrics.floor_clamp_count), floor_ms);
+    char spikes_tip[320];
+    std::snprintf(spikes_tip, sizeof(spikes_tip),
+                  "Round trips far above your usual one, set aside by the spike filter this session. "
+                  "Those abilities were trimmed by your usual round trip instead, and show in amber on "
+                  "the chart. Below it, how many trims stopped at the %.0f ms safety floor.", floor_ms);
 
     char saved[32];
     if (impact.samples > 0) {
@@ -262,17 +273,21 @@ void render_metric_tiles(AppState& app_state, const AppState::MitigatorMetrics& 
           colors::SuccessLight, "how much the delay varies", colors::Success },
         { "##ReducedCard", ICON_BOLT, "TIME SAVED", saved,
           colors::WarningLight, saved_sub, colors::Warning },
+        { "##SafetyCard", ICON_SHIELD, "SPIKES FILTERED", spikes,
+          colors::TextPrimary, floors, colors::Violet },
     };
     const char* const tooltips[] = {
         delay_tip,
         "Plain network ping to the game server, or to your data center's lobby when the server "
         "does not answer. Always lower than Action delay, which also includes the server "
         "processing the ability.",
-        jitter_tip,
+        "How much the action delay moves from one ability to the next. Lower is steadier.",
         "How much sooner you can act after each ability, averaged over your recent abilities. "
         "Below it, the total removed this session. Dry-run and switched-off abilities add nothing "
         "to the total.",
+        spikes_tip,
     };
+    static_assert(std::size(tooltips) == std::size(tiles), "one tooltip per tile");
     stat_tile_row(tiles, std::size(tiles), tooltips);
 }
 

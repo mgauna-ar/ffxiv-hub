@@ -175,16 +175,20 @@ with mitigation:     round trip + applied lock   213 + 402 = 615 ms
   |---|---|
   | Action delay | The latest smoothed action round trip, with the last raw sample below it |
   | Network ping | The ICMP ping to the game server, or to your data center's lobby server. *not measured yet* until it has an answer |
-  | Stability | The round-trip jitter. Its tooltip also counts the spikes filtered and the trims that stopped at the floor |
+  | Stability | The round-trip jitter |
   | Time saved | Time removed per ability, averaged over your last 30 abilities, with the session total. Casts are left out of the average, because their lock is never trimmed. Dry-run and switched-off actions add nothing to the total. |
+  | Spikes filtered | Round trips the spike filter rejected this session, with how many trims stopped at the safety floor |
 
   The round-trip tiles use the same colour bands as the HUD.
 - **Time per ability.** The same two figures for every recent ability: a grey *without*
-  line, a blue *with* line (violet in dry-run), and the time saved filled between them.
-  With mitigation off the two lines meet and the fill disappears. The axis starts at
-  zero, so the gap is to scale, and reaches the highest ability, so a spike shows at its
-  real height. Where the spike filter rejected a round trip, both lines are drawn in
-  amber. Hover it for any ability's name, round trip, without, with and saved.
+  line, a blue *with* line (violet in dry-run) with the time you wait shaded under it,
+  and the time saved filled green between the two. With mitigation off the two lines
+  meet and the green disappears. The axis starts at zero, so the gap is to scale, and
+  reaches the highest ability, so a spike shows at its real height. Where the spike
+  filter rejected a round trip, the *without* line turns amber. Both lines rise by the
+  same amount there: that ability is trimmed by your usual round trip, so the time saved
+  stays the same and the spike's extra wait is not removed. Hover it for any ability's
+  name, round trip, without, with and saved.
 - **Recent action telemetry.** Every ability the client sends, newest first, with the
   columns Time, Action, RTT, Server lock, Applied lock, Without, With, Saved and Status.
   Hover a header for what it means, and an action for its id and sequence number. Casts,
