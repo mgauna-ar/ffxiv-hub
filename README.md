@@ -13,7 +13,7 @@ See the DPS, healing, deaths and buff uptime of every pull. Weave oGCDs on a 200
 connection the way you would sitting next to the datacenter. It comes as two files with
 no installer.
 
-![The FFXIV Hub desktop app on its Latency Mitigator page, beside the in-game combat meter and ping HUD](docs/images/hero.png)
+![The FFXIV Hub desktop app switching between its Latency Mitigator and Combat Meter pages, beside the in-game combat meter and ping HUD](docs/images/hero.png)
 
 [Highlights](#-highlights) · [Quick start](#-quick-start) · [Controls](#-controls) ·
 [Safety](#-safety-and-fair-play) · [FAQ](#-troubleshooting-and-faq) ·
@@ -492,7 +492,9 @@ macOS has no LeakSanitizer, so there `make asan` runs without leak detection.
 
 The pictures in `docs/images/` are drawn by the desktop app's and the overlays' own code
 into a software rasterizer, over a made-up raid night, so they can be redrawn without
-Windows or the game. You need zlib, `curl` and `shasum` as well:
+Windows or the game. The one at the top of this page, `hero.png`, is an animated PNG
+that switches between the Latency Mitigator and Combat Meter pages; a viewer that does
+not animate PNGs shows the first. You need zlib, `curl` and `shasum` as well:
 
 ```bash
 make screenshots

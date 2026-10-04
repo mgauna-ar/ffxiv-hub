@@ -337,31 +337,57 @@ uint8_t paeth(int a, int b, int c) {
 
 uint8_t to_byte(float v) { return static_cast<uint8_t>(std::lround(clamp01(v) * 255.0f)); }
 
-} // namespace
+void put_u16(std::vector<uint8_t>& out, uint16_t v) {
+    out.push_back(static_cast<uint8_t>(v >> 8));
+    out.push_back(static_cast<uint8_t>(v));
+}
 
-bool Canvas::write_png(const std::string& path) const {
-    const bool opaque = std::all_of(m_pixels.begin(), m_pixels.end(), [](const Rgba& c) { return c.a >= 0.999f; });
-    const int channels = opaque ? 3 : 4;
-    const size_t stride = static_cast<size_t>(m_width) * static_cast<size_t>(channels);
+const std::vector<uint8_t> kPngSignature = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
 
-    std::vector<uint8_t> raw(stride * static_cast<size_t>(m_height));
-    for (int y = 0; y < m_height; ++y) {
-        for (int x = 0; x < m_width; ++x) {
-            const Rgba c = pixel(x, y);
+bool is_opaque(const Canvas& canvas) {
+    for (int y = 0; y < canvas.height(); ++y) {
+        for (int x = 0; x < canvas.width(); ++x) {
+            if (canvas.pixel(x, y).a < 0.999f) return false;
+        }
+    }
+    return true;
+}
+
+std::vector<uint8_t> png_header(int width, int height, bool opaque) {
+    std::vector<uint8_t> header;
+    put_u32(header, static_cast<uint32_t>(width));
+    put_u32(header, static_cast<uint32_t>(height));
+    header.push_back(8);                          // bit depth
+    header.push_back(opaque ? 2 : 6);             // colour type: RGB or RGBA
+    header.push_back(0);                          // compression
+    header.push_back(0);                          // filter method
+    header.push_back(0);                          // no interlace
+    return header;
+}
+
+/// The pixels of `rect`, filtered and deflated: an IDAT's or an fdAT's payload.
+/// Empty if deflate fails.
+std::vector<uint8_t> encode_pixels(const Canvas& canvas, const Rect& rect, int channels) {
+    const size_t stride = static_cast<size_t>(rect.w) * static_cast<size_t>(channels);
+
+    std::vector<uint8_t> raw(stride * static_cast<size_t>(rect.h));
+    for (int y = 0; y < rect.h; ++y) {
+        for (int x = 0; x < rect.w; ++x) {
+            const Rgba c = canvas.pixel(rect.x + x, rect.y + y);
             uint8_t* p = &raw[static_cast<size_t>(y) * stride + static_cast<size_t>(x) * static_cast<size_t>(channels)];
             p[0] = to_byte(c.r);
             p[1] = to_byte(c.g);
             p[2] = to_byte(c.b);
-            if (!opaque) p[3] = to_byte(c.a);
+            if (channels == 4) p[3] = to_byte(c.a);
         }
     }
 
     // Per row, the filter with the smallest sum of absolute residuals.
     std::vector<uint8_t> filtered;
-    filtered.reserve((stride + 1) * static_cast<size_t>(m_height));
+    filtered.reserve((stride + 1) * static_cast<size_t>(rect.h));
     std::vector<uint8_t> candidate(stride);
     std::vector<uint8_t> best(stride);
-    for (int y = 0; y < m_height; ++y) {
+    for (int y = 0; y < rect.h; ++y) {
         const uint8_t* row = &raw[static_cast<size_t>(y) * stride];
         const uint8_t* prev = y > 0 ? &raw[static_cast<size_t>(y - 1) * stride] : nullptr;
         uint64_t best_score = UINT64_MAX;
@@ -397,27 +423,106 @@ bool Canvas::write_png(const std::string& path) const {
     std::vector<uint8_t> compressed(compressed_size);
     if (compress2(compressed.data(), &compressed_size, filtered.data(), static_cast<uLong>(filtered.size()),
                   Z_BEST_COMPRESSION) != Z_OK) {
-        return false;
+        return {};
     }
     compressed.resize(compressed_size);
+    return compressed;
+}
 
-    std::vector<uint8_t> png = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
-    std::vector<uint8_t> header;
-    put_u32(header, static_cast<uint32_t>(m_width));
-    put_u32(header, static_cast<uint32_t>(m_height));
-    header.push_back(8);                          // bit depth
-    header.push_back(opaque ? 2 : 6);             // colour type: RGB or RGBA
-    header.push_back(0);                          // compression
-    header.push_back(0);                          // filter method
-    header.push_back(0);                          // no interlace
-    put_chunk(png, "IHDR", header);
-    put_chunk(png, "IDAT", compressed);
-    put_chunk(png, "IEND", {});
+/// The smallest rectangle holding every pixel that differs between two canvases of
+/// one size, or a single pixel when none does, since a frame cannot be empty.
+Rect changed_rect(const Canvas& before, const Canvas& after) {
+    int x0 = after.width(), y0 = after.height(), x1 = -1, y1 = -1;
+    for (int y = 0; y < after.height(); ++y) {
+        for (int x = 0; x < after.width(); ++x) {
+            const Rgba a = before.pixel(x, y);
+            const Rgba b = after.pixel(x, y);
+            if (to_byte(a.r) == to_byte(b.r) && to_byte(a.g) == to_byte(b.g) &&
+                to_byte(a.b) == to_byte(b.b) && to_byte(a.a) == to_byte(b.a)) {
+                continue;
+            }
+            x0 = std::min(x0, x);
+            y0 = std::min(y0, y);
+            x1 = std::max(x1, x);
+            y1 = std::max(y1, y);
+        }
+    }
+    if (x1 < 0) return Rect{0, 0, 1, 1};
+    return Rect{x0, y0, x1 - x0 + 1, y1 - y0 + 1};
+}
 
+bool write_file(const std::string& path, const std::vector<uint8_t>& bytes) {
     FILE* f = std::fopen(path.c_str(), "wb");
     if (f == nullptr) return false;
-    const bool ok = std::fwrite(png.data(), 1, png.size(), f) == png.size();
+    const bool ok = std::fwrite(bytes.data(), 1, bytes.size(), f) == bytes.size();
     return std::fclose(f) == 0 && ok;
+}
+
+} // namespace
+
+bool Canvas::write_png(const std::string& path) const {
+    const bool opaque = is_opaque(*this);
+    const std::vector<uint8_t> pixels = encode_pixels(*this, Rect{0, 0, m_width, m_height}, opaque ? 3 : 4);
+    if (pixels.empty()) return false;
+
+    std::vector<uint8_t> png = kPngSignature;
+    put_chunk(png, "IHDR", png_header(m_width, m_height, opaque));
+    put_chunk(png, "IDAT", pixels);
+    put_chunk(png, "IEND", {});
+    return write_file(path, png);
+}
+
+bool write_animated_png(const std::string& path, const std::vector<Canvas>& frames, int frame_ms) {
+    if (frames.empty()) return false;
+    const int width = frames.front().width();
+    const int height = frames.front().height();
+    bool opaque = true;
+    for (const Canvas& frame : frames) {
+        if (frame.width() != width || frame.height() != height) return false;
+        opaque = opaque && is_opaque(frame);
+    }
+
+    std::vector<uint8_t> png = kPngSignature;
+    put_chunk(png, "IHDR", png_header(width, height, opaque));
+    std::vector<uint8_t> animation;
+    put_u32(animation, static_cast<uint32_t>(frames.size()));
+    put_u32(animation, 0); // loop forever
+    put_chunk(png, "acTL", animation);
+
+    // fcTL and fdAT chunks share one sequence, counted from zero.
+    uint32_t sequence = 0;
+    for (size_t i = 0; i < frames.size(); ++i) {
+        // Each frame after the first carries only what changed since the one before.
+        // The first covers the whole canvas, so a loop back to it starts clean.
+        const Rect rect = i == 0 ? Rect{0, 0, width, height} : changed_rect(frames[i - 1], frames[i]);
+        const std::vector<uint8_t> pixels = encode_pixels(frames[i], rect, opaque ? 3 : 4);
+        if (pixels.empty()) return false;
+
+        std::vector<uint8_t> control;
+        put_u32(control, sequence++);
+        put_u32(control, static_cast<uint32_t>(rect.w));
+        put_u32(control, static_cast<uint32_t>(rect.h));
+        put_u32(control, static_cast<uint32_t>(rect.x));
+        put_u32(control, static_cast<uint32_t>(rect.y));
+        // Delay in seconds, as a fraction: frame_ms / 1000.
+        put_u16(control, static_cast<uint16_t>(std::clamp(frame_ms, 1, 65535)));
+        put_u16(control, 1000);
+        control.push_back(0); // dispose: leave the frame in place
+        control.push_back(0); // blend: replace what is under it
+        put_chunk(png, "fcTL", control);
+
+        // The first frame is the default image, which a viewer without APNG shows.
+        if (i == 0) {
+            put_chunk(png, "IDAT", pixels);
+        } else {
+            std::vector<uint8_t> data;
+            put_u32(data, sequence++);
+            data.insert(data.end(), pixels.begin(), pixels.end());
+            put_chunk(png, "fdAT", data);
+        }
+    }
+    put_chunk(png, "IEND", {});
+    return write_file(path, png);
 }
 
 Canvas make_backdrop(int width, int height) {
