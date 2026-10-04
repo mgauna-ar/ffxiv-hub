@@ -446,7 +446,7 @@ void stat_tile(const char* id, float width, const char* icon, const char* label,
     end_card();
 }
 
-void stat_tile_row(const StatTileSpec* tiles, size_t count) {
+void stat_tile_row(const StatTileSpec* tiles, size_t count, const char* const* tooltips) {
     if (tiles == nullptr || count == 0) return;
 
     const int columns = balanced_columns(static_cast<int>(count), metrics::TileMinW);
@@ -462,6 +462,14 @@ void stat_tile_row(const StatTileSpec* tiles, size_t count) {
         }
         const auto& t = tiles[i];
         stat_tile(t.id, width, t.icon, t.label, t.value, t.value_color, t.subtitle, t.accent);
+        // The tile is a child window, so the last item is the whole card.
+        if (tooltips != nullptr && tooltips[i] != nullptr && ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::PushTextWrapPos(m(320.0f));
+            text_colored_u32(colors::TextBody, "%s", tooltips[i]);
+            ImGui::PopTextWrapPos();
+            ImGui::EndTooltip();
+        }
     }
 }
 

@@ -160,7 +160,7 @@ always be found and dragged back. Each overlay can:
 |---|---|
 | Dashboard | Whether the game was found and the payload hooked, network ping, IPC traffic, and a card per plugin with its master switch |
 | Combat Meter | Damage, Healing, Damage Taken, Deaths, Buffs & Debuffs, Casts, and Timeline for the live pull and every archived one, plus Settings |
-| Latency Mitigator | Live latency stats, the round-trip graph and a feed of every action, plus Settings |
+| Latency Mitigator | Live latency stats, time-per-ability comparison and recent actions feed, plus Settings |
 | Hub Settings | Start with Windows, close to tray, notifications, the config file, reset, unload, and the diagnostic log |
 
 **Tray icon.** Click it to open the window, hover over it for the connection status (the

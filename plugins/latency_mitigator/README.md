@@ -160,24 +160,41 @@ Below it are two tabs.
 
 **Live telemetry**
 
-- **Stat tiles:**
+Everything on this tab rests on one figure: the **time per ability**. The server's lock
+only lands once its reply does, so after each ability you wait the round trip plus the
+lock that is written then:
+
+```
+without mitigation:  round trip + server lock    213 + 600 = 813 ms
+with mitigation:     round trip + applied lock   213 + 402 = 615 ms
+```
+
+- **Stat tiles.** Hover any tile for a one-sentence explanation.
 
   | Tile | What it shows |
   |---|---|
-  | Smoothed RTT | The latest smoothed round trip, with the raw sample below it |
-  | Network ping | The ICMP ping to the game server, or to your data center's lobby server |
-  | Jitter | The round-trip variance |
-  | Latency saved | Total lock removed, with the count of actions mitigated. Dry-run and switched-off actions add nothing. |
-  | Spikes filtered | Samples the filter rejected, with the count of mitigated locks clamped to the floor |
+  | Action delay | The latest smoothed action round trip, with the last raw sample below it |
+  | Network ping | The ICMP ping to the game server, or to your data center's lobby server. *not measured yet* until it has an answer |
+  | Stability | The round-trip jitter. Its tooltip also counts the spikes filtered and the trims that stopped at the floor |
+  | Time saved | Time removed per ability, averaged like the card below, with the session total. Dry-run and switched-off actions add nothing to the total. |
 
   The round-trip tiles use the same colour bands as the HUD.
-- **Round-trip time history.** A graph of the smoothed curve over the measured samples,
-  with the target ping as a reference line. Samples the filter rejected are drawn in
-  amber. Hover it for any sample's smoothed and measured RTT, jitter and delay removed.
+- **Without vs with mitigation.** Two bars on one scale, each made of the round trip and
+  then the lock. *Without* uses the lock the server sent; *With* uses the lock written,
+  and outlines the part that was removed. The headline gives the difference per ability.
+  The averages cover your last 30 abilities. Casts are left out, because their lock is
+  never trimmed. In dry-run the bar turns violet and the headline reads *Would be*; with
+  *Enable animation lock mitigation* off, the headline says so.
+- **Time per ability, recent actions.** The same two figures for every ability: a grey
+  *without* line, a blue *with* line, and the time saved filled between them. With
+  mitigation off the two lines meet and the fill disappears. The axis starts at zero, so
+  the gap is to scale; a filtered spike runs off the top instead of setting the scale.
+  Hover it for any ability's name, round trip, without, with and saved.
 - **Recent action telemetry.** Every ability the client sends, newest first, with the
-  columns Time, Action, Seq, RTT, Raw lock, Adj lock, Reduced and Status. The raw and
-  adjusted locks sit side by side, so you can see exactly what was changed. The status
-  names what happened to the lock:
+  columns Time, Action, RTT, Server lock, Applied lock, Without, With, Saved and Status.
+  Hover a header for what it means, and an action for its id and sequence number. Casts,
+  replies that matched no action, and locks over the ceiling show `--` under Without and
+  With. The status names what happened to the lock:
 
   | Status | Meaning |
   |---|---|
@@ -268,6 +285,19 @@ double-weaving regardless of physical distance. Raising it mitigates less, not m
 
 Turn on *Dry-run mode*. Every action is still measured, calculated and listed in the
 action feed as *Dry-run (not applied)*, but nothing is written to game memory.
+
+</details>
+
+<details>
+<summary><b>How much difference does it actually make?</b></summary>
+
+<br>
+
+Look at the *Without vs with mitigation* card on the Live telemetry tab. After every
+ability you wait your round trip plus the lock. Mitigation leaves the round trip alone and
+shortens the lock, so with a 213 ms round trip and a 600 ms lock you wait about 615 ms
+instead of 813 ms. That is roughly what a player sitting next to the datacenter waits.
+The chart below the card shows the same comparison ability by ability.
 
 </details>
 

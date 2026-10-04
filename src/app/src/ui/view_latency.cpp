@@ -1,4 +1,5 @@
 #include "app/ui/view_latency.hpp"
+#include "app/mitigator_impact.hpp"
 #include "app/ui/config_binding.hpp"
 #include "common/os/local_time.hpp"
 #include "common/ui/icons.hpp"
@@ -13,6 +14,7 @@
 #include <cstdio>
 #include <cmath>
 #include <ctime>
+#include <optional>
 #include <string>
 #include <iterator>
 #include <string_view>
@@ -26,6 +28,20 @@ namespace {
 
 constexpr const char* MITI = plugins::LATENCY_MITIGATOR.config_section;
 
+/// What the write-back is doing, as the page header names it.
+enum class MitigationMode { Mitigating, DryRun, Off };
+
+MitigationMode mitigation_mode() {
+    if (cfg_get(MITI, "dry_run", false)) return MitigationMode::DryRun;
+    if (!cfg_get(MITI, "enabled", true)) return MitigationMode::Off;
+    return MitigationMode::Mitigating;
+}
+
+float lock_ceiling_ms() {
+    return cfg_get(MITI, "max_animation_lock_ms",
+                   static_cast<float>(mitigator::constants::DEFAULT_MAX_ANIMATION_LOCK_MS));
+}
+
 /// Same grading bands as the in-game HUD dot.
 uint32_t ping_grade_color(double ping_ms) {
     if (ping_ms < 0.0) return colors::TextDim;
@@ -35,114 +51,15 @@ uint32_t ping_grade_color(double ping_ms) {
     return colors::Danger;
 }
 
-void render_rtt_graph(const std::vector<ipc::MitigatorTelemetryPayload>& samples,
-                      float target_ping, float floor_ms, float height) {
-    const ImVec2 canvas_size(ImGui::GetContentRegionAvail().x, height);
-    const ImVec2 p_min = ImGui::GetCursorScreenPos();
-    const ImVec2 p_max(p_min.x + canvas_size.x, p_min.y + canvas_size.y);
-    const float rounding = m(6.0f);
+// Colours of the with/without comparison, shared by the card, the chart and the table.
+constexpr uint32_t kRttColor      = colors::with_alpha(colors::TextFaint, 0.55f);
+constexpr uint32_t kWithoutColor  = colors::with_alpha(colors::TextMuted, 0.70f);
+constexpr uint32_t kWithLockColor = colors::Accent;
+constexpr uint32_t kWithLineColor = colors::AccentHover;
+constexpr uint32_t kSavedColor    = colors::Success;
 
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilledMultiColor(p_min, p_max, colors::SurfaceSunken, colors::SurfaceSunken,
-                                colors::SurfaceLow, colors::SurfaceLow);
-    dl->AddRect(p_min, p_max, colors::Border, rounding, 0, m(1.0f));
-
-    float max_rtt = 150.0f;
-    for (const auto& s : samples) {
-        if (s.measured_rtt_ms > max_rtt) max_rtt = s.measured_rtt_ms;
-    }
-    max_rtt = std::ceil(max_rtt / 50.0f) * 50.0f; // Round to next 50ms
-
-    if (samples.size() < 2) {
-        ImGui::Dummy(canvas_size);
-        ImGui::SetCursorScreenPos(ImVec2(p_min.x, p_min.y + canvas_size.y * 0.18f));
-        ImGui::BeginGroup();
-        empty_state(ICON_ACTIVITY, "Awaiting action telemetry",
-                    "Cast something in game and the round-trip history fills in.");
-        ImGui::EndGroup();
-        ImGui::SetCursorScreenPos(ImVec2(p_min.x, p_max.y));
-        return;
-    }
-
-    // Horizontal grid, labelled on the left.
-    for (int i = 1; i <= 3; ++i) {
-        const float rtt_val = (max_rtt / 4.0f) * static_cast<float>(i);
-        const float y = p_max.y - (rtt_val / max_rtt) * canvas_size.y;
-        dl->AddLine(ImVec2(p_min.x + m(1.0f), y), ImVec2(p_max.x - m(1.0f), y),
-                    colors::with_alpha(colors::Border, 0.45f));
-
-        char buf[16];
-        std::snprintf(buf, sizeof(buf), "%.0f ms", rtt_val);
-        dl->AddText(ImVec2(p_min.x + m(9.0f), y - ImGui::GetTextLineHeight() - m(1.0f)),
-                    colors::with_alpha(colors::TextDim, 0.75f), buf);
-    }
-
-    // Target ping reference line.
-    const float target_y = p_max.y - (target_ping / max_rtt) * canvas_size.y;
-    dl->AddLine(ImVec2(p_min.x + m(1.0f), target_y), ImVec2(p_max.x - m(1.0f), target_y),
-                colors::with_alpha(colors::Success, 0.65f), m(1.5f));
-
-    const float dx = canvas_size.x / static_cast<float>(samples.size() - 1);
-    const auto y_for = [&](float value) {
-        return p_max.y - (std::clamp(value, 0.0f, max_rtt) / max_rtt) * canvas_size.y;
-    };
-
-    // Area under the smoothed curve, so the chart reads as a filled band rather
-    // than a bare polyline.
-    dl->PushClipRect(p_min, p_max, true);
-    for (size_t i = 0; i + 1 < samples.size(); ++i) {
-        const float x0 = p_min.x + static_cast<float>(i) * dx;
-        const float x1 = x0 + dx;
-        const float y0 = y_for(samples[i].smoothed_rtt_ms);
-        const float y1 = y_for(samples[i + 1].smoothed_rtt_ms);
-        dl->AddQuadFilled(ImVec2(x0, y0), ImVec2(x1, y1), ImVec2(x1, p_max.y), ImVec2(x0, p_max.y),
-                          colors::with_alpha(colors::Accent, 0.10f));
-        dl->AddQuadFilled(ImVec2(x0, y0), ImVec2(x1, y1),
-                          ImVec2(x1, y1 + m(14.0f)), ImVec2(x0, y0 + m(14.0f)),
-                          colors::with_alpha(colors::Accent, 0.16f));
-    }
-
-    // Raw measurements behind, smoothed curve in front.
-    for (size_t i = 0; i + 1 < samples.size(); ++i) {
-        const float x0 = p_min.x + static_cast<float>(i) * dx;
-        dl->AddLine(ImVec2(x0, y_for(samples[i].measured_rtt_ms)),
-                    ImVec2(x0 + dx, y_for(samples[i + 1].measured_rtt_ms)),
-                    samples[i].spike_filtered ? colors::with_alpha(colors::Warning, 0.90f)
-                                              : colors::with_alpha(colors::AccentHover, 0.38f),
-                    m(1.2f));
-    }
-    for (size_t i = 0; i + 1 < samples.size(); ++i) {
-        const float x0 = p_min.x + static_cast<float>(i) * dx;
-        dl->AddLine(ImVec2(x0, y_for(samples[i].smoothed_rtt_ms)),
-                    ImVec2(x0 + dx, y_for(samples[i + 1].smoothed_rtt_ms)),
-                    colors::AccentHover, m(2.2f));
-    }
-    dl->PopClipRect();
-
-    // Hover crosshair and readout.
-    const ImVec2 mouse = ImGui::GetMousePos();
-    if (mouse.x >= p_min.x && mouse.x <= p_max.x && mouse.y >= p_min.y && mouse.y <= p_max.y) {
-        const int idx = static_cast<int>((mouse.x - p_min.x) / dx + 0.5f);
-        if (idx >= 0 && idx < static_cast<int>(samples.size())) {
-            const auto& s = samples[static_cast<size_t>(idx)];
-            const float hover_x = p_min.x + static_cast<float>(idx) * dx;
-            dl->AddLine(ImVec2(hover_x, p_min.y), ImVec2(hover_x, p_max.y),
-                        colors::with_alpha(colors::White, 0.35f));
-            dl->AddCircleFilled(ImVec2(hover_x, y_for(s.smoothed_rtt_ms)), m(3.5f), colors::White);
-
-            ImGui::BeginTooltip();
-            text_colored_u32(colors::TextDim, "Sample #%d", idx);
-            text_colored_u32(colors::AccentHover, "Smoothed RTT: %.1f ms", s.smoothed_rtt_ms);
-            text_colored_u32(colors::TextBody, "Measured RTT: %.1f ms", s.measured_rtt_ms);
-            text_colored_u32(colors::TextMuted, "Jitter: +/- %.1f ms", s.jitter_ms);
-            text_colored_u32(colors::SuccessLight, "Delay reduced: %.1f ms", s.delay_reduced_ms);
-            if (s.spike_filtered) text_colored_u32(colors::Warning, ICON_WARNING "  Spike filtered");
-            if (s.clamped_floor)  text_colored_u32(colors::Violet, ICON_SHIELD "  At floor (%.0f ms)", floor_ms);
-            ImGui::EndTooltip();
-        }
-    }
-
-    ImGui::Dummy(canvas_size);
+uint32_t with_color(MitigationMode mode) {
+    return mode == MitigationMode::DryRun ? colors::Violet : kWithLockColor;
 }
 
 /// Width legend_entry() takes, so the header slot fits the legend exactly.
@@ -165,14 +82,257 @@ void legend_entry(const char* label, uint32_t color) {
     text_colored_u32(colors::TextDim, "%s", label);
 }
 
-void render_metric_tiles(AppState& app_state, const AppState::MitigatorMetrics& metrics) {
-    char smoothed[32];
-    std::snprintf(smoothed, sizeof(smoothed), "%.1f ms", metrics.latest_smoothed_rtt_ms);
-    char raw[32];
-    std::snprintf(raw, sizeof(raw), "raw %.1f ms", metrics.latest_measured_rtt_ms);
+// ---------------------------------------------------------------------------
+// Without vs with card
+// ---------------------------------------------------------------------------
+
+/// A filled bar segment, with its label centred inside when it fits.
+void bar_segment(ImDrawList* dl, float x0, float x1, float y0, float y1, uint32_t fill,
+                 const char* label) {
+    if (x1 <= x0) return;
+    dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), fill, m(3.0f));
+    const ImVec2 size = ImGui::CalcTextSize(label);
+    if (size.x + m(8.0f) <= x1 - x0) {
+        dl->AddText(ImVec2((x0 + x1 - size.x) * 0.5f, (y0 + y1 - size.y) * 0.5f),
+                    colors::TextPrimary, label);
+    }
+}
+
+void render_impact_card(const ImpactSummary& s, MitigationMode mode) {
+    CardOptions opts{};
+    opts.auto_height = true;
+    begin_card("##ImpactCard", ImVec2(0.0f, 0.0f), opts);
+    section_header(ICON_BOLT, "TIME PER ABILITY: WITHOUT VS WITH MITIGATION", kSavedColor);
+
+    if (s.samples == 0) {
+        text_dim("Use an ability in game and the comparison fills in.");
+        end_card();
+        return;
+    }
+
+    const float label_w = ImGui::CalcTextSize("Without").x + m(14.0f);
+    const float total_w = ImGui::CalcTextSize("0000 ms").x + m(12.0f);
+    const float bar_h = ImGui::GetTextLineHeight() + m(10.0f);
+    const float row_gap = m(6.0f);
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    const float bar_x0 = origin.x + label_w;
+    const float bar_w = std::max(ImGui::GetContentRegionAvail().x - label_w - total_w, m(120.0f));
+    const float scale = bar_w / std::max(s.avg_without_ms, 1.0f);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    char rtt_label[48], lock_label[48], total[24];
+    std::snprintf(rtt_label, sizeof(rtt_label), "round trip %.0f ms", s.avg_rtt_ms);
+
+    // Without: the round trip, then the whole lock the server sent.
+    float y = origin.y;
+    const float text_dy = (bar_h - ImGui::GetTextLineHeight()) * 0.5f;
+    dl->AddText(ImVec2(origin.x, y + text_dy), colors::TextMuted, "Without");
+    const float rtt_x1 = bar_x0 + s.avg_rtt_ms * scale;
+    bar_segment(dl, bar_x0, rtt_x1, y, y + bar_h, kRttColor, rtt_label);
+    std::snprintf(lock_label, sizeof(lock_label), "lock %.0f ms", s.avg_server_lock_ms);
+    const float without_x1 = bar_x0 + s.avg_without_ms * scale;
+    bar_segment(dl, rtt_x1, without_x1, y, y + bar_h, kWithoutColor, lock_label);
+    std::snprintf(total, sizeof(total), "%.0f ms", s.avg_without_ms);
+    dl->AddText(ImVec2(without_x1 + m(8.0f), y + text_dy), colors::TextBody, total);
+
+    // With: the same round trip, then the lock actually written, then what was cut.
+    y += bar_h + row_gap;
+    dl->AddText(ImVec2(origin.x, y + text_dy), colors::TextBody, "With");
+    bar_segment(dl, bar_x0, rtt_x1, y, y + bar_h, kRttColor, rtt_label);
+    std::snprintf(lock_label, sizeof(lock_label), "lock %.0f ms", s.avg_applied_lock_ms);
+    const float with_x1 = bar_x0 + s.avg_with_ms * scale;
+    bar_segment(dl, rtt_x1, with_x1, y, y + bar_h, with_color(mode), lock_label);
+    if (without_x1 - with_x1 > m(2.0f)) {
+        dl->AddRectFilled(ImVec2(with_x1, y), ImVec2(without_x1, y + bar_h),
+                          colors::with_alpha(kSavedColor, 0.12f), m(3.0f));
+        dl->AddRect(ImVec2(with_x1, y), ImVec2(without_x1, y + bar_h),
+                    colors::with_alpha(kSavedColor, 0.65f), m(3.0f), 0, m(1.2f));
+        char saved[32];
+        std::snprintf(saved, sizeof(saved), "-%.0f ms", s.avg_saved_ms());
+        const ImVec2 size = ImGui::CalcTextSize(saved);
+        if (size.x + m(8.0f) <= without_x1 - with_x1) {
+            dl->AddText(ImVec2((with_x1 + without_x1 - size.x) * 0.5f, y + text_dy),
+                        colors::SuccessLight, saved);
+        }
+    }
+    std::snprintf(total, sizeof(total), "%.0f ms", s.avg_with_ms);
+    dl->AddText(ImVec2(without_x1 + m(8.0f), y + text_dy), colors::TextPrimary, total);
+
+    ImGui::Dummy(ImVec2(0.0f, bar_h * 2.0f + row_gap + m(4.0f)));
+
+    // The headline: one sentence that answers "what does it change for me".
+    const float saved_ms = s.avg_saved_ms();
+    const float percent = s.avg_without_ms > 0.0f ? 100.0f * saved_ms / s.avg_without_ms : 0.0f;
+    ImGui::PushFont(bold_font());
+    if (mode == MitigationMode::Off) {
+        text_colored_u32(colors::DangerLight,
+                         "Mitigation is off: new abilities wait the full time, like the Without bar.");
+    } else if (saved_ms < 1.0f) {
+        text_colored_u32(colors::TextMuted, "Nothing trimmed recently: your round trip is already near the target.");
+    } else if (mode == MitigationMode::DryRun) {
+        text_colored_u32(colors::Violet, "Would be %.0f ms sooner after every ability (-%.0f%%). Dry-run writes nothing.",
+                         saved_ms, percent);
+    } else {
+        text_colored_u32(colors::SuccessLight, "%.0f ms sooner after every ability (-%.0f%%)", saved_ms, percent);
+    }
+    ImGui::PopFont();
+    ImGui::SameLine(0.0f, m(12.0f));
+    text_dim("average of your last %zu abilities; casts are left out, their lock is never trimmed", s.samples);
+
+    end_card();
+}
+
+// ---------------------------------------------------------------------------
+// Time per ability chart
+// ---------------------------------------------------------------------------
+
+struct ChartPoint {
+    WeaveTiming timing;
+    uint32_t action_id;
+    bool spike_filtered;
+};
+
+void render_weave_chart(const std::vector<ChartPoint>& points, MitigationMode mode, float height) {
+    const ImVec2 canvas_size(ImGui::GetContentRegionAvail().x, height);
+    const ImVec2 p_min = ImGui::GetCursorScreenPos();
+    const ImVec2 p_max(p_min.x + canvas_size.x, p_min.y + canvas_size.y);
+    const float rounding = m(6.0f);
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilledMultiColor(p_min, p_max, colors::SurfaceSunken, colors::SurfaceSunken,
+                                colors::SurfaceLow, colors::SurfaceLow);
+    dl->AddRect(p_min, p_max, colors::Border, rounding, 0, m(1.0f));
+
+    if (points.size() < 2) {
+        ImGui::Dummy(canvas_size);
+        ImGui::SetCursorScreenPos(ImVec2(p_min.x, p_min.y + canvas_size.y * 0.18f));
+        ImGui::BeginGroup();
+        empty_state(ICON_ACTIVITY, "Awaiting action telemetry",
+                    "Use a few abilities in game and the comparison fills in.");
+        ImGui::EndGroup();
+        ImGui::SetCursorScreenPos(ImVec2(p_min.x, p_max.y));
+        return;
+    }
+
+    // The axis starts at zero so the gap between the lines is to scale.
+    float max_ms = 800.0f;
+    // Filtered spikes are left out of the scale: they run off the top rather than
+    // squash the two lines every ordinary action sits on.
+    for (const auto& p : points) {
+        if (!p.spike_filtered) max_ms = std::max(max_ms, p.timing.without_ms);
+    }
+    // The finest step whose labels still have room between them at this height.
+    const float label_gap = ImGui::GetTextLineHeight() * 1.8f;
+    const float plot_h = canvas_size.y - m(20.0f);
+    float step = 1000.0f;
+    for (const float candidate : {100.0f, 200.0f, 250.0f, 500.0f}) {
+        if (std::ceil(max_ms / candidate) * label_gap <= plot_h) {
+            step = candidate;
+            break;
+        }
+    }
+    max_ms = std::ceil(max_ms / step) * step;
+
+    // Axis labels sit in their own column on the right, so the lines never cover them.
+    const float axis_w = ImGui::CalcTextSize("0000 ms").x + m(16.0f);
+    const float plot_x0 = p_min.x + m(10.0f);
+    const float plot_x1 = p_max.x - axis_w;
+    const float plot_y0 = p_min.y + m(10.0f);
+    const float plot_y1 = p_max.y - m(10.0f);
+    const auto y_for = [&](float value) {
+        return plot_y1 - (std::clamp(value, 0.0f, max_ms) / max_ms) * (plot_y1 - plot_y0);
+    };
+
+    for (float v = 0.0f; v <= max_ms + 0.5f; v += step) {
+        const float y = y_for(v);
+        dl->AddLine(ImVec2(plot_x0, y), ImVec2(plot_x1, y), colors::with_alpha(colors::Border, 0.45f));
+        char buf[16];
+        std::snprintf(buf, sizeof(buf), "%.0f ms", v);
+        const ImVec2 size = ImGui::CalcTextSize(buf);
+        dl->AddText(ImVec2(plot_x1 + m(8.0f), y - size.y * 0.5f),
+                    colors::with_alpha(colors::TextDim, 0.85f), buf);
+    }
+
+    const float dx = (plot_x1 - plot_x0) / static_cast<float>(points.size() - 1);
+    const auto x_for = [&](size_t i) { return plot_x0 + static_cast<float>(i) * dx; };
+
+    dl->PushClipRect(p_min, p_max, true);
+    // Saved time: the band between what it would have been and what it was.
+    for (size_t i = 0; i + 1 < points.size(); ++i) {
+        const float x0 = x_for(i), x1 = x_for(i + 1);
+        dl->AddQuadFilled(ImVec2(x0, y_for(points[i].timing.without_ms)),
+                          ImVec2(x1, y_for(points[i + 1].timing.without_ms)),
+                          ImVec2(x1, y_for(points[i + 1].timing.with_ms)),
+                          ImVec2(x0, y_for(points[i].timing.with_ms)),
+                          colors::with_alpha(kSavedColor, 0.18f));
+    }
+    const uint32_t with_line = mode == MitigationMode::DryRun ? colors::Violet : kWithLineColor;
+    for (size_t i = 0; i + 1 < points.size(); ++i) {
+        dl->AddLine(ImVec2(x_for(i), y_for(points[i].timing.without_ms)),
+                    ImVec2(x_for(i + 1), y_for(points[i + 1].timing.without_ms)), kWithoutColor, m(1.5f));
+    }
+    for (size_t i = 0; i + 1 < points.size(); ++i) {
+        dl->AddLine(ImVec2(x_for(i), y_for(points[i].timing.with_ms)),
+                    ImVec2(x_for(i + 1), y_for(points[i + 1].timing.with_ms)), with_line, m(2.2f));
+    }
+    dl->PopClipRect();
+
+    // Hover crosshair and readout.
+    const ImVec2 mouse = ImGui::GetMousePos();
+    if (mouse.x >= plot_x0 - dx * 0.5f && mouse.x <= plot_x1 + dx * 0.5f &&
+        mouse.y >= p_min.y && mouse.y <= p_max.y) {
+        const int idx = static_cast<int>((mouse.x - plot_x0) / dx + 0.5f);
+        if (idx >= 0 && idx < static_cast<int>(points.size())) {
+            const auto& p = points[static_cast<size_t>(idx)];
+            const float hover_x = x_for(static_cast<size_t>(idx));
+            dl->AddLine(ImVec2(hover_x, plot_y0), ImVec2(hover_x, plot_y1),
+                        colors::with_alpha(colors::White, 0.35f));
+            dl->AddCircleFilled(ImVec2(hover_x, y_for(p.timing.without_ms)), m(3.0f), kWithoutColor);
+            dl->AddCircleFilled(ImVec2(hover_x, y_for(p.timing.with_ms)), m(3.5f), colors::White);
+
+            ImGui::BeginTooltip();
+            const std::string_view name = hub::game::action_sheet_name(p.action_id);
+            if (name.empty()) {
+                text_colored_u32(colors::TextPrimary, "Action #%u", p.action_id);
+            } else {
+                text_colored_u32(colors::TextPrimary, "%.*s", static_cast<int>(name.size()), name.data());
+            }
+            text_colored_u32(colors::TextMuted, "Round trip: %.0f ms", p.timing.rtt_ms);
+            text_colored_u32(colors::TextBody, "Without: %.0f ms", p.timing.without_ms);
+            text_colored_u32(with_line, "With: %.0f ms", p.timing.with_ms);
+            text_colored_u32(colors::SuccessLight, "Saved: %.0f ms", p.timing.saved_ms());
+            if (p.spike_filtered) {
+                text_colored_u32(colors::Warning, ICON_WARNING "  Spike: trimmed by the usual round trip");
+            }
+            ImGui::EndTooltip();
+        }
+    }
+
+    ImGui::Dummy(canvas_size);
+}
+
+// ---------------------------------------------------------------------------
+// Tiles
+// ---------------------------------------------------------------------------
+
+void render_metric_tiles(AppState& app_state, const AppState::MitigatorMetrics& metrics,
+                         const ImpactSummary& impact) {
+    const float target_ping = cfg_get(MITI, "target_ping_ms", 15.0f);
+    const float floor_ms = cfg_get(MITI, "min_animation_lock_ms", 25.0f);
+
+    char delay[32];
+    std::snprintf(delay, sizeof(delay), "%.1f ms", metrics.latest_smoothed_rtt_ms);
+    char delay_sub[48];
+    std::snprintf(delay_sub, sizeof(delay_sub), "press to server reply (last %.0f ms)",
+                  metrics.latest_measured_rtt_ms);
+    char delay_tip[256];
+    std::snprintf(delay_tip, sizeof(delay_tip),
+                  "How long the server takes to answer an ability, averaged. Without mitigation you "
+                  "wait this long on top of every lock; mitigation takes everything above %.0f ms "
+                  "off the lock.", target_ping);
 
     // Hub-measured ICMP ping to the game server. A separate metric from the
-    // action RTT above, so it gets its own tile rather than sharing one.
+    // action delay above, so it gets its own tile rather than sharing one.
     const double net_ping = app_state.network_ping_ms();
     char net[32];
     if (net_ping >= 0.0) {
@@ -183,34 +343,50 @@ void render_metric_tiles(AppState& app_state, const AppState::MitigatorMetrics& 
 
     char jitter[32];
     std::snprintf(jitter, sizeof(jitter), "+/- %.1f ms", metrics.latest_jitter_ms);
+    char jitter_tip[256];
+    std::snprintf(jitter_tip, sizeof(jitter_tip),
+                  "How much the action delay moves from one ability to the next. Lower is steadier. "
+                  "%llu spikes were ignored so far, and %llu trims stopped at the %.0f ms safety floor.",
+                  static_cast<unsigned long long>(metrics.spike_filtered_count),
+                  static_cast<unsigned long long>(metrics.floor_clamp_count), floor_ms);
 
     char saved[32];
-    std::snprintf(saved, sizeof(saved), "%.2f s", metrics.total_delay_reduced_ms / 1000.0f);
-    char actions[40];
-    std::snprintf(actions, sizeof(actions), "%llu actions mitigated",
-                  static_cast<unsigned long long>(metrics.total_actions_mitigated));
-
-    char spikes[32];
-    std::snprintf(spikes, sizeof(spikes), "%llu", static_cast<unsigned long long>(metrics.spike_filtered_count));
-    char floors[48];
-    std::snprintf(floors, sizeof(floors), "%llu floor clamps (%.0f ms)",
-                  static_cast<unsigned long long>(metrics.floor_clamp_count),
-                  cfg_get(MITI, "min_animation_lock_ms", 25.0f));
+    if (impact.samples > 0) {
+        std::snprintf(saved, sizeof(saved), "%.0f ms", impact.avg_saved_ms());
+    } else {
+        std::snprintf(saved, sizeof(saved), "--");
+    }
+    char saved_sub[64];
+    std::snprintf(saved_sub, sizeof(saved_sub), "per ability; %.1f s in total",
+                  metrics.total_delay_reduced_ms / 1000.0f);
 
     const StatTileSpec tiles[] = {
-        { "##PingCard", ICON_ACTIVITY, "SMOOTHED RTT", smoothed,
-          ping_grade_color(metrics.latest_smoothed_rtt_ms), raw, colors::Accent },
+        { "##PingCard", ICON_ACTIVITY, "ACTION DELAY", delay,
+          ping_grade_color(metrics.latest_smoothed_rtt_ms), delay_sub, colors::Accent },
         { "##NetPingCard", ICON_ACTIVITY, "NETWORK PING", net,
-          ping_grade_color(net_ping), "server round-trip", colors::Accent },
-        { "##JitterCard", ICON_TRENDING, "JITTER", jitter,
-          colors::SuccessLight, "round-trip variance", colors::Success },
-        { "##ReducedCard", ICON_BOLT, "LATENCY SAVED", saved,
-          colors::WarningLight, actions, colors::Warning },
-        { "##SafetyCard", ICON_SHIELD, "SPIKES FILTERED", spikes,
-          colors::TextPrimary, floors, colors::Violet },
+          ping_grade_color(net_ping), net_ping >= 0.0 ? "plain ping to the server" : "not measured yet",
+          colors::Accent },
+        { "##JitterCard", ICON_TRENDING, "STABILITY", jitter,
+          colors::SuccessLight, "how much the delay varies", colors::Success },
+        { "##ReducedCard", ICON_BOLT, "TIME SAVED", saved,
+          colors::WarningLight, saved_sub, colors::Warning },
     };
-    stat_tile_row(tiles, std::size(tiles));
+    const char* const tooltips[] = {
+        delay_tip,
+        "Plain network ping to the game server, or to your data center's lobby when the server "
+        "does not answer. Always lower than Action delay, which also includes the server "
+        "processing the ability.",
+        jitter_tip,
+        "How much sooner you can act after each ability, averaged over your recent abilities. "
+        "Below it, the total removed this session. Dry-run and switched-off abilities add nothing "
+        "to the total.",
+    };
+    stat_tile_row(tiles, std::size(tiles), tooltips);
 }
+
+// ---------------------------------------------------------------------------
+// Action table
+// ---------------------------------------------------------------------------
 
 /// What happened to the lock, then what shaped the trim. A spike or the floor
 /// only changes how much was taken off, so it never replaces "Mitigated".
@@ -258,31 +434,60 @@ void render_status_cell(const ipc::MitigatorTelemetryPayload& s, float floor_ms)
     ImGui::EndTooltip();
 }
 
-void render_action_feed(const std::vector<ipc::MitigatorTelemetryPayload>& telemetry, float floor_ms) {
+/// One column of the action table: its header and what hovering that header explains.
+struct FeedColumn {
+    const char* name;
+    const char* tooltip;
+};
+
+constexpr FeedColumn kFeedColumns[] = {
+    { "Time", nullptr },
+    { "Action", "Hover a name for its action id and sequence number." },
+    { "RTT", "Round trip: from sending the ability to the server's reply, in ms." },
+    { "Server lock", "Animation lock the server sent, in ms." },
+    { "Applied lock", "Animation lock written into the game, in ms." },
+    { "Without", "Time until you could act again without mitigation: round trip + server lock." },
+    { "With", "Time until you could act again with mitigation: round trip + applied lock." },
+    { "Saved", "Without minus With." },
+    { "Status", nullptr },
+};
+
+void render_action_feed(const std::vector<ipc::MitigatorTelemetryPayload>& telemetry, float floor_ms,
+                        float ceiling_ms) {
     if (telemetry.empty()) {
         empty_state(ICON_CHECKLIST, "No actions recorded yet",
                     "Every ability the client sends shows up here as it happens.");
         return;
     }
 
-    const auto sizing = table_sizing(740.0f, 8, ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY |
-                                                ImGuiTableFlags_BordersInnerV);
-    if (!ImGui::BeginTable("##RecentActionsTable", 8, sizing.flags, ImVec2(0.0f, fill_h(0.0f)))) {
+    constexpr int kColumns = static_cast<int>(std::size(kFeedColumns));
+    const auto sizing = table_sizing(820.0f, kColumns, ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY |
+                                                       ImGuiTableFlags_BordersInnerV);
+    if (!ImGui::BeginTable("##RecentActionsTable", kColumns, sizing.flags, ImVec2(0.0f, fill_h(0.0f)))) {
         return;
     }
 
     ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthFixed, m(66.0f));
     ImGui::TableSetupColumn("Action", sizing.flex_flags(), sizing.flex_width(150.0f, 1.5f));
-    ImGui::TableSetupColumn("Seq", ImGuiTableColumnFlags_WidthFixed, m(45.0f));
-    ImGui::TableSetupColumn("RTT", ImGuiTableColumnFlags_WidthFixed, m(56.0f));
-    ImGui::TableSetupColumn("Raw lock", ImGuiTableColumnFlags_WidthFixed, m(68.0f));
-    ImGui::TableSetupColumn("Adj lock", ImGuiTableColumnFlags_WidthFixed, m(68.0f));
-    ImGui::TableSetupColumn("Reduced", ImGuiTableColumnFlags_WidthFixed, m(65.0f));
+    ImGui::TableSetupColumn("RTT", ImGuiTableColumnFlags_WidthFixed, m(52.0f));
+    ImGui::TableSetupColumn("Server lock", ImGuiTableColumnFlags_WidthFixed, m(78.0f));
+    ImGui::TableSetupColumn("Applied lock", ImGuiTableColumnFlags_WidthFixed, m(84.0f));
+    ImGui::TableSetupColumn("Without", ImGuiTableColumnFlags_WidthFixed, m(62.0f));
+    ImGui::TableSetupColumn("With", ImGuiTableColumnFlags_WidthFixed, m(52.0f));
+    ImGui::TableSetupColumn("Saved", ImGuiTableColumnFlags_WidthFixed, m(56.0f));
     ImGui::TableSetupColumn("Status", sizing.flex_flags(), sizing.flex_width(220.0f, 2.2f));
     ImGui::TableSetupScrollFreeze(0, 1);
 
+    // Headers by hand, so each can explain itself on hover.
     ImGui::PushStyleColor(ImGuiCol_Text, v4(colors::TextDim));
-    ImGui::TableHeadersRow();
+    ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
+    for (int c = 0; c < kColumns; ++c) {
+        ImGui::TableSetColumnIndex(c);
+        ImGui::TableHeader(kFeedColumns[c].name);
+        if (kFeedColumns[c].tooltip != nullptr && ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", kFeedColumns[c].tooltip);
+        }
+    }
     ImGui::PopStyleColor();
 
     for (auto it = telemetry.rbegin(); it != telemetry.rend(); ++it) {
@@ -302,33 +507,48 @@ void render_action_feed(const std::vector<ipc::MitigatorTelemetryPayload>& telem
         } else {
             text_colored_u32(colors::TextBody, "%.*s", static_cast<int>(action.size()),
                              action.data());
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Action #%u", it->action_id);
-            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Action #%u, sequence %u", it->action_id, it->sequence);
         }
 
         ImGui::TableSetColumnIndex(2);
-        text_colored_u32(colors::TextDim, "%u", it->sequence);
+        if (it->measured_rtt_ms > 0.0f) {
+            text_colored_u32(colors::TextBody, "%.0f", it->measured_rtt_ms);
+        } else {
+            text_colored_u32(colors::TextFaint, "--");
+        }
 
-        ImGui::TableSetColumnIndex(3);
-        text_colored_u32(colors::TextBody, "%.1f", it->measured_rtt_ms);
-
-        // Raw and adjusted side by side: without both there is no way to see
+        // Server and applied side by side: without both there is no way to see
         // whether an action was actually mitigated.
+        ImGui::TableSetColumnIndex(3);
+        text_colored_u32(colors::TextMuted, "%.0f", it->original_lock_ms);
+
         ImGui::TableSetColumnIndex(4);
-        text_colored_u32(colors::TextMuted, "%.1f", it->original_lock_ms);
+        text_colored_u32(colors::TextBody, "%.0f", it->adjusted_lock_ms);
 
+        const std::optional<WeaveTiming> timing = weave_timing(*it, ceiling_ms);
         ImGui::TableSetColumnIndex(5);
-        text_colored_u32(colors::TextBody, "%.1f", it->adjusted_lock_ms);
-
+        if (timing) {
+            text_colored_u32(colors::TextMuted, "%.0f", timing->without_ms);
+        } else {
+            text_colored_u32(colors::TextFaint, "--");
+        }
         ImGui::TableSetColumnIndex(6);
-        if (it->delay_reduced_ms > 0.0f) {
-            text_colored_u32(colors::SuccessLight, "-%.1f", it->delay_reduced_ms);
+        if (timing) {
+            text_colored_u32(colors::TextPrimary, "%.0f", timing->with_ms);
         } else {
             text_colored_u32(colors::TextFaint, "--");
         }
 
         ImGui::TableSetColumnIndex(7);
+        if (it->delay_reduced_ms > 0.0f) {
+            text_colored_u32(colors::SuccessLight, "-%.0f", it->delay_reduced_ms);
+        } else {
+            text_colored_u32(colors::TextFaint, "--");
+        }
+
+        ImGui::TableSetColumnIndex(8);
         render_status_cell(*it, floor_ms);
     }
 
@@ -337,39 +557,46 @@ void render_action_feed(const std::vector<ipc::MitigatorTelemetryPayload>& telem
 
 void render_live_tab(AppState& app_state, const AppState::MitigatorMetrics& metrics,
                      const std::vector<ipc::MitigatorTelemetryPayload>& telemetry) {
-    render_metric_tiles(app_state, metrics);
-    ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
+    const MitigationMode mode = mitigation_mode();
+    const float ceiling_ms = lock_ceiling_ms();
+    const ImpactSummary impact = summarize_impact(telemetry, ceiling_ms);
 
-    // Graph takes a fixed share of what is left; the feed takes the rest, so both
+    render_metric_tiles(app_state, metrics, impact);
+    ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
+    render_impact_card(impact, mode);
+    ImGui::Dummy(ImVec2(0.0f, m(2.0f)));
+
+    // Chart takes a fixed share of what is left; the feed takes the rest, so both
     // reach the bottom of the window instead of stopping at a magic pixel height.
     const float remaining = fill_h(0.0f);
-    const float graph_card_h = std::max(remaining * 0.46f, m(150.0f));
+    const float graph_card_h = std::max(remaining * 0.38f, m(170.0f));
 
     begin_card("##RttGraphCard", ImVec2(0.0f, graph_card_h));
-    const float legend_w = legend_entry_width("smoothed") + legend_entry_width("measured") +
-                           legend_entry_width("target") + m(12.0f) * 2.0f;
-    begin_section_header(ICON_TRENDING, "ROUND-TRIP TIME HISTORY", legend_w);
-    legend_entry("smoothed", colors::AccentHover);
+    const float legend_w = legend_entry_width("without") + legend_entry_width("with") +
+                           legend_entry_width("saved") + m(12.0f) * 2.0f;
+    begin_section_header(ICON_TRENDING, "TIME PER ABILITY, RECENT ACTIONS", legend_w);
+    legend_entry("without", kWithoutColor);
     ImGui::SameLine(0.0f, m(12.0f));
-    legend_entry("measured", colors::with_alpha(colors::AccentHover, 0.38f));
+    legend_entry("with", mode == MitigationMode::DryRun ? colors::Violet : kWithLineColor);
     ImGui::SameLine(0.0f, m(12.0f));
-    legend_entry("target", colors::with_alpha(colors::Success, 0.65f));
+    legend_entry("saved", colors::with_alpha(kSavedColor, 0.75f));
     end_section_header();
 
-    // Casts and unmatched responses carry no round trip, so they would read as 0 ms.
-    std::vector<ipc::MitigatorTelemetryPayload> measured;
-    measured.reserve(telemetry.size());
-    std::copy_if(telemetry.begin(), telemetry.end(), std::back_inserter(measured),
-                 [](const ipc::MitigatorTelemetryPayload& s) { return s.measured_rtt_ms > 0.0f; });
-    const float floor_ms = cfg_get(MITI, "min_animation_lock_ms", 25.0f);
-    render_rtt_graph(measured, cfg_get(MITI, "target_ping_ms", 15.0f), floor_ms, fill_h(0.0f));
+    std::vector<ChartPoint> points;
+    points.reserve(telemetry.size());
+    for (const auto& s : telemetry) {
+        if (const auto t = weave_timing(s, ceiling_ms)) {
+            points.push_back({ *t, s.action_id, s.spike_filtered != 0 });
+        }
+    }
+    render_weave_chart(points, mode, fill_h(0.0f));
     end_card();
 
     ImGui::Dummy(ImVec2(0.0f, m(2.0f)));
 
     begin_card("##ActionFeedCard", ImVec2(0.0f, fill_h(0.0f)));
     section_header(ICON_CHECKLIST, "RECENT ACTION TELEMETRY", colors::Violet);
-    render_action_feed(telemetry, floor_ms);
+    render_action_feed(telemetry, cfg_get(MITI, "min_animation_lock_ms", 25.0f), ceiling_ms);
     end_card();
 }
 
