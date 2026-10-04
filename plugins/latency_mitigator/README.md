@@ -160,24 +160,40 @@ Below it are two tabs.
 
 **Live telemetry**
 
-- **Stat tiles:**
+Everything on this tab rests on one figure: the **time per ability**. The server's lock
+only lands once its reply does, so after each ability you wait the round trip plus the
+lock that is written then:
+
+```
+without mitigation:  round trip + server lock    213 + 600 = 813 ms
+with mitigation:     round trip + applied lock   213 + 402 = 615 ms
+```
+
+- **Stat tiles.** Hover any tile for a one-sentence explanation.
 
   | Tile | What it shows |
   |---|---|
-  | Smoothed RTT | The latest smoothed round trip, with the raw sample below it |
-  | Network ping | The ICMP ping to the game server, or to your data center's lobby server |
-  | Jitter | The round-trip variance |
-  | Latency saved | Total lock removed, with the count of actions mitigated. Dry-run and switched-off actions add nothing. |
-  | Spikes filtered | Samples the filter rejected, with the count of mitigated locks clamped to the floor |
+  | Action delay | The latest smoothed action round trip, with the last raw sample below it |
+  | Network ping | The ICMP ping to the game server, or to your data center's lobby server. *not measured yet* until it has an answer |
+  | Stability | The round-trip jitter |
+  | Time saved | Time removed per ability, averaged over your last 30 abilities, with the session total. Casts are left out of the average, because their lock is never trimmed. Dry-run and switched-off actions add nothing to the total. |
+  | Spikes filtered | Round trips the spike filter rejected this session, with how many trims stopped at the safety floor |
 
   The round-trip tiles use the same colour bands as the HUD.
-- **Round-trip time history.** A graph of the smoothed curve over the measured samples,
-  with the target ping as a reference line. Samples the filter rejected are drawn in
-  amber. Hover it for any sample's smoothed and measured RTT, jitter and delay removed.
+- **Time per ability.** The same two figures for every recent ability: a grey *without*
+  line, a blue *with* line (violet in dry-run) with the time you wait shaded under it,
+  and the time saved filled green between the two. With mitigation off the two lines
+  meet and the green disappears. The axis starts at zero, so the gap is to scale, and
+  reaches the highest ability, so a spike shows at its real height. Where the spike
+  filter rejected a round trip, the *without* line turns amber. Both lines rise by the
+  same amount there: that ability is trimmed by your usual round trip, so the time saved
+  stays the same and the spike's extra wait is not removed. Hover it for any ability's
+  name, round trip, without, with and saved.
 - **Recent action telemetry.** Every ability the client sends, newest first, with the
-  columns Time, Action, Seq, RTT, Raw lock, Adj lock, Reduced and Status. The raw and
-  adjusted locks sit side by side, so you can see exactly what was changed. The status
-  names what happened to the lock:
+  columns Time, Action, RTT, Server lock, Applied lock, Without, With, Saved and Status.
+  Hover a header for what it means, and an action for its id and sequence number. Casts,
+  replies that matched no action, and locks over the ceiling show `--` under Without and
+  With. The status names what happened to the lock:
 
   | Status | Meaning |
   |---|---|
@@ -268,6 +284,19 @@ double-weaving regardless of physical distance. Raising it mitigates less, not m
 
 Turn on *Dry-run mode*. Every action is still measured, calculated and listed in the
 action feed as *Dry-run (not applied)*, but nothing is written to game memory.
+
+</details>
+
+<details>
+<summary><b>How much difference does it actually make?</b></summary>
+
+<br>
+
+Look at the *Time saved* tile on the Live telemetry tab. After every ability you wait
+your round trip plus the lock. Mitigation leaves the round trip alone and shortens the
+lock, so with a 213 ms round trip and a 600 ms lock you wait about 615 ms instead of
+813 ms. That is roughly what a player sitting next to the datacenter waits. The *Time
+per ability* chart below the tiles shows the same comparison ability by ability.
 
 </details>
 

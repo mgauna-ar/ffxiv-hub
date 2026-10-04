@@ -148,8 +148,10 @@ struct StatTileSpec {
 };
 
 /// Lays tiles out across as many columns as fit at the current width and wraps
-/// onto further rows instead of shrinking them past legibility.
-void stat_tile_row(const StatTileSpec* tiles, size_t count);
+/// onto further rows instead of shrinking them past legibility. `tooltips`, when
+/// given, holds `count` entries: what each tile means, shown while it is hovered
+/// (a null entry shows nothing).
+void stat_tile_row(const StatTileSpec* tiles, size_t count, const char* const* tooltips = nullptr);
 
 /// Colored job badge for a combatant row: job glyph plus abbreviation.
 void job_badge(game::Job job, bool is_limit_break = false);

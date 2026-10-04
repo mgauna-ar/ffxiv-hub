@@ -96,6 +96,10 @@ private:
     std::vector<Rgba> m_pixels;
 };
 
+/// Writes `frames`, all one size, as an animated PNG that loops forever and shows
+/// each for `frame_ms`. A viewer that does not animate PNGs shows the first.
+bool write_animated_png(const std::string& path, const std::vector<Canvas>& frames, int frame_ms);
+
 /// Stands in for the game's frame behind the overlays: a dark, softly lit gradient.
 /// It is not a game scene and does not try to look like one.
 [[nodiscard]] Canvas make_backdrop(int width, int height);

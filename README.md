@@ -13,7 +13,7 @@ See the DPS, healing, deaths and buff uptime of every pull. Weave oGCDs on a 200
 connection the way you would sitting next to the datacenter. It comes as two files with
 no installer.
 
-![The FFXIV Hub desktop app beside the in-game combat meter and ping HUD](docs/images/hero.png)
+![The FFXIV Hub desktop app switching between its Latency Mitigator and Combat Meter pages, beside the in-game combat meter and ping HUD](docs/images/hero.png)
 
 [Highlights](#-highlights) · [Quick start](#-quick-start) · [Controls](#-controls) ·
 [Safety](#-safety-and-fair-play) · [FAQ](#-troubleshooting-and-faq) ·
@@ -160,7 +160,7 @@ always be found and dragged back. Each overlay can:
 |---|---|
 | Dashboard | Whether the game was found and the payload hooked, network ping, IPC traffic, and a card per plugin with its master switch |
 | Combat Meter | Damage, Healing, Damage Taken, Deaths, Buffs & Debuffs, Casts, and Timeline for the live pull and every archived one, plus Settings |
-| Latency Mitigator | Live latency stats, the round-trip graph and a feed of every action, plus Settings |
+| Latency Mitigator | Live latency stats, a time-per-ability chart with spikes highlighted, and a feed of every action, plus Settings |
 | Hub Settings | Start with Windows, close to tray, notifications, the config file, reset, unload, and the diagnostic log |
 
 **Tray icon.** Click it to open the window, hover over it for the connection status (the
@@ -492,7 +492,9 @@ macOS has no LeakSanitizer, so there `make asan` runs without leak detection.
 
 The pictures in `docs/images/` are drawn by the desktop app's and the overlays' own code
 into a software rasterizer, over a made-up raid night, so they can be redrawn without
-Windows or the game. You need zlib, `curl` and `shasum` as well:
+Windows or the game. The one at the top of this page, `hero.png`, is an animated PNG
+that switches between the Latency Mitigator and Combat Meter pages; a viewer that does
+not animate PNGs shows the first. You need zlib, `curl` and `shasum` as well:
 
 ```bash
 make screenshots
