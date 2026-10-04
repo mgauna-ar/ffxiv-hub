@@ -127,27 +127,30 @@ int main(int argc, char** argv) {
     const shots::DesktopCapture latency = shots::capture_desktop(app, hub::app::DesktopView::LatencyMitigator,
                                                                  kLatencyWindowW, kLatencyWindowH, kDensity);
 
-    // The hero: the overlays on the left of the game's frame, the Combat Meter's
+    // The hero: the overlays on the left of the game's frame, the Latency Mitigator's
     // window floating on the right of it.
     // At scale 1 the meter's cell padding does not shrink with its columns, so it
     // needs a little more room than at 1.5 to keep the names whole.
     const float hero_margin = 40.0f;
     const float hero_meter_w = 620.0f;
     const float hero_meter_h = 272.0f;
-    const float hero_w = hero_margin + hero_meter_w + 48.0f + kCombatWindowW + hero_margin;
-    const float hero_h = kCombatWindowH + hero_margin * 2.0f;
+    const float hero_hud_gap = 58.0f; // from the HUD's top to the meter's
+    const float hero_w = hero_margin + hero_meter_w + 48.0f + kLatencyWindowW + hero_margin;
+    const float hero_h = kLatencyWindowH + hero_margin * 2.0f;
+    // The HUD and the meter below it, centred on the window's height.
+    const float hero_hud_y = (hero_h - hero_hud_gap - hero_meter_h) * 0.5f;
     shots::OverlayLayout hero_layout;
     hero_layout.display_w = px(hero_w, kHeroDensity);
     hero_layout.display_h = px(hero_h, kHeroDensity);
     hero_layout.scale = kHeroDensity;
     hero_layout.hud_x = static_cast<float>(px(hero_margin, kHeroDensity));
-    hero_layout.hud_y = static_cast<float>(px(240.0f, kHeroDensity));
-    hero_layout.meter = shots::Rect{px(hero_margin, kHeroDensity), px(298.0f, kHeroDensity),
+    hero_layout.hud_y = static_cast<float>(px(hero_hud_y, kHeroDensity));
+    hero_layout.meter = shots::Rect{px(hero_margin, kHeroDensity), px(hero_hud_y + hero_hud_gap, kHeroDensity),
                                     px(hero_meter_w, kHeroDensity), px(hero_meter_h, kHeroDensity)};
     const shots::OverlayCapture hero_overlays =
         shots::capture_overlays(engine, hud.network_ping_ms, hud.smoothed_rtt_ms, hero_layout);
-    const shots::DesktopCapture hero_combat = shots::capture_desktop(
-        app, hub::app::DesktopView::CombatMeter, kCombatWindowW, kCombatWindowH, kHeroDensity);
+    const shots::DesktopCapture hero_window = shots::capture_desktop(
+        app, hub::app::DesktopView::LatencyMitigator, kLatencyWindowW, kLatencyWindowH, kHeroDensity);
 
     // The game's frame: a stand-in backdrop with both overlays drawn over it.
     shots::Canvas game = shots::make_backdrop(layout.display_w, layout.display_h);
@@ -161,11 +164,11 @@ int main(int argc, char** argv) {
 
     shots::Canvas hero = shots::make_backdrop(hero_layout.display_w, hero_layout.display_h);
     hero.draw(hero_overlays.frame);
-    const shots::Rect window{hero.width() - hero_combat.width - px(hero_margin, kHeroDensity),
-                             px(hero_margin, kHeroDensity), hero_combat.width, hero_combat.height};
+    const shots::Rect window{hero.width() - hero_window.width - px(hero_margin, kHeroDensity),
+                             px(hero_margin, kHeroDensity), hero_window.width, hero_window.height};
     const auto corner = static_cast<float>(px(8.0f, kHeroDensity));
     hero.drop_shadow(window, corner, static_cast<float>(px(18.0f, kHeroDensity)), 0.55f, px(10.0f, kHeroDensity));
-    hero.paste_rounded(desktop_canvas(hero_combat), window.x, window.y, corner);
+    hero.paste_rounded(desktop_canvas(hero_window), window.x, window.y, corner);
     hero.outline(window, corner, shots::from_im_col32(hub::app::ui::colors::BorderStrong));
     ok &= save(hero, out / "hero.png");
 

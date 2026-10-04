@@ -13,7 +13,7 @@ See the DPS, healing, deaths and buff uptime of every pull. Weave oGCDs on a 200
 connection the way you would sitting next to the datacenter. It comes as two files with
 no installer.
 
-![The FFXIV Hub desktop app beside the in-game combat meter and ping HUD](docs/images/hero.png)
+![The FFXIV Hub desktop app on its Latency Mitigator page, beside the in-game combat meter and ping HUD](docs/images/hero.png)
 
 [Highlights](#-highlights) · [Quick start](#-quick-start) · [Controls](#-controls) ·
 [Safety](#-safety-and-fair-play) · [FAQ](#-troubleshooting-and-faq) ·
