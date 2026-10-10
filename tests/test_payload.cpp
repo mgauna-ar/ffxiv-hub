@@ -201,6 +201,9 @@ TEST_CASE(Payload, OverlayHostPreparesNothingWhenNoOverlayShows) {
     auto& host = payload::OverlayHost::instance();
     TEST_ASSERT_FALSE(host.prepare_frame());  // Not initialized yet
 
+#ifndef _WIN32
+    // The mock host. On Windows initialize() starts the real ImGui backends, which
+    // need a real window and device.
     int window = 0;
     int device = 0;
     int context = 0;
@@ -219,6 +222,7 @@ TEST_CASE(Payload, OverlayHostPreparesNothingWhenNoOverlayShows) {
 
     host.unregister_overlay(hud->overlay_id());
     host.shutdown();
+#endif
 }
 
 static int s_mock_counter = 0;
