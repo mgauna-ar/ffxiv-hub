@@ -145,6 +145,7 @@ void EncounterEngine::process_life_event(const ipc::LifeEventPacket& packet) {
         return;
     }
     DeathLog::record_into(pull, packet, m_registry);
+    ++m_history_revision;
     if (m_live_holds_latest_pull) {
         m_death_log.record(packet, pull.start_time_us, m_registry, m_accumulator);
     }
@@ -170,6 +171,7 @@ void EncounterEngine::process_enemy_hp(const ipc::EnemyHpPacket& packet) {
     }
     pull.boss.hp_pct = 0.0;
     pull.boss.killed = true;
+    ++m_history_revision;
     if (m_live_holds_latest_pull) {
         m_bosses.observe_hp(packet.entity_id, packet.current_hp, packet.max_hp);
     }
@@ -346,6 +348,7 @@ void EncounterEngine::end_encounter_locked(EncounterEndReason reason, TimePoint 
     }
     pull.summary = std::move(summary);
     m_pull_history.push_back(std::move(pull));
+    ++m_history_revision;
     m_live_holds_latest_pull = true;
 
     m_state = end_state;

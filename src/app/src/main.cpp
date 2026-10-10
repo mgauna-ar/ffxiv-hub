@@ -1,5 +1,6 @@
 #include "app/app_state.hpp"
 #include "app/connection_notifier.hpp"
+#include "app/frame_pacing.hpp"
 #include "app/ui/app_frame.hpp"
 #include "app/ui/theme.hpp"
 #include "common/os/logger.hpp"
@@ -14,7 +15,6 @@
 #include <chrono>
 #include <iostream>
 #include <string>
-#include <thread>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -65,6 +65,8 @@ struct MainWindow {
     float dpi_scale{1.0f};
     bool minimized{false};
     bool running{true};
+    /// The last Present said nothing reaches the screen (locked, display off).
+    bool occluded{false};
 
     ComPtr<ID3D11Device> device;
     ComPtr<ID3D11DeviceContext> context;
@@ -411,7 +413,8 @@ void render_frame(MainWindow& window, hub::app::AppState& app_state, hub::app::u
     window.context->ClearRenderTargetView(render_target, clear_color);
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 
-    window.swap_chain->Present(1, 0); // VSync
+    // VSync. Occluded, it returns at once instead, so the loop stops drawing.
+    window.occluded = window.swap_chain->Present(1, 0) == DXGI_STATUS_OCCLUDED;
 #else
     (void)window;
     (void)app_state;
@@ -419,9 +422,17 @@ void render_frame(MainWindow& window, hub::app::AppState& app_state, hub::app::u
 #endif
 }
 
+/// Sleeps until a message for this thread's windows, the tray's included, or the
+/// timeout, so a click is answered as soon as it would be while drawing.
+void wait_for_messages(std::chrono::milliseconds timeout) {
+    MsgWaitForMultipleObjectsEx(0, nullptr, static_cast<DWORD>(timeout.count()), QS_ALLINPUT,
+                                MWMO_INPUTAVAILABLE);
+}
+
 void run_frame_loop(MainWindow& window, hub::app::AppState& app_state, hub::os::TrayManager& tray_manager) {
     hub::app::ui::AppFrame frame;
     hub::app::ConnectionNotifier notifier;
+    std::chrono::steady_clock::time_point last_frame{};
 
     MSG msg{};
     while (window.running) {
@@ -445,9 +456,24 @@ void run_frame_loop(MainWindow& window, hub::app::AppState& app_state, hub::os::
         tray_manager.set_status(app_state.connection_status_string());
 
         if (window.minimized) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            wait_for_messages(std::chrono::milliseconds(50));
             continue;
         }
+        if (window.occluded) {
+            if (window.swap_chain->Present(0, DXGI_PRESENT_TEST) == DXGI_STATUS_OCCLUDED) {
+                wait_for_messages(hub::app::kOccludedPollInterval);
+                continue;
+            }
+            window.occluded = false;
+        }
+        // Behind the game the window is paced down; with focus, vsync paces it.
+        const auto now = std::chrono::steady_clock::now();
+        const bool focused = GetForegroundWindow() == window.hwnd.get();
+        if (const auto wait = hub::app::frame_wait(focused, now - last_frame); wait.count() > 0) {
+            wait_for_messages(wait);
+            continue;
+        }
+        last_frame = now;
         render_frame(window, app_state, frame);
     }
 }

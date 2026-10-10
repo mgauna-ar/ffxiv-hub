@@ -408,6 +408,7 @@ TEST_CASE(MeterDeaths, LateDeathJoinsTheWipedPull) {
     engine.process_actor_info(actor_info(kTank, "Tank", Job::WAR, 0, 100));
     engine.process_actor_info(actor_info(kHealer, "Healer", Job::WHM, 0, 100));
     TEST_ASSERT_EQ(engine.state(), EncounterState::Wipe);
+    const uint64_t revision = engine.history_revision();
 
     hub::ipc::LifeEventPacket death{};
     death.kind = static_cast<uint8_t>(LifeEventKind::Death);
@@ -416,9 +417,13 @@ TEST_CASE(MeterDeaths, LateDeathJoinsTheWipedPull) {
     engine.process_life_event(death);
     death.entity_id = kHealer;
     engine.process_life_event(death);
+    // The pull list re-reads the archive on this, so its death count follows.
+    const uint64_t joined = engine.history_revision();
+    TEST_ASSERT_TRUE(joined != revision);
     // Too long after the pull to be part of it.
     death.timestamp_us = sec(5) + EncounterEngine::kLateLifeEventUs + sec(1);
     engine.process_life_event(death);
+    TEST_ASSERT_EQ(engine.history_revision(), joined);
 
     const auto pull = engine.latest_pull();
     TEST_ASSERT(pull.has_value());

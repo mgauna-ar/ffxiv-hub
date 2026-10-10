@@ -116,6 +116,8 @@ bool pull_row(const meter::PullHistoryEntry& pull, bool selected, float number_w
     const std::string id = "##Pull" + std::to_string(pull.encounter_id);
     const bool clicked = ImGui::Selectable(id.c_str(), selected, ImGuiSelectableFlags_None,
                                            ImVec2(0.0f, row_h));
+    // A long visit lists every pull; only the rows on screen are worth formatting.
+    if (!ImGui::IsItemVisible()) return clicked;
 
     const Badge outcome = pull_outcome_badge(pull.state, pull.boss);
     const std::string number = "#" + std::to_string(pull.pull_number);
@@ -241,8 +243,8 @@ void render_history_header(bool has_pulls) {
 
 /// The one place a pull is chosen: live at the top, then the archive grouped by
 /// zone visit. The tables beside it always show whatever is selected here.
-void render_pull_rail(CombatViewState& state, AppState& app_state,
-                      const std::vector<meter::PullHistoryEntry>& pull_history, bool is_live, float width) {
+void render_pull_rail(CombatViewState& state, AppState& app_state, bool is_live, float width) {
+    const std::vector<meter::PullHistoryEntry>& pull_history = state.pull_history;
     CardOptions opts{};
     begin_card("##PullRail", ImVec2(width, fill_h(0.0f)), opts);
 
@@ -269,7 +271,7 @@ void render_pull_rail(CombatViewState& state, AppState& app_state,
         const float number_w = ImGui::CalcTextSize(("#" + std::to_string(max_number)).c_str()).x;
 
         const auto selected_idx = find_pull_index(pull_history, state.selected_pull_id);
-        const auto groups = meter::group_pulls_by_visit(pull_history);
+        const auto& groups = state.pull_groups;
         for (size_t g = 0; g < groups.size(); ++g) {
             const auto& group = groups[g];
             const bool holds_selection =
@@ -311,8 +313,8 @@ void render_top_bar(CombatViewState& state, AppState& app_state, const meter::En
     opts.auto_height = true;
     begin_card("##CombatTopBar", ImVec2(0.0f, 0.0f), opts);
 
-    // The archive listing is re-read every frame and a late kill can still change a
-    // pull after it was selected, so an archived pull's boss comes from there.
+    // The archive listing is re-read whenever the archive changes, a late kill
+    // included, so an archived pull's boss comes from there.
     const meter::BossSummary& boss = archived != nullptr ? archived->boss : summary.boss;
 
     // What the tables below are showing, since the picker sits beside them.
@@ -946,18 +948,17 @@ float ranking_table_height(const CombatViewState& state) {
 /// tabs have the ability drilldown under their table.
 template <typename TableFn>
 void render_pull_view(CombatViewState& state, AppState& app_state, const meter::EncounterSummary& summary,
-                      const std::vector<meter::PullHistoryEntry>& pull_history,
                       std::optional<size_t> selected_index, const char* id, TableFn&& table,
                       Drilldown drilldown) {
     const float avail = ImGui::GetContentRegionAvail().x;
     const float rail_w = avail < m(760.0f) ? m(150.0f)
                                            : std::clamp(avail * 0.15f, m(220.0f), m(260.0f));
-    render_pull_rail(state, app_state, pull_history, !selected_index.has_value(), rail_w);
+    render_pull_rail(state, app_state, !selected_index.has_value(), rail_w);
     ImGui::SameLine(0.0f, m(metrics::Gutter));
 
     ImGui::BeginChild(id, ImVec2(0.0f, fill_h(0.0f)), ImGuiChildFlags_None,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
-    render_top_bar(state, app_state, summary, selected_index ? &pull_history[*selected_index] : nullptr);
+    render_top_bar(state, app_state, summary, selected_index ? &state.pull_history[*selected_index] : nullptr);
     ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
     if (drilldown != Drilldown::None) {
         table(summary, ranking_table_height(state));
@@ -979,7 +980,15 @@ void render_view_combat(AppState& app_state, CombatViewState& state) {
         return;
     }
 
-    const auto pull_history = app_state.get_pull_history_index();
+    // Read before the listing: a change landing in between moves it again, and
+    // the next frame re-reads.
+    const uint64_t revision = app_state.pull_history_revision();
+    if (state.pull_history_revision != revision) {
+        state.pull_history = app_state.get_pull_history_index();
+        state.pull_groups = meter::group_pulls_by_visit(state.pull_history);
+        state.pull_history_revision = revision;
+    }
+    const auto& pull_history = state.pull_history;
 
     // A selected pull that has aged out of the archive falls back to live rather
     // than leaving the tables pointing at whatever took its place.
@@ -1014,8 +1023,7 @@ void render_view_combat(AppState& app_state, CombatViewState& state) {
     const uint64_t shown_id = is_live ? 0 : state.selected_pull_id;
     const auto pull_tab = [&](const char* pane_id, auto render, Drilldown drilldown) {
         return [&, pane_id, render, drilldown] {
-            render_pull_view(state, app_state, current_summary, pull_history, selected_index, pane_id, render,
-                             drilldown);
+            render_pull_view(state, app_state, current_summary, selected_index, pane_id, render, drilldown);
         };
     };
     using Summary = meter::EncounterSummary;

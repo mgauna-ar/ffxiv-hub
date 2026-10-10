@@ -3,6 +3,7 @@
 #include "common/ipc/pipe_server.hpp"
 #include "common/ipc/protocol.hpp"
 #include "common/ipc/ring_buffer.hpp"
+#include "common/ipc/write_batch.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -410,4 +411,54 @@ TEST_CASE(IPC, FrameReaderReadFailure) {
     // A read_some that claims more than it was asked for is a failure, not an overrun.
     const ReadSome liar = [](uint8_t*, size_t len) { return static_cast<std::ptrdiff_t>(len + 1); };
     TEST_ASSERT_TRUE(read_frame(liar, frame) == FrameResult::ReadFailed);
+}
+
+TEST_CASE(IPC, WriteBatchReadsBackFrameByFrameInLaneOrder) {
+    // The writer sends a whole drain in one write; the reader must still see each
+    // packet whole, and each producer's packets in the order it pushed them.
+    PacketRingBuffer queue;
+    for (uint32_t seq = 1; seq <= 3; ++seq) TEST_ASSERT(queue.push(heartbeat_frame(seq)));
+    std::thread other([&queue] {
+        for (uint32_t seq = 101; seq <= 103; ++seq) queue.push(heartbeat_frame(seq));
+    });
+    other.join();
+
+    std::vector<uint8_t> batch;
+    std::vector<uint8_t> item;
+    TEST_ASSERT_EQ(drain_into(queue, batch, item), 6u);
+    TEST_ASSERT_TRUE(queue.empty());
+
+    ScriptedStream s;
+    s.bytes = batch;
+    const auto read = s.reader();
+    std::vector<uint8_t> frame;
+    std::vector<uint32_t> mine;
+    std::vector<uint32_t> theirs;
+    while (read_frame(read, frame) == FrameResult::Frame) {
+        HeartbeatPayload hb{};
+        std::memcpy(&hb, frame.data() + sizeof(PacketHeader), sizeof(hb));
+        (hb.sequence < 100 ? mine : theirs).push_back(hb.sequence);
+    }
+    TEST_ASSERT_TRUE((mine == std::vector<uint32_t>{1, 2, 3}));
+    TEST_ASSERT_TRUE((theirs == std::vector<uint32_t>{101, 102, 103}));
+}
+
+TEST_CASE(IPC, WriteBatchStopsAtTheCapButAlwaysTakesOne) {
+    PacketRingBuffer queue;
+    const size_t frame_size = heartbeat_frame(0).size();
+    for (uint32_t seq = 1; seq <= 3; ++seq) queue.push(heartbeat_frame(seq));
+
+    std::vector<uint8_t> batch;
+    std::vector<uint8_t> item;
+    // Room for one and a bit: the second packet starts below the cap and is taken.
+    TEST_ASSERT_EQ(drain_into(queue, batch, item, frame_size + 1), 2u);
+    TEST_ASSERT_EQ(batch.size(), 2 * frame_size);
+
+    // A cap below one packet still sends it, or it would never go out.
+    TEST_ASSERT_EQ(drain_into(queue, batch, item, 1), 1u);
+    TEST_ASSERT_TRUE(batch == heartbeat_frame(3));
+
+    // Nothing queued: nothing to write, and no stale bytes from the last batch.
+    TEST_ASSERT_EQ(drain_into(queue, batch, item), 0u);
+    TEST_ASSERT_TRUE(batch.empty());
 }

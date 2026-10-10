@@ -80,7 +80,10 @@ void release_device_objects() {
 
 static void render_overlay_frame() {
     __try {
-        if (!g_shutting_down.load() && !g_game_exiting.load() && g_initialized && g_main_rtv && g_context) {
+        if (!g_shutting_down.load() && !g_game_exiting.load() && g_initialized && g_main_rtv && g_context &&
+            // CPU only. With nothing to draw, the game's pipeline is left alone: the
+            // DX11 backend would still map its buffers and swap ~30 pieces of state.
+            OverlayHost::instance().prepare_frame()) {
             // Save game's full OM state (all 8 MRT slots + depth-stencil) before binding our backbuffer RTV
             ID3D11RenderTargetView* prev_rtvs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT] = { nullptr };
             ID3D11DepthStencilView* prev_dsv = nullptr;
@@ -88,8 +91,7 @@ static void render_overlay_frame() {
 
             g_context->OMSetRenderTargets(1, &g_main_rtv, nullptr);
 
-            // Render all active overlays
-            OverlayHost::instance().render_frame();
+            OverlayHost::instance().draw_prepared_frame();
 
             // Restore game's full OM state accurately
             g_context->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, prev_rtvs, prev_dsv);
