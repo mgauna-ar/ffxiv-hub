@@ -90,6 +90,12 @@ bool close_to_tray_enabled() {
     return hub::config::ConfigManager::instance().get("hub", "minimize_to_tray", true);
 }
 
+/// Read on every pass of the frame loop, so the Settings switch and a reset take
+/// effect at once rather than at the next start.
+bool notifications_enabled() {
+    return hub::config::ConfigManager::instance().get("hub", "show_notifications", true);
+}
+
 void create_render_target(MainWindow& window) {
     ComPtr<ID3D11Texture2D> back_buffer;
     window.swap_chain->GetBuffer(0, IID_PPV_ARGS(back_buffer.ReleaseAndGetAddressOf()));
@@ -367,8 +373,7 @@ void wire_tray(hub::os::TrayManager& tray_manager, MainWindow& window) {
         hub::os::Logger::open_config_file();
     });
 
-    tray_manager.set_notifications_enabled(
-        hub::config::ConfigManager::instance().get("hub", "show_notifications", true));
+    tray_manager.set_notifications_enabled(notifications_enabled());
 }
 
 /// The ImGui context and its Win32 and DX11 backends, for this object's lifetime.
@@ -484,6 +489,7 @@ void run_frame_loop(MainWindow& window, hub::app::AppState& app_state, hub::os::
         tray_manager.pump_messages();
         if (!window.running) break;
         app_state.update();
+        tray_manager.set_notifications_enabled(notifications_enabled());
 
         for (const hub::app::TrayNotice& notice : notifier.update(
                  app_state.connection_state(), app_state.is_access_denied(), app_state.game_pid())) {
