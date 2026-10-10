@@ -157,7 +157,12 @@ endif()
 
 # The desktop manager less its wWinMain.
 file(GLOB HUB_APP_UI_SOURCES CONFIGURE_DEPENDS src/app/src/ui/*.cpp)
-add_library(hub_app_core STATIC src/app/src/app_state.cpp ${HUB_APP_UI_SOURCES})
+add_library(hub_app_core STATIC
+    src/app/src/app_state.cpp
+    src/app/src/update_check.cpp
+    src/app/src/updater.cpp
+    ${HUB_APP_UI_SOURCES}
+)
 target_include_directories(hub_app_core PUBLIC src/app/include)
 target_link_libraries(hub_app_core PUBLIC hub_plugins PRIVATE hub_warnings)
 if(HUB_WINDOWS)
@@ -223,6 +228,8 @@ set(CPACK_PACKAGE_VERSION_MAJOR ${PROJECT_VERSION_MAJOR})
 set(CPACK_PACKAGE_VERSION_MINOR ${PROJECT_VERSION_MINOR})
 set(CPACK_PACKAGE_VERSION_PATCH ${PROJECT_VERSION_PATCH})
 set(CPACK_GENERATOR "ZIP")
+# Every installed copy's updater looks for this name, with the binaries at the
+# archive's root (RELEASE_ASSET_NAME in src/app/include/app/update_check.hpp).
 set(CPACK_PACKAGE_FILE_NAME "ffxiv-hub-windows-x64")
 # The binaries sit at the root of the archive. CI publishes exactly what this writes,
 # so a local cpack run matches the release.

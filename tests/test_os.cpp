@@ -1,4 +1,5 @@
 #include "test_framework.hpp"
+#include "file_test_support.hpp"
 #include "common/os/single_instance.hpp"
 #include "common/os/auto_start.hpp"
 #include "common/os/logger.hpp"
@@ -21,34 +22,9 @@
 #include <thread>
 
 using namespace hub::os;
+using namespace hub::test::file_support;
 
 namespace {
-
-/// A folder of its own under the system temp folder, removed with everything in
-/// it when the test ends.
-struct ScratchDir {
-    std::filesystem::path path;
-    explicit ScratchDir(const char* name)
-        : path(std::filesystem::temp_directory_path() / name) {
-        std::error_code ec;
-        std::filesystem::remove_all(path, ec);
-        std::filesystem::create_directories(path, ec);
-    }
-    ~ScratchDir() {
-        std::error_code ec;
-        std::filesystem::remove_all(path, ec);
-    }
-};
-
-std::string read_file(const std::filesystem::path& path) {
-    std::ifstream in(path, std::ios::binary);
-    return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-}
-
-void write_file(const std::filesystem::path& path, const std::string& text) {
-    std::ofstream out(path, std::ios::binary | std::ios::trunc);
-    out << text;
-}
 
 /// Polls `done` until it holds or `timeout` passes; the monitor's worker runs on
 /// its own clock.

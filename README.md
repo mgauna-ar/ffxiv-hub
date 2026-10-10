@@ -60,6 +60,7 @@ high-ping connection.**
 - A desktop window for the details, and a tray icon that tells you whether it is attached.
 - Every plugin can be switched off.
 - Settings are saved as you change them.
+- Tells you when a new version is out, and installs it in one click.
 
 ---
 
@@ -207,9 +208,14 @@ FFXIV Hub runs entirely on your PC and stays within what the server already allo
   nothing at all. The Combat Meter only ever reads.
 - **What it never does.** Modify, send or delay network packets. Automate any input.
   Change cooldowns or the GCD.
-- **Nothing leaves your PC.** The only network traffic the Hub makes is an ICMP ping to
-  the game server you are already connected to, or, when that server can't be reached,
-  to the lobby server of the data center your character is on.
+- **Nothing about you or your play leaves your PC.** The Hub makes two kinds of network
+  traffic:
+  - An ICMP ping to the game server you are already connected to, or, when that server
+    can't be reached, to the lobby server of the data center your character is on.
+  - When it starts, one request to GitHub asking whether a newer release is out. It
+    sends nothing but the Hub's version, and *Check for updates at startup* in Hub
+    Settings turns it off. A release is only downloaded, from this repository, when you
+    click **Update & restart**.
 - **It goes quiet when you close it.** With the Hub closed, the payload is dormant until
   the Hub reconnects: the overlays hide, mitigation stops and nothing is queued for the
   Hub. The combat meter keeps counting in the background.
@@ -331,13 +337,36 @@ delete that too if you want no trace left.
 </details>
 
 <details>
+<summary><b>How do I update?</b></summary>
+
+<br>
+
+The Hub asks GitHub for a newer release each time it starts. When there is one, a
+notification says so and the sidebar shows **Update available**. Open **Hub Settings →
+Updates** and click **Update & restart**. The Hub downloads the release, checks it against
+the SHA-256 checksum GitHub publishes for it, replaces its two files and starts again.
+**Check now** asks at any time.
+
+- Restarting clears the pull history the desktop app keeps for the session.
+- The game keeps running. The payload it has loaded stays on the old version until you
+  restart the game, and Hub Settings says so until then.
+- The replaced files stay next to the new ones, named `*.old`, until a later start can
+  delete them. The old DLL can only go once the game that loaded it has closed.
+- If the update can't write to the Hub's folder, run the Hub as administrator, or update
+  by hand: close the Hub and the game, download the zip from [Releases](../../releases),
+  and replace both files.
+
+</details>
+
+<details>
 <summary><b>Final Fantasy XIV just patched and it stopped working</b></summary>
 
 <br>
 
-A patch can move the memory locations the Hub relies on. Check [Releases](../../releases)
-for an updated build. Nothing is damaged in the meantime: if the payload can't find what
-it needs, it leaves the game unhooked and the Hub reads **Hooks missing**.
+A patch can move the memory locations the Hub relies on. The Hub tells you when an
+updated build is out (see [How do I update?](#-troubleshooting-and-faq)), or check
+[Releases](../../releases) yourself. Nothing is damaged in the meantime: if the payload
+can't find what it needs, it leaves the game unhooked and the Hub reads **Hooks missing**.
 
 </details>
 
@@ -396,7 +425,8 @@ Hub keys:
 |---|---|---|---|
 | `start_with_windows` | bool | `false` | Launch automatically on Windows logon. |
 | `minimize_to_tray` | bool | `true` | Closing the window hides it to the notification area instead of exiting. |
-| `show_notifications` | bool | `true` | Windows notifications on attach and detach. |
+| `show_notifications` | bool | `true` | Windows notifications on attach and detach, and when a new version is out. |
+| `check_for_updates` | bool | `true` | Ask GitHub for a newer release each time the Hub starts. |
 
 Plugin keys are documented in [Combat Meter](plugins/combat_meter/README.md#configuration)
 and [Latency Mitigator](plugins/latency_mitigator/README.md#configuration).
@@ -445,9 +475,10 @@ The full runtime topology, and the invariants any change has to keep, are in
 ffxiv-hub/
 ├── include/hub/                 Plugin interfaces and descriptors, the version, shared types,
 │                                game offsets and signatures
-├── src/common/                  IPC, config, signature scanning, OS integration, shared UI
+├── src/common/                  IPC, config, signature scanning, OS integration, zip and
+│                                SHA-256 for updates, shared UI
 ├── src/payload/                 The injected DLL: hooks, overlay host, game memory readers
-├── src/app/                     The desktop manager: app state, views, entry point
+├── src/app/                     The desktop manager: app state, views, updater, entry point
 ├── plugins/combat_meter/        Combat Meter: analytics core, in-game table, plugin glue
 ├── plugins/latency_mitigator/   Latency Mitigator: RTT tracking, lock math, ping HUD
 ├── tests/                       Unit tests, runnable on Windows, macOS and Linux

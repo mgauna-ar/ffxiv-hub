@@ -50,6 +50,25 @@ Compress-Archive -Path build/bin/Release/ffxiv-hub.exe, build/bin/Release/hub_pa
 Both binaries must stay in the same directory when extracted: the desktop app resolves
 `hub_payload.dll` next to its own executable.
 
+## What the updater expects of a release
+
+Every installed copy of the Hub updates itself from `releases/latest` of this repository
+(AGENTS.md, *Self-Update*; the constants are in `src/app/include/app/update_check.hpp`).
+Older versions keep looking for exactly what they were built to find, so a release must
+keep all of it:
+
+- The tag is `vMAJOR.MINOR.PATCH`, and the release is published, neither a draft nor a
+  prerelease: `releases/latest` skips both, so a prerelease reaches no one.
+- The asset is named `ffxiv-hub-windows-x64.zip`, which is CPack's
+  `CPACK_PACKAGE_FILE_NAME`.
+- `ffxiv-hub.exe` and `hub_payload.dll` sit at the archive's root
+  (`CPACK_INCLUDE_TOPLEVEL_DIRECTORY OFF`), stored or deflated, without Zip64.
+- GitHub's asset digest is how the download is verified. A release without one is
+  announced but cannot be installed from the app.
+
+Renaming the asset, nesting the binaries in a folder, or a new tag scheme breaks the
+update for every copy already out there; they would have to update by hand.
+
 ## Continuous Integration
 
 `.github/workflows/ci.yml` runs these jobs on every pull request and push to `main`:

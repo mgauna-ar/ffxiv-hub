@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <string>
+#include <string_view>
 
 namespace hub::os {
 
@@ -21,5 +22,14 @@ namespace hub::os {
 /// Opens a file or folder with the user's default handler: ShellExecuteW on
 /// Windows, `open`/`xdg-open` on the mock, run directly rather than through a shell.
 void open_with_default_app(const std::filesystem::path& path);
+
+/// Opens an https:// URL in the default browser, the same way. Anything else is
+/// ignored, since the URLs opened come from data fetched off the network.
+void open_url(std::string_view url);
+
+#ifdef _WIN32
+/// UTF-8 text as UTF-16, for a wide Win32 API.
+[[nodiscard]] std::wstring to_wide(std::string_view utf8);
+#endif
 
 } // namespace hub::os

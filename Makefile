@@ -31,6 +31,7 @@ layer_inc = $(strip \
 LAYER_INC_STAMP = $(COMMON_INC) | $(METER_INC) | $(MITIGATOR_INC) | $(PAYLOAD_INC) | $(APP_INC) | $(TEST_INC)
 
 COMMON_SRCS = $(wildcard src/common/src/*.cpp) \
+              $(wildcard src/common/src/archive/*.cpp) \
               $(wildcard src/common/src/ipc/*.cpp) \
               $(wildcard src/common/src/config/*.cpp) \
               $(wildcard src/common/src/os/*.cpp) \
@@ -42,6 +43,8 @@ PLUGIN_SRCS = $(wildcard plugins/latency_mitigator/src/*.cpp) \
 PAYLOAD_SRCS = $(wildcard src/payload/src/*.cpp)
 
 APP_SRCS = src/app/src/app_state.cpp \
+           src/app/src/update_check.cpp \
+           src/app/src/updater.cpp \
            $(wildcard src/app/src/ui/*.cpp)
 
 TEST_SRCS = $(wildcard tests/*.cpp)

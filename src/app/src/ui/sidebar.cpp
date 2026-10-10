@@ -92,6 +92,29 @@ struct StatusBadge {
     uint32_t color;
 };
 
+/// A pill under the version once a newer release is found, which opens Hub
+/// Settings, where it is installed.
+void render_update_pill(AppState& app_state) {
+    const UpdateStatus status = app_state.updater().status();
+    if (!status.release) return;
+    const char* label = "Update available";
+    if (status.state == UpdateState::Downloading || status.state == UpdateState::Ready) {
+        label = "Updating";
+    } else if (status.state == UpdateState::RestartPending) {
+        label = "Restart to update";
+    }
+    ImGui::Dummy(ImVec2(0.0f, m(2.0f)));
+    pill(label, colors::AccentHover);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        ImGui::SetTooltip("Version %s is available. Click to open Hub Settings.",
+                          status.release->version.to_string().c_str());
+    }
+    if (ImGui::IsItemClicked()) {
+        app_state.set_current_view(DesktopView::Settings);
+    }
+}
+
 StatusBadge status_badge_for(const AppState& app_state) {
     if (app_state.is_access_denied()) {
         return { "Access denied", colors::Danger };
@@ -145,6 +168,7 @@ void render_sidebar(AppState& app_state) {
     text_colored_u32(colors::TextPrimary, "FFXIV HUB");
     ImGui::PopFont();
     text_colored_u32(colors::TextDim, "v" HUB_VERSION_STRING);
+    render_update_pill(app_state);
     ImGui::EndGroup();
     ImGui::Unindent(m(6.0f));
     ImGui::Dummy(ImVec2(0.0f, m(6.0f)));
