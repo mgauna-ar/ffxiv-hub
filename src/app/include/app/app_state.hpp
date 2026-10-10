@@ -2,6 +2,8 @@
 
 #include "hub/types.hpp"
 #include "app/connection_state.hpp"
+#include "app/update_check.hpp"
+#include "app/updater.hpp"
 #include "common/config/config_manager.hpp"
 #include "common/ipc/pipe_server.hpp"
 #include "common/os/network_monitor.hpp"
@@ -175,6 +177,15 @@ public:
     /// bitmask. Zero until the payload connects, or if its scan failed.
     [[nodiscard]] uint32_t game_state_flags() const noexcept { return m_game_state_flags.load(); }
 
+    /// Finds and installs newer releases. Its startup check runs from update().
+    [[nodiscard]] Updater& updater() noexcept { return m_updater; }
+    [[nodiscard]] const Updater& updater() const noexcept { return m_updater; }
+
+    /// Version of the connected payload's build, as its status reports it: major
+    /// and minor only, patch 0. nullopt while no payload is connected. A payload
+    /// stays loaded across app updates, so it can be older than the app.
+    [[nodiscard]] std::optional<Version> payload_version() const;
+
 private:
     void register_ipc_callbacks();
     void apply_config_to_mirror_engine();
@@ -203,6 +214,7 @@ private:
     std::atomic<uint64_t> m_last_heartbeat_ms{0};
     mutable std::mutex m_status_mutex;
     std::string m_payload_status_message;
+    std::optional<Version> m_payload_version;
     std::optional<ipc::OverlayGeometryPayload> m_combat_geometry;
     std::optional<ipc::OverlayGeometryPayload> m_latency_geometry;
     /// A report arrived that mirror_geometry_to_config() has not folded yet.
@@ -216,6 +228,8 @@ private:
     std::chrono::steady_clock::time_point m_last_ping_check{};
 
     std::vector<RegisteredPluginInfo> m_plugins;
+
+    Updater m_updater;
 
     // Combat Meter Subsystem
     std::mutex m_combat_mutex;

@@ -5,6 +5,9 @@
 #include "app/ui/widgets.hpp"
 #include "common/os/auto_start.hpp"
 #include "common/os/logger.hpp"
+#include "common/os/paths.hpp"
+#include "hub/version.hpp"
+#include <cfloat>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -103,9 +106,151 @@ void render_integration_card(SettingsViewState& state) {
 
     bool balloon_notifs = cfg_get(HUB, "show_notifications", true);
     if (setting_toggle("Notification area alerts",
-                       "Balloon tips when the hub attaches to or loses the game.", &balloon_notifs)) {
+                       "Balloon tips when the hub attaches to or loses the game, or a new version is out.",
+                       &balloon_notifs)) {
         cfg_store(HUB, "show_notifications", balloon_notifs);
     }
+
+    end_card();
+}
+
+/// The status line under the version: what the last check or install found.
+void render_update_status(const UpdateStatus& status) {
+    const std::string next = status.release ? status.release->version.to_string() : std::string();
+    ImGui::PushTextWrapPos(0.0f);
+    switch (status.state) {
+        case UpdateState::Idle:
+            text_colored_u32(colors::TextDim, "Not checked for updates yet.");
+            break;
+        case UpdateState::Checking:
+            text_colored_u32(colors::TextMuted, "Checking GitHub for a newer release...");
+            break;
+        case UpdateState::UpToDate:
+            text_colored_u32(colors::SuccessLight, "Up to date.");
+            break;
+        case UpdateState::Available:
+            text_colored_u32(colors::AccentHover, "Version %s is available.", next.c_str());
+            if (!status.release->installable()) {
+                text_colored_u32(colors::TextDim,
+                                 "It can't be checked before installing, so download it from its release page.");
+            }
+            break;
+        case UpdateState::Downloading:
+            text_colored_u32(colors::TextMuted, "Downloading version %s...", next.c_str());
+            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, v4(colors::Accent));
+            ImGui::ProgressBar(status.progress, ImVec2(-FLT_MIN, m(6.0f)), "");
+            ImGui::PopStyleColor();
+            break;
+        case UpdateState::Ready:
+            text_colored_u32(colors::TextMuted, "Installing version %s...", next.c_str());
+            break;
+        case UpdateState::RestartPending:
+            text_colored_u32(colors::WarningLight,
+                             "Version %s is installed. Restart FFXIV Hub to finish updating.", next.c_str());
+            break;
+        case UpdateState::Failed:
+            text_colored_u32(colors::DangerLight, "%s", status.error.c_str());
+            break;
+    }
+    ImGui::PopTextWrapPos();
+}
+
+/// The in-game part keeps the version it was injected with until the game restarts.
+void render_payload_version_note(const AppState& app_state) {
+    const auto payload = app_state.payload_version();
+    if (!payload || (payload->major == CURRENT_VERSION.major && payload->minor == CURRENT_VERSION.minor)) return;
+    ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
+    ImGui::PushTextWrapPos(0.0f);
+    text_colored_u32(colors::WarningLight,
+                     "The in-game part is still version %u.%u. Restart the game to load %u.%u.",
+                     static_cast<unsigned>(payload->major), static_cast<unsigned>(payload->minor),
+                     static_cast<unsigned>(CURRENT_VERSION.major), static_cast<unsigned>(CURRENT_VERSION.minor));
+    ImGui::PopTextWrapPos();
+}
+
+void render_update_confirm(AppState& app_state, const UpdateStatus& status) {
+    if (!ImGui::BeginPopupModal("##ConfirmUpdate", nullptr,
+                                ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
+        return;
+    }
+    icon_chip(ICON_DOWNLOAD, colors::Accent, metrics::ChipSizeLg);
+    ImGui::SameLine(0.0f, m(10.0f));
+    ImGui::BeginGroup();
+    ImGui::PushFont(bold_font());
+    text_colored_u32(colors::TextPrimary, "Update to version %s?",
+                     status.release ? status.release->version.to_string().c_str() : "");
+    ImGui::PopFont();
+    text_colored_u32(colors::TextDim, "FFXIV Hub downloads it, checks it and restarts.");
+    text_colored_u32(colors::TextDim, "The pull history kept since it started is cleared.");
+    if (app_state.game_pid() != 0) {
+        text_colored_u32(colors::TextDim,
+                         "The game keeps running, with its overlays on this version until it restarts.");
+    }
+    ImGui::EndGroup();
+    ImGui::Dummy(ImVec2(0.0f, m(8.0f)));
+
+    if (button(ICON_DOWNLOAD "  Update & restart", ButtonKind::Primary, ButtonSize::Large)) {
+        app_state.updater().install();
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine(0.0f, m(8.0f));
+    if (button("Cancel", ButtonKind::Secondary, ButtonSize::Small)) {
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
+void render_updates_card(AppState& app_state) {
+    Updater& updater = app_state.updater();
+    const UpdateStatus status = updater.status();
+
+    CardOptions opts{};
+    opts.auto_height = true;
+    begin_card("##UpdatesCard", ImVec2(0.0f, 0.0f), opts);
+    section_header(ICON_DOWNLOAD, "UPDATES", colors::Success);
+
+    ImGui::PushFont(bold_font());
+    text_colored_u32(colors::TextPrimary, "FFXIV Hub " HUB_VERSION_STRING);
+    ImGui::PopFont();
+    render_update_status(status);
+    ImGui::Dummy(ImVec2(0.0f, m(6.0f)));
+
+    const char* update_label = ICON_DOWNLOAD "  Update & restart";
+    const char* check_label = ICON_REFRESH "  Check now";
+    const char* notes_label = ICON_FILE "  Release notes";
+    const bool has_release = status.release.has_value();
+    if (has_release) {
+        ImGui::BeginDisabled(!status.can_install());
+        if (button(update_label, ButtonKind::Primary, ButtonSize::Medium)) {
+            ImGui::OpenPopup("##ConfirmUpdate");
+        }
+        ImGui::EndDisabled();
+        if (!status.release->installable() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::SetTooltip("This release publishes no checksum to verify the download against.");
+        }
+        same_line_if_room(button_width(check_label, ButtonSize::Medium));
+    }
+    // Once installed, only a restart is left to do.
+    ImGui::BeginDisabled(status.busy() || status.state == UpdateState::RestartPending);
+    if (button(check_label, ButtonKind::Secondary, ButtonSize::Medium)) {
+        updater.check_now();
+    }
+    ImGui::EndDisabled();
+    if (has_release && !status.release->page_url.empty()) {
+        same_line_if_room(button_width(notes_label, ButtonSize::Medium));
+        if (button(notes_label, ButtonKind::Secondary, ButtonSize::Medium)) {
+            os::open_url(status.release->page_url);
+        }
+    }
+    render_update_confirm(app_state, status);
+
+    ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
+    bool check_for_updates = cfg_get(HUB, "check_for_updates", true);
+    if (setting_toggle("Check for updates at startup",
+                       "Asks GitHub for a newer release each time the Hub starts.", &check_for_updates)) {
+        cfg_store(HUB, "check_for_updates", check_for_updates);
+    }
+    render_payload_version_note(app_state);
 
     end_card();
 }
@@ -240,7 +385,7 @@ void render_log_card(SettingsViewState& state) {
 void render_view_settings(AppState& app_state, SettingsViewState& state) {
 #ifdef HAVE_IMGUI
     page_header(ICON_SETTINGS, "Hub Settings",
-                "Desktop manager options, system integration and diagnostic logs");
+                "Desktop manager options, updates, system integration and diagnostic logs");
     ImGui::Dummy(ImVec2(0.0f, m(4.0f)));
 
     // Top band uses the same responsive grid as every plugin's settings tab; the
@@ -251,6 +396,8 @@ void render_view_settings(AppState& app_state, SettingsViewState& state) {
     ImGui::BeginChild("##SettingsTopLeft", ImVec2(columns > 1 ? col_w : 0.0f, 0.0f),
                       ImGuiChildFlags_AutoResizeY, ImGuiWindowFlags_NoBackground);
     render_integration_card(state);
+    ImGui::Dummy(ImVec2(0.0f, m(metrics::Gutter)));
+    render_updates_card(app_state);
     if (columns == 1) {
         ImGui::Dummy(ImVec2(0.0f, m(metrics::Gutter)));
         render_config_card(app_state);

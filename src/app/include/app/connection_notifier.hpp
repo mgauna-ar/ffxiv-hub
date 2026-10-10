@@ -1,17 +1,12 @@
 #pragma once
 
 #include "app/connection_state.hpp"
+#include "app/tray_notice.hpp"
 #include <cstdint>
 #include <string>
 #include <vector>
 
 namespace hub::app {
-
-/// One tray balloon.
-struct TrayNotice {
-    std::string title;
-    std::string message;
-};
 
 /// The tray balloons the connection raises, on transitions only. The app closes to
 /// the tray by default, so without them a failed injection reports nowhere the user

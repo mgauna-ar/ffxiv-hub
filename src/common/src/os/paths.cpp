@@ -51,27 +51,56 @@ std::string to_utf8(const std::filesystem::path& path) {
     return std::string(reinterpret_cast<const char*>(utf8.data()), utf8.size());
 }
 
-void open_with_default_app(const std::filesystem::path& path) {
-#ifdef _WIN32
-    ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOW);
-#else
+#ifndef _WIN32
+namespace {
+
+/// Runs `opener target` without a shell, reaped off the caller's thread since the
+/// opener may wait on the handler it starts.
+void spawn_opener(std::string target) {
 #ifdef __APPLE__
     const char* opener = "open";
 #else
     const char* opener = "xdg-open";
 #endif
-    // argv, not a command line: nothing in the path is interpreted by a shell.
-    std::string target = path.native();
     std::string program = opener;
     char* argv[] = {program.data(), target.data(), nullptr};
     pid_t pid = 0;
     if (posix_spawnp(&pid, opener, nullptr, nullptr, argv, environ) != 0) return;
-    // Reaped off the caller's thread; the opener may wait on the handler it starts.
     std::thread([pid] {
         int status = 0;
         waitpid(pid, &status, 0);
     }).detach();
+}
+
+} // namespace
+#endif
+
+void open_with_default_app(const std::filesystem::path& path) {
+#ifdef _WIN32
+    ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOW);
+#else
+    spawn_opener(path.native());
 #endif
 }
+
+void open_url(std::string_view url) {
+    if (!url.starts_with("https://")) return;
+#ifdef _WIN32
+    ShellExecuteW(nullptr, L"open", to_wide(url).c_str(), nullptr, nullptr, SW_SHOW);
+#else
+    spawn_opener(std::string(url));
+#endif
+}
+
+#ifdef _WIN32
+std::wstring to_wide(std::string_view utf8) {
+    if (utf8.empty()) return {};
+    const int length = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
+    if (length <= 0) return {};
+    std::wstring wide(static_cast<size_t>(length), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), wide.data(), length);
+    return wide;
+}
+#endif
 
 } // namespace hub::os

@@ -1,11 +1,15 @@
 #include "app/app_state.hpp"
 #include "app/connection_notifier.hpp"
 #include "app/frame_pacing.hpp"
+#include "app/update_check.hpp"
+#include "app/updater.hpp"
 #include "app/ui/app_frame.hpp"
 #include "app/ui/theme.hpp"
 #include "common/os/logger.hpp"
 #include "common/os/auto_start.hpp"
+#include "common/os/paths.hpp"
 #include "common/os/process_finder.hpp"
+#include "common/os/process_launch.hpp"
 #include "common/os/single_instance.hpp"
 #include "common/os/tray_manager.hpp"
 #include "common/os/unique_handle.hpp"
@@ -13,6 +17,7 @@
 #include "hub/version.hpp"
 #include <algorithm>
 #include <chrono>
+#include <cwchar>
 #include <iostream>
 #include <string>
 
@@ -24,6 +29,7 @@
 #include <d3d11.h>
 #include <dxgi.h>
 #include <dwmapi.h>
+#include <shellapi.h>
 #include <wrl/client.h>
 
 #include "common/ui/imgui_guard.hpp"
@@ -422,6 +428,35 @@ void render_frame(MainWindow& window, hub::app::AppState& app_state, hub::app::u
 #endif
 }
 
+/// Raises the balloon for a newly found release and, once an install is staged,
+/// moves it into place and starts the new build. True when this instance should
+/// now exit; the new one waits for it to.
+bool handle_update(hub::app::Updater& updater, hub::app::UpdateNotifier& notifier,
+                   hub::os::TrayManager& tray_manager) {
+    using hub::app::UpdateState;
+    const UpdateState state = updater.state();
+    if (state == UpdateState::Available) {
+        const hub::app::UpdateStatus status = updater.status();
+        if (status.release) {
+            if (const auto notice = notifier.update(status.release->version)) {
+                tray_manager.show_notification(notice->title, notice->message);
+            }
+        }
+    }
+    if (state != UpdateState::Ready || !updater.apply_staged()) return false;
+
+    const auto exe = updater.install_dir() / hub::app::UPDATE_EXE_NAME;
+    if (!hub::os::launch_detached(exe, {std::string(hub::app::RELAUNCH_ARG),
+                                        std::to_string(hub::os::current_process_id())})) {
+        // The new files are in place; this instance keeps running from the old one.
+        hub::os::Logger::error("Could not start the updated " + hub::os::to_utf8(exe) +
+                               ". Restart FFXIV Hub to finish updating.");
+        return false;
+    }
+    hub::os::Logger::info("Restarting into the updated build...");
+    return true;
+}
+
 /// Sleeps until a message for this thread's windows, the tray's included, or the
 /// timeout, so a click is answered as soon as it would be while drawing.
 void wait_for_messages(std::chrono::milliseconds timeout) {
@@ -432,6 +467,7 @@ void wait_for_messages(std::chrono::milliseconds timeout) {
 void run_frame_loop(MainWindow& window, hub::app::AppState& app_state, hub::os::TrayManager& tray_manager) {
     hub::app::ui::AppFrame frame;
     hub::app::ConnectionNotifier notifier;
+    hub::app::UpdateNotifier update_notifier;
     std::chrono::steady_clock::time_point last_frame{};
 
     MSG msg{};
@@ -454,6 +490,10 @@ void run_frame_loop(MainWindow& window, hub::app::AppState& app_state, hub::os::
             tray_manager.show_notification(notice.title, notice.message);
         }
         tray_manager.set_status(app_state.connection_status_string());
+        if (handle_update(app_state.updater(), update_notifier, tray_manager)) {
+            window.running = false;
+            break;
+        }
 
         if (window.minimized) {
             wait_for_messages(std::chrono::milliseconds(50));
@@ -480,7 +520,9 @@ void run_frame_loop(MainWindow& window, hub::app::AppState& app_state, hub::os::
 
 /// Opens the desktop window and runs it until the app exits. Everything it opens
 /// is released on return, in reverse: ImGui, the device, the window, its class.
-int run_desktop_window(HINSTANCE instance, hub::app::AppState& app_state, hub::os::TrayManager& tray_manager) {
+/// `just_updated`: an update started this instance, which says so in a balloon.
+int run_desktop_window(HINSTANCE instance, hub::app::AppState& app_state, hub::os::TrayManager& tray_manager,
+                       bool just_updated) {
     const WindowIcons icons = load_icons(instance);
     const WindowClass window_class(instance, icons);
     MainWindow window;
@@ -490,6 +532,9 @@ int run_desktop_window(HINSTANCE instance, hub::app::AppState& app_state, hub::o
     size_for_dpi(window);
     apply_window_chrome(window, icons);
     wire_tray(tray_manager, window);
+    if (just_updated) {
+        tray_manager.show_notification("FFXIV Hub", "Updated to version " HUB_VERSION_STRING ".");
+    }
 
     const ImGuiSession imgui(window);
     ShowWindow(window.hwnd.get(), SW_SHOWDEFAULT);
@@ -499,6 +544,20 @@ int run_desktop_window(HINSTANCE instance, hub::app::AppState& app_state, hub::o
     // The window goes with this scope; the tray outlives it.
     tray_manager.set_on_show_window({});
     tray_manager.set_on_exit({});
+    return 0;
+}
+
+/// The PID after RELAUNCH_ARG on this process's command line, or 0: the instance
+/// that installed an update and started this one.
+uint32_t updated_from_pid() {
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (argv == nullptr) return 0;
+    const hub::os::UniqueLocalMemory owner(argv);
+    const std::wstring flag = hub::os::to_wide(hub::app::RELAUNCH_ARG);
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (flag == argv[i]) return static_cast<uint32_t>(std::wcstoul(argv[i + 1], nullptr, 10));
+    }
     return 0;
 }
 
@@ -519,6 +578,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
         hub::os::Logger::warn("Could not acquire SeDebugPrivilege. If FFXIV is running as Administrator, please run FFXIV Hub as Administrator.");
     }
 
+    // Started by an update: the instance that installed it holds the single-instance
+    // lock until it has exited.
+    const uint32_t updated_from = updated_from_pid();
+    if (updated_from != 0 && !hub::os::wait_for_process_exit(updated_from, std::chrono::seconds(15))) {
+        hub::os::Logger::warn("The previous instance (PID " + std::to_string(updated_from) + ") has not exited.");
+    }
+
     hub::os::SingleInstance single_instance("Local\\FFXIVHubSingleInstanceMutex");
     if (!single_instance.try_acquire()) {
         hub::os::Logger::info("Another instance is already running. Waking up existing instance and exiting.");
@@ -532,10 +598,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
         return 1;
     }
 
+    // What an earlier update left: its staging folder, and the old exe and DLL,
+    // which can only go once nothing runs them.
+    hub::app::remove_update_leftovers(hub::os::executable_dir());
+
     hub::os::TrayManager tray_manager;
     tray_manager.initialize(single_instance.activation_message_id());
 
-    if (const int code = run_desktop_window(hInstance, app_state, tray_manager); code != 0) {
+    if (const int code = run_desktop_window(hInstance, app_state, tray_manager, updated_from != 0); code != 0) {
         return code;
     }
 

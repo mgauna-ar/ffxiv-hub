@@ -5,6 +5,7 @@
 #include "common/os/unload_marker.hpp"
 #include "common/os/logger.hpp"
 #include "common/os/auto_start.hpp"
+#include "common/os/http_client.hpp"
 #include "hub/plugin_registry.hpp"
 #include "common/os/paths.hpp"
 #include "meter/combat_settings.hpp"
@@ -28,7 +29,7 @@ DesktopView view_for_plugin(PluginId id) noexcept {
 }
 } // namespace
 
-AppState::AppState() {
+AppState::AppState() : m_updater(os::executable_dir()) {
     for (const auto& plugin : plugins::ALL) {
         m_plugins.push_back({
             plugin.id,
@@ -54,7 +55,8 @@ config::JsonValue AppState::default_config() {
     doc["hub"] = config::JsonValue::ObjectType{
         {"start_with_windows", config::JsonValue(false)},
         {"minimize_to_tray", config::JsonValue(true)},
-        {"show_notifications", config::JsonValue(true)}
+        {"show_notifications", config::JsonValue(true)},
+        {"check_for_updates", config::JsonValue(true)}
     };
     // Each plugin's keys come from its own table. A plugin keeps its current value
     // for a key missing from the file, so a reset only takes in-game because
@@ -156,6 +158,7 @@ size_t AppState::enabled_plugin_count() const noexcept {
 }
 
 void AppState::shutdown() {
+    m_updater.stop();
     m_network_monitor.stop();
     m_pipe_server.stop();
     config::ConfigManager::instance().save();
@@ -213,6 +216,7 @@ void AppState::register_ipc_callbacks() {
         m_payload_status_message.assign(
             status.status_message,
             strnlen(status.status_message, sizeof(status.status_message)));
+        m_payload_version = Version{status.version_major, status.version_minor, 0};
     });
 
     m_pipe_server.set_heartbeat_callback([this](const ipc::HeartbeatPayload& hb) {
@@ -295,12 +299,15 @@ void AppState::mirror_geometry_to_config() {
 }
 
 void AppState::update() {
+    const auto now = std::chrono::steady_clock::now();
     check_game_process();
     mirror_geometry_to_config();
     {
         std::lock_guard<std::mutex> lock(m_combat_mutex);
         m_engine.update();
     }
+    m_updater.tick(now, os::http_supported() &&
+                            config::ConfigManager::instance().get("hub", "check_for_updates", true));
 
     // Forward newly-measured network ping to the in-game HUD, throttled to once/sec.
     // A payload that connects has none of what was sent before, and ICMP reports
@@ -308,7 +315,6 @@ void AppState::update() {
     if (!is_connected()) {
         m_last_sent_ping_ms.reset();
     }
-    const auto now = std::chrono::steady_clock::now();
     if (std::chrono::duration_cast<std::chrono::milliseconds>(now - m_last_ping_check).count() >= 1000) {
         m_last_ping_check = now;
         const double ping = m_network_monitor.get_current_ping_ms();
@@ -347,8 +353,10 @@ void AppState::check_game_process() {
     seen.unload_requested = pid != 0 && m_unloaded_pid.load() == pid;
 
     if (!seen.pipe_connected) {
-        // Only a live payload reports its hooks; the next one reports afresh.
+        // Only a live payload reports its hooks and version; the next one reports afresh.
         m_hooks_installed.store(false);
+        std::lock_guard<std::mutex> lock(m_status_mutex);
+        m_payload_version.reset();
     }
 
     if (!seen.process_alive) {
@@ -462,6 +470,11 @@ std::string AppState::connection_status_string() const {
 std::string AppState::payload_status_message() const {
     std::lock_guard<std::mutex> lock(m_status_mutex);
     return m_payload_status_message;
+}
+
+std::optional<Version> AppState::payload_version() const {
+    std::lock_guard<std::mutex> lock(m_status_mutex);
+    return m_payload_version;
 }
 
 std::optional<ipc::OverlayGeometryPayload> AppState::overlay_geometry(PluginId id) const {
