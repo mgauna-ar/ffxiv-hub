@@ -22,7 +22,13 @@ public:
 
     bool initialize(void* hwnd, void* d3d_device, void* d3d_context);
     void shutdown();
-    void render_frame();
+
+    /// Builds this frame's ImGui frame from the overlays that should render, on the
+    /// CPU alone. False when it holds nothing to draw, so the caller can leave the
+    /// game's pipeline untouched; NewFrame still runs, so input keeps flowing.
+    [[nodiscard]] bool prepare_frame();
+    /// Submits what prepare_frame() built, into whatever render target is bound.
+    void draw_prepared_frame();
 
     void register_overlay(std::shared_ptr<IOverlay> overlay);
     void unregister_overlay(std::string_view overlay_id);

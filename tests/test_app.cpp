@@ -1,5 +1,6 @@
 #include "test_framework.hpp"
 #include "app/app_state.hpp"
+#include "app/frame_pacing.hpp"
 #include "app/ui/theme.hpp"
 #include "app/ui/view_settings.hpp"
 #include "common/ui/job_style.hpp"
@@ -1001,4 +1002,24 @@ TEST_CASE(SettingsView, LogTailReadsOnlyTheEnd) {
 
     std::filesystem::remove(tmp);
     TEST_ASSERT(app::ui::read_log_tail(tmp, 10).empty());
+}
+
+TEST_CASE(App, FramePacingWaitsOnlyWithoutFocus) {
+    using std::chrono::milliseconds;
+    using std::chrono::microseconds;
+    // With focus, vsync paces the loop: never an extra wait.
+    TEST_ASSERT_EQ(app::frame_wait(true, milliseconds(0)).count(), 0);
+    TEST_ASSERT_EQ(app::frame_wait(true, milliseconds(5)).count(), 0);
+
+    // Behind the game, the rest of the background interval.
+    TEST_ASSERT_EQ(app::frame_wait(false, milliseconds(0)).count(), app::kBackgroundFrameInterval.count());
+    TEST_ASSERT_EQ(app::frame_wait(false, milliseconds(13)).count(), app::kBackgroundFrameInterval.count() - 13);
+    // Rounded up, so the loop never wakes just short of the frame being due.
+    TEST_ASSERT_EQ(app::frame_wait(false, microseconds(32'500)).count(), 1);
+
+    // Due or overdue: draw now.
+    TEST_ASSERT_EQ(app::frame_wait(false, app::kBackgroundFrameInterval).count(), 0);
+    TEST_ASSERT_EQ(app::frame_wait(false, std::chrono::seconds(5)).count(), 0);
+    // A clock that went backwards waits one interval rather than for ever.
+    TEST_ASSERT_EQ(app::frame_wait(false, milliseconds(-40)).count(), app::kBackgroundFrameInterval.count());
 }

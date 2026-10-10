@@ -60,7 +60,7 @@ OverlayCapture capture_overlays(hub::meter::EncounterEngine& engine, double ping
     for (int i = 0; i < 4; ++i) {
         set_capture(i == 3 ? &capture.frame : nullptr);
         prepare_frame(static_cast<float>(layout.display_w), static_cast<float>(layout.display_h));
-        host.render_frame();
+        if (host.prepare_frame()) host.draw_prepared_frame();
     }
     set_capture(nullptr);
 

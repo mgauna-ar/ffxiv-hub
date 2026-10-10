@@ -154,6 +154,9 @@ TEST_CASE(Payload, OverlayHostRegistrationAndManagement) {
     host.unregister_overlay("##LatencyHUDOverlay");
     TEST_ASSERT(host.find_overlay("##LatencyHUDOverlay") == nullptr);
     TEST_ASSERT(host.find_overlay("##CombatMeterOverlay") == meter_overlay);
+
+    // The host is a singleton every later test shares.
+    host.unregister_overlay("##CombatMeterOverlay");
 }
 
 /// Answers every scale with a fixed residual, so a test can tell it was asked.
@@ -190,6 +193,36 @@ TEST_CASE(Payload, OverlayHostLendsItsFontsWhileRegistered) {
 
     host.unregister_overlay(hud->overlay_id());
     TEST_ASSERT(hud->fonts() == nullptr);
+}
+
+TEST_CASE(Payload, OverlayHostPreparesNothingWhenNoOverlayShows) {
+    // Present only binds its render target and runs the DX11 backend when the
+    // frame holds something, so a hidden overlay must leave it empty.
+    auto& host = payload::OverlayHost::instance();
+    TEST_ASSERT_FALSE(host.prepare_frame());  // Not initialized yet
+
+#ifndef _WIN32
+    // The mock host. On Windows initialize() starts the real ImGui backends, which
+    // need a real window and device.
+    int window = 0;
+    int device = 0;
+    int context = 0;
+    TEST_ASSERT(host.initialize(&window, &device, &context));
+    TEST_ASSERT_FALSE(host.prepare_frame());
+
+    auto hud = std::make_shared<mitigator::LatencyOverlay>();
+    hud->set_visible(false);
+    host.register_overlay(hud);
+    TEST_ASSERT_FALSE(host.prepare_frame());
+
+    hud->set_visible(true);
+    TEST_ASSERT_TRUE(host.prepare_frame());
+    hud->set_suppressed(true);
+    TEST_ASSERT_FALSE(host.prepare_frame());
+
+    host.unregister_overlay(hud->overlay_id());
+    host.shutdown();
+#endif
 }
 
 static int s_mock_counter = 0;

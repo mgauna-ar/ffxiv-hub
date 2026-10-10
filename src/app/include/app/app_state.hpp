@@ -112,6 +112,8 @@ public:
     /// rendered per frame: a full summary carries every combatant's per-action
     /// breakdown.
     [[nodiscard]] std::vector<meter::PullHistoryEntry> get_pull_history_index();
+    /// Moves whenever the archive changes, so the listing is re-read only then.
+    [[nodiscard]] uint64_t pull_history_revision();
     [[nodiscard]] std::optional<meter::EncounterSummary> get_pull(size_t index);
     /// Timeline of the archived pull `encounter_id`, or of the live pull for 0.
     [[nodiscard]] meter::EncounterTimeline get_timeline(uint64_t encounter_id);

@@ -192,17 +192,25 @@ public:
     [[nodiscard]] std::vector<PullHistoryEntry> pull_history_index() const;
     [[nodiscard]] std::optional<EncounterSummary> pull_at(size_t index) const;
     [[nodiscard]] std::optional<EncounterSummary> latest_pull() const;
+    /// Moves on every change to the archive, a late death or kill included, so a
+    /// list view re-reads pull_history_index() only when it does.
+    [[nodiscard]] uint64_t history_revision() const {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        return m_history_revision;
+    }
     /// Drops every archived pull. The next one is numbered from 1 again.
     void clear_history() {
         std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_pull_history.clear();
         m_visit_pulls = 0;
+        ++m_history_revision;
     }
     /// Pulls the archive holds. Never below one: the live view and late deaths use
     /// the newest. Lowering it drops the oldest at once.
     void set_history_capacity(size_t capacity) {
         std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_history_capacity = std::max<size_t>(capacity, 1);
+        if (m_pull_history.size() > m_history_capacity) ++m_history_revision;
         while (m_pull_history.size() > m_history_capacity) {
             m_pull_history.pop_front();
         }
@@ -307,6 +315,7 @@ private:
     bool m_live_holds_latest_pull{false};
     std::vector<StatusChange> m_status_changes;
     std::deque<ArchivedPull> m_pull_history;
+    uint64_t m_history_revision{0};
 };
 
 } // namespace hub::meter

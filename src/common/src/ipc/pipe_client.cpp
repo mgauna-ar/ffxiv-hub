@@ -1,5 +1,6 @@
 #include "common/ipc/pipe_client.hpp"
 #include "common/ipc/frame_reader.hpp"
+#include "common/ipc/write_batch.hpp"
 #include "common/os/logger.hpp"
 #include <chrono>
 #include <cstring>
@@ -13,6 +14,14 @@
 #include <windows.h>
 
 namespace hub::ipc {
+
+namespace {
+
+/// How long the writer waits on an empty queue. The game runs at a 1 ms timer
+/// resolution, so the 2 ms poll this replaced woke it about 450 times a second.
+constexpr DWORD kWriterIdleMs = 10;
+
+} // namespace
 
 PipeClient::PipeClient(const char* pipe_name)
     : m_pipe_name(pipe_name ? pipe_name : DEFAULT_PIPE_NAME) {
@@ -223,14 +232,19 @@ void PipeClient::reader_thread_func() {
 
 void PipeClient::writer_thread_func() {
     std::vector<uint8_t> item;
+    std::vector<uint8_t> batch;
     while (m_running.load()) {
-        if (m_ring_buffer.pop(item)) {
-            if (!write_raw(item.data(), item.size())) {
-                m_connected.store(false);
-                break;
+        // Everything queued goes out in one write rather than one per packet.
+        if (drain_into(m_ring_buffer, batch, item) == 0) {
+            // disconnect() sets the stop event, so it never waits out the idle.
+            if (!m_stop_event || WaitForSingleObject(m_stop_event.get(), kWriterIdleMs) == WAIT_FAILED) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(kWriterIdleMs));
             }
-        } else {
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            continue;
+        }
+        if (!write_raw(batch.data(), batch.size())) {
+            m_connected.store(false);
+            break;
         }
     }
 }

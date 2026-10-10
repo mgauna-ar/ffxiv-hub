@@ -263,16 +263,20 @@ TEST_CASE(MeterBoss, LateZeroMarksTheArchivedPullKilled) {
     wipe(engine);
     TEST_ASSERT_EQ(engine.state(), EncounterState::Wipe);
     const uint64_t end_us = engine.latest_pull()->end_time_us;
+    const uint64_t revision = engine.history_revision();
 
     // Another enemy, or a read that is not a kill, changes nothing.
     engine.process_enemy_hp(enemy_hp(kAdd, 0, 5000, 5.5));
     engine.process_enemy_hp(enemy_hp(kBoss, kBossMaxHp, kBossMaxHp, 5.5));  // Reset to full
     TEST_ASSERT(!engine.latest_pull()->boss.killed);
     TEST_ASSERT_NEAR(engine.latest_pull()->boss.hp_pct, 0.3, 1e-9);
+    TEST_ASSERT_EQ(engine.history_revision(), revision);
 
     engine.process_enemy_hp(enemy_hp(kBoss, 0, kBossMaxHp, static_cast<double>(end_us) / 1e6 + 1.0));
     const auto pull = engine.latest_pull();
     TEST_ASSERT(pull->boss.killed);
+    // The pull list re-reads the archive on this, so its badge follows the kill.
+    TEST_ASSERT_TRUE(engine.history_revision() != revision);
     TEST_ASSERT_NEAR(pull->boss.hp_pct, 0.0, 1e-9);
     TEST_ASSERT(pull_outcome(pull->state, pull->boss) == PullOutcome::Clear);
     TEST_ASSERT(engine.pull_history_index()[0].boss.killed);

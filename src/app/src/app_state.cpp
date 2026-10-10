@@ -487,6 +487,11 @@ std::vector<meter::PullHistoryEntry> AppState::get_pull_history_index() {
     return m_engine.pull_history_index();
 }
 
+uint64_t AppState::pull_history_revision() {
+    std::lock_guard<std::mutex> lock(m_combat_mutex);
+    return m_engine.history_revision();
+}
+
 std::optional<meter::EncounterSummary> AppState::get_pull(size_t index) {
     std::lock_guard<std::mutex> lock(m_combat_mutex);
     return m_engine.pull_at(index);

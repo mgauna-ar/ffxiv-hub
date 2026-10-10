@@ -6,9 +6,12 @@
 #include "app/ui/combat_deaths.hpp"
 #include "app/ui/combat_statuses.hpp"
 #include "app/ui/combat_timeline.hpp"
+#include "meter/pull_grouping.hpp"
 #include "meter/types.hpp"
 #include <chrono>
 #include <cstdint>
+#include <optional>
+#include <vector>
 
 namespace hub::app::ui {
 
@@ -28,6 +31,13 @@ struct CombatViewState {
     meter::EncounterSummary selected_pull;
     uint64_t cached_pull_id{0};
     std::chrono::steady_clock::time_point last_snapshot{};
+
+    /// The archive listing and its visit groups, re-read only when the engine's
+    /// history revision moves: copying and grouping it every frame held the combat
+    /// mutex for every archived pull.
+    std::vector<meter::PullHistoryEntry> pull_history;
+    std::vector<meter::PullGroup> pull_groups;
+    std::optional<uint64_t> pull_history_revision;
 
     DamageTakenTabState damage_taken;
     DeathsTabState deaths;

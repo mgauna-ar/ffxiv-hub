@@ -266,6 +266,45 @@ TEST_CASE(MeterEngine, ClearingHistoryRestartsNumbering) {
     TEST_ASSERT_EQ(index[0].encounter_id, 3u);
 }
 
+TEST_CASE(MeterEngine, HistoryRevisionMovesOnlyWhenTheArchiveChanges) {
+    // The pull list re-reads the archive only when this moves, so every change to
+    // the archive has to move it, and nothing else should.
+    EncounterEngine engine;
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto at = [t0](int s) { return t0 + std::chrono::seconds(s); };
+    engine.set_zone(1000, "", at(0));
+    uint64_t seen = engine.history_revision();
+
+    hub::ipc::CombatActionPacket act{};
+    act.source_id = 1;
+    act.damage = 4200;
+    act.effect_type = static_cast<uint16_t>(EffectType::Damage);
+    engine.process_action(act, at(1));
+    engine.process_action(act, at(2));
+    engine.update(at(3));
+    (void)engine.current_summary(at(3));
+    TEST_ASSERT_EQ(engine.history_revision(), seen);
+
+    engine.end_encounter(EncounterEndReason::Manual, at(4));
+    TEST_ASSERT_TRUE(engine.history_revision() != seen);
+    seen = engine.history_revision();
+
+    archive_pull(engine, at(10));
+    archive_pull(engine, at(20));
+    TEST_ASSERT_TRUE(engine.history_revision() != seen);
+    seen = engine.history_revision();
+
+    // Raising the capacity drops nothing.
+    engine.set_history_capacity(50);
+    TEST_ASSERT_EQ(engine.history_revision(), seen);
+    engine.set_history_capacity(1);
+    TEST_ASSERT_TRUE(engine.history_revision() != seen);
+    seen = engine.history_revision();
+
+    engine.clear_history();
+    TEST_ASSERT_TRUE(engine.history_revision() != seen);
+}
+
 TEST_CASE(MeterEngine, ZoneLabelPrefersNameThenTableThenId) {
     // An explicitly supplied name always wins.
     TEST_ASSERT(zone_label(1238, "The Omega Protocol") == "The Omega Protocol");

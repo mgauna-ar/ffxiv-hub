@@ -234,8 +234,8 @@ void OverlayHost::shutdown() {
     m_font_large   = nullptr;
 }
 
-void OverlayHost::render_frame() {
-    if (!m_initialized) return;
+bool OverlayHost::prepare_frame() {
+    if (!m_initialized) return false;
 
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
@@ -251,6 +251,12 @@ void OverlayHost::render_frame() {
     }
 
     ImGui::Render();
+    const ImDrawData* draw_data = ImGui::GetDrawData();
+    return draw_data != nullptr && draw_data->CmdListsCount > 0;
+}
+
+void OverlayHost::draw_prepared_frame() {
+    if (!m_initialized) return;
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 }
 
@@ -272,15 +278,20 @@ void OverlayHost::shutdown() {
     m_initialized = false;
 }
 
-void OverlayHost::render_frame() {
-    if (!m_initialized) return;
+bool OverlayHost::prepare_frame() {
+    if (!m_initialized) return false;
+    bool drew = false;
     std::lock_guard<std::mutex> lock(m_mutex);
     for (auto& overlay : m_overlays) {
         if (overlay && overlay->should_render()) {
             overlay->render();
+            drew = true;
         }
     }
+    return drew;
 }
+
+void OverlayHost::draw_prepared_frame() {}
 
 } // namespace hub::payload
 
