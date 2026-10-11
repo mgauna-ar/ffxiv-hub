@@ -1,4 +1,5 @@
 #include "test_framework.hpp"
+#include "meter_test_support.hpp"
 #include "hub/game/guaranteed_hits.hpp"
 #include "hub/game/raid_buffs.hpp"
 #include "hub/game/status.hpp"
@@ -18,6 +19,7 @@
 #include <vector>
 
 using namespace hub::meter;
+using namespace hub::test::meter_support;
 
 namespace {
 
@@ -44,15 +46,6 @@ constexpr uint16_t kOpoOpoForm = 107;
 // With no clean hits seen, the estimate is the prior: c = 1.35 + 0.22.
 constexpr double kPriorCritMultiplier = 1.35 + RateEstimator::kPriorCrit;
 
-hub::ipc::CombatStatusEntry status(uint16_t id, EntityId source, uint16_t param = 0) {
-    hub::ipc::CombatStatusEntry entry{};
-    entry.status_id = id;
-    entry.param = param;
-    entry.remaining_s = 10.0f;
-    entry.source_id = source;
-    return entry;
-}
-
 AttributedHit hit(uint32_t damage, bool crit = false, bool direct_hit = false, ActionId action = 7477,
                   Role role = Role::Melee) {
     AttributedHit h;
@@ -77,21 +70,6 @@ const hub::ipc::CombatBuffCredit* credit_of(const Attribution& a, EntityId giver
 double expected_credit(double damage, double m) {
     return damage - damage / m;
 }
-
-/// Statuses per actor, served the way the payload's reader serves them.
-struct FakeStatuses {
-    std::unordered_map<uint32_t, std::vector<hub::ipc::CombatStatusEntry>> by_actor;
-
-    CombatPlugin::StatusReader reader() {
-        return [this](uint32_t id, const void*, std::span<hub::ipc::CombatStatusEntry> out) -> std::optional<size_t> {
-            const auto it = by_actor.find(id);
-            if (it == by_actor.end()) return size_t{0};
-            const size_t n = std::min(out.size(), it->second.size());
-            std::copy_n(it->second.begin(), n, out.begin());
-            return n;
-        };
-    }
-};
 
 void register_party(CombatantRegistry& registry) {
     registry.register_actor(kSam, "Sam", Job::SAM, 0, ActorType::Player);
@@ -492,6 +470,38 @@ TEST_CASE(MeterRdps, UnreadableStatusesEarnNothing) {
     entries[0].value = 10500;
     plugin.on_receive_action_effect(kSam, nullptr, &header, entries.data(), nullptr);
 
+    TEST_ASSERT_EQ(plugin.engine().accumulator_unlocked().find_stats(kSam)->buff_received, 0u);
+}
+
+TEST_CASE(MeterRdps, ReflectsEarnNoCredits) {
+    // The statuses read are the caster's, and a reflect is the target's hit: crediting
+    // it would hand the boss's buffs, or none, to the wrong hit.
+    CombatPlugin plugin;
+    plugin.initialize();
+    hub::ipc::PacketRingBuffer ring;
+    plugin.set_ring_buffer(&ring);
+    register_party(plugin.engine().registry_unlocked());
+    FakeStatuses statuses;
+    statuses.by_actor[kSam] = {status(kBrotherhood, kMonk)};
+    plugin.set_status_reader(statuses.reader());
+
+    hub::game::ActionEffectHeader header{};
+    header.animation_target_id = kSam;
+    header.action_id = 7;
+    header.num_targets = 1;
+    std::array<hub::game::ActionEffectEntry, 8> entries{};
+    entries[0].effect_type = 0x03;
+    entries[0].value = 3000;
+    entries[1].effect_type = 0x03;
+    entries[1].value = 800;
+    entries[1].flags = 0xA0;
+    plugin.on_receive_action_effect(kBoss, nullptr, &header, entries.data(), nullptr);
+
+    const auto shipped = drain_actions(ring);
+    TEST_ASSERT_EQ(shipped.size(), 2u);
+    TEST_ASSERT_EQ(shipped[1].source_id, kSam);
+    TEST_ASSERT_EQ(shipped[1].credits.count, 0u);
+    TEST_ASSERT_EQ(plugin.engine().accumulator_unlocked().find_stats(kSam)->total_damage, 800u);
     TEST_ASSERT_EQ(plugin.engine().accumulator_unlocked().find_stats(kSam)->buff_received, 0u);
 }
 

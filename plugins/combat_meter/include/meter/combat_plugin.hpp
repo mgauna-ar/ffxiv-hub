@@ -4,6 +4,7 @@
 #include "hub/plugin_registry.hpp"
 #include "meter/buff_attribution.hpp"
 #include "meter/encounter_engine.hpp"
+#include "meter/tick_split.hpp"
 #include "meter/vitals.hpp"
 #include "common/ipc/ring_buffer.hpp"
 #include <array>
@@ -198,6 +199,7 @@ private:
     // Game main thread only, under the engine lock.
     RateEstimator m_rates;
     BuffStrengths m_strengths;
+    TickSplitter m_ticks;
     std::unordered_map<DotKey, DotSnapshot, DotKeyHash> m_dot_snapshots;
     CombatOverlay* m_overlay{nullptr};
     GameStateProvider* m_game_state{nullptr};

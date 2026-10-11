@@ -55,8 +55,11 @@ void track_min_max(uint64_t& min, uint64_t& max, uint64_t value, bool first) {
     if (value > max) max = value;
 }
 
-void count_severity(HitCounts& counts, HitSeverity severity) {
+/// `rated` false for a hit whose severity says nothing about its dealer's rates, such
+/// as a reflect: it counts toward total_hits only.
+void count_severity(HitCounts& counts, HitSeverity severity, bool rated = true) {
     counts.total_hits++;
+    if (!rated) return;
     switch (severity) {
         case HitSeverity::Normal: counts.normal_hits++; break;
         case HitSeverity::Critical: counts.crit_hits++; break;
@@ -130,16 +133,19 @@ void MetricsAccumulator::record_damage_hit(
             add_capped(bin->damage, packet.damage);
         }
         record_credits(stats, packet.damage, packet.credits, packet.timestamp_us, registry);
+    } else {
+        m_uncounted_damage[stats.entity_id] += packet.damage;
     }
 
-    count_severity(stats.hits, severity);
+    const bool rated = (packet.hit_flags & HitFlags::ByTarget) == 0;
+    count_severity(stats.hits, severity, rated);
 
     ActionSummary& act = action_entry(stats, packet.action_id);
     act.hit_count++;
     act.damage_hits++;
     act.total_damage += packet.damage;
     track_min_max(act.min_damage, act.max_damage, packet.damage, act.damage_hits == 1);
-    count_severity(act.hits, severity);
+    count_severity(act.hits, severity, rated);
 
     // An effect that hit nothing carries the placeholder id, which would otherwise
     // open a junk combatant row.
@@ -262,6 +268,8 @@ void MetricsAccumulator::record_status_tick(const ipc::StatusTickPacket& packet,
                 add_capped(bin->damage, packet.damage_or_heal);
             }
             record_credits(stats, packet.damage_or_heal, packet.credits, packet.timestamp_us, registry);
+        } else {
+            m_uncounted_damage[stats.entity_id] += packet.damage_or_heal;
         }
 
         stats.hits.tick_hits++;
@@ -559,6 +567,17 @@ void MetricsAccumulator::merge_combatants(EntityId from_id, EntityId to_id, cons
     // the pet's row across kept the pet's name and type, and neither metadata
     // refresh ever replaces a name that is not a placeholder.
     CombatantStats& to = get_or_create_stats(to_id, registry);
+    // Hits booked before the pet was known came from a source that was not friendly
+    // then, so the raid total never took them. It does once a friendly owner has them.
+    if (auto it = m_uncounted_damage.find(from_id); it != m_uncounted_damage.end()) {
+        const uint64_t uncounted = it->second;
+        m_uncounted_damage.erase(it);
+        if (registry.is_friendly(to_id)) {
+            m_total_damage += uncounted;
+        } else {
+            m_uncounted_damage[to_id] += uncounted;
+        }
+    }
     to.total_damage += from_stats.total_damage;
     // All of it is pet damage from the owner's side. The merged entry's own
     // pet_damage is already inside its total_damage, so adding it again doubles it.
@@ -782,6 +801,7 @@ void MetricsAccumulator::clear() {
     m_combatants.clear();
     m_damage_taken.clear();
     m_buff_credits.clear();
+    m_uncounted_damage.clear();
     m_recaps.clear();
     m_gcds.clear();
     m_timeline.clear();

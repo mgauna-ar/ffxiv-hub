@@ -14,12 +14,13 @@ client's combat flag alone (`client_flags()`, never `flags()`).
 Every rule below records a failure that was observed and fixed, several of them against
 captured log lines. Preserve them when modifying the registry, accumulator or engine.
 
-- **Automatic Pet Attribution (Zero Orphan Rows)**: `CombatantRegistry::resolve_owner` must map pet actions to the owner. An actor is a pet when it has an owner. Kind 5, once classed as a pet too, is an aetheryte (see the root `AGENTS.md`, *How the client builds an aetheryte*). It lives once, in `actor_type_from_object_kind` inside `meter/actor_info.hpp`, the one Character-to-ActorInfo extraction both the payload's `ObjectReader` and `CombatPlugin` read through. Unlinked pets infer owners from party jobs. Stats merge cleanly with zero orphan rows. Cyclic ownership loop guard depth = 8. On a late merge the owner's `pet_damage` grows by the merged row's `total_damage` alone (its own `pet_damage` is already inside it), and a missing owner row is created from the registry, never by moving the pet's row across.
-- **Effect Blocks Map To `targets[t]`**: Every effect block, slot 0 included, belongs to the matching entry of the target list; `animation_target_id` is only the fallback for a null list or empty slot. A self-centred AoE animates on its caster.
+- **Automatic Pet Attribution (Zero Orphan Rows)**: `CombatantRegistry::resolve_owner` must map pet actions to the owner. An actor is a pet when it has an owner. Kind 5, once classed as a pet too, is an aetheryte (see the root `AGENTS.md`, *How the client builds an aetheryte*). It lives once, in `actor_type_from_object_kind` inside `meter/actor_info.hpp`, the one Character-to-ActorInfo extraction both the payload's `ObjectReader` and `CombatPlugin` read through. Unlinked pets infer owners from party jobs. Stats merge cleanly with zero orphan rows. Cyclic ownership loop guard depth = 8. On a late merge the owner's `pet_damage` grows by the merged row's `total_damage` alone (its own `pet_damage` is already inside it), and a missing owner row is created from the registry, never by moving the pet's row across. Hits booked before the pet was known came from a source that was not friendly then, so `m_total_damage` left them out; `MetricsAccumulator::m_uncounted_damage` holds them per row, and the merge adds them to the raid total once a friendly owner takes the row (`MeterAccumulator.LateMergedPetJoinsTheRaidTotal`). Otherwise raid DPS fell short of its rows and shares summed past 100%.
+- **Effect Blocks Map To `targets[t]`**: Every effect block, slot 0 included, belongs to the matching entry of the target list; `animation_target_id` is only the fallback for a null list or empty slot. A self-centred AoE animates on its caster. A block whose slot holds the placeholder `0xE0000000` is skipped whole, as the client skips it: whatever it carries never happened.
+- **An Effect's Dealer And Receiver Come From Its Flags**: The client runs every entry, whatever its kind, between a dealer and a receiver it picks from the entry's flags: the dealer is the block's target when `flags & 0x20`, else the caster, and the receiver is the caster when `flags & 0x80`, else the block's target. `decoder::decode_action_effects` and `decode_status_applications` follow the same rule (`dealer_of`, `receiver_of`). A reflect (`0xA0`) in an enemy's swing is the tank's hit on the enemy; booked as the swing's caster, it was the enemy's damage to the tank, and a player hitting a reflecting enemy was credited the damage that bounced back. An entry the target dealt carries `HitFlags::ByTarget`: it counts toward `total_hits` but stays out of `rated_hits()`, since it is not the dealer's swing, and `CombatPlugin` attributes no buff credits to it and takes no DoT snapshot from it, because the statuses it read are the caster's. An app older than the flag books it as the reflector's normal hit. See "How the client reads an effect entry".
 - **Safe Duration Floor (Anti-Division-by-Zero)**: Combat duration must be clamped to `std::max(duration_seconds, 1.0)`.
 - **Elapsed Time Is Never Negative**: Every duration the engine derives from a caller's `now` against `m_start_time` goes through `elapsed_since_start_locked`, which clamps at 0. `current_summary`, `current_rankings` and `timeline` take `now` as a default argument, evaluated before `m_mutex` is taken, so the detour thread can start a pull in between; the unclamped difference came out negative, and `static_cast<uint64_t>(dur * 1e6)` on it is undefined (UBSan failed `MeterEngine.ConcurrentProducersAndReaders` on it). Such a `now` reads as no time elapsed: duration 0 and `end_time_us == start_time_us` (`MeterEngine.ReaderNowBeforeThePullStartReadsZero`).
 - **Accurate Overheal Accounting**: HPS is strictly `effective_healing / duration`. Total healing is `effective_healing + overhealing`. Overheal percentage evaluates against total healing without division-by-zero when healing is zero.
-- **Overheal Is Split Before Anything Records It**: The decoder emits a heal as all effective. `CombatPlugin` splits it with `decoder::apply_overheal` against the target's pre-heal HP from its `HpResolver` *before* `process_action` and the ring-buffer push, so the in-game and desktop engines hold identical numbers. A HoT tick is split the same way in `on_status_tick`: `damage_or_heal` stays the full tick and `CombatStatusTickPayload::overheal` carries the part that overhealed. Nothing downstream may re-split. A heal flagged on-source (`flags & 0x80`) targets the caster. The client applies an action's HP after its effect, which makes the pre-heal reading hold; a tick's HP comes in a separate packet whose order the server decides. See "How the client reads an effect entry" and "How the client reports DoT and HoT ticks".
+- **Overheal Is Split Before Anything Records It**: The decoder emits a heal as all effective. `CombatPlugin` splits it with `decoder::apply_overheal` against the target's pre-heal HP from its `HpResolver` *before* `process_action` and the ring-buffer push, so the in-game and desktop engines hold identical numbers. A HoT tick is split the same way in `on_status_tick`: `damage_or_heal` stays the full tick and `CombatStatusTickPayload::overheal` carries the part that overhealed. Nothing downstream may re-split. A heal's receiver follows its flags like any entry's (see *An Effect's Dealer And Receiver Come From Its Flags*), so a drain's self-heal is measured against the caster's HP. The client applies an action's HP after its effect, which makes the pre-heal reading hold; a tick's HP comes in a separate packet whose order the server decides. See "How the client reads an effect entry" and "How the client reports DoT and HoT ticks".
 - **Party Wipe State Invariance**: A wipe triggers only when all tracked synced party members are confirmed dead (`party_dead == m_party_members.size()`). A surviving player or revive cancels the wipe. *Confirmed dead* is `max_hp > 0 && current_hp == 0`: an unread HP proves nothing, and `register_actor` keeps a real 0 as 0. Solo, the party is the local player alone: with no synced party the check reads `m_local_player_id` and nothing else. Counting every player ever registered let a former party member, a stranger or a pet last read alive block every solo wipe. With no local id the old all-players count stands, pets excluded.
 - **An Unchanged Source Takes No Engine Lock**: Every `ReceiveActionEffect` syncs its source on the game's thread, and the engine's lock is also held by the overlay and the orchestration thread. `ObjectReader::sync_actor` settles an actor already cached as it is under the reader's cache lock alone (`refresh_if_unchanged`), and takes the engine's lock only to register one that is new or changed; the target resolver in `dllmain.cpp` checks `recently_read` before the lock the same way. Every wait on that lock is a wait on the thread that also runs the mitigator, and the calls after it in the frame may carry the player's own response. `PayloadObjectReader.UnchangedSourceSkipsTheEngineLock` holds the lock on another thread to check it.
 - **HP Must Keep Flowing**: Wipe detection is only as live as the HP it reads. `ObjectReader::sync_party` calls `update_hp` on every sync, and publishes each member through `publish_actor`, the dedupe every actor read shares, whose alive/dead bit makes a death or raise republish `CombatActorInfo` to the app. Taking HP out of that path, or out of the dedupe entirely, silently turns every wipe into a combat end. Solo the party list is empty, so `sync_party` reads the local player's own object instead and publishes it through the same dedupe.
@@ -39,6 +40,7 @@ captured log lines. Preserve them when modifying the registry, accumulator or en
 - **Ticks Carry No Severity**: `ProcessHotDot` reports no crit flag, so DoT/HoT ticks increment `HitCounts::tick_hits` and stay out of `rated_hits()`, the denominator for crit/DH/CDH rates. Heal hits are counted in `heal_hit_counts` for the same reason. Direct heals and HoT ticks book through the one `MetricsAccumulator::record_heal`, which counts a tick apart (`HealHit::Tick`) from a direct heal's crit or non-crit.
 - **A Heal's Crit Is Byte 2**: Damage, blocked and parried hits keep crit and direct hit in `hit_severity` (byte 1, `0x20` and `0x40`). A heal keeps its crit in `param` (byte 2, `0x20`) and never direct hits; the client reads a heal's byte 1 only to pick a message. Reading byte 1 for heals counted no heal crit at all, so every heal crit rate read 0%. See "How the client reads an effect entry".
 - **Only Effect Kinds 3 And 4 Are Ticks**: `ProcessHotDot` also carries MP (11) and job gauge (14) gains, and its last argument is an attack type or a flag, always `0` on the classic tick category. The detour classifies by kind alone through `hot_dot_is_heal`: 3 is damage, 4 is healing, and anything else is dropped before a consumer sees it. Deciding by that last argument booked every classic-category DoT tick as healing, and MP and Esprit gains with it. See "How the client reports DoT and HoT ticks".
+- **A Combined Tick Is Split In-Game And Shipped**: The server folds every DoT (or HoT) on a target into one tick that names no status (0) and one source, so booked as sent, every DoT user's tick damage went to whichever player it named. `CombatPlugin::on_status_tick` splits a status-0 tick across the target's damage (or healing) over time statuses, read at the tick through the `StatusReader` like a hit's, and ships one `CombatStatusTick` per share with its own source and status. Both engines book exactly those shares and nothing downstream re-splits. `TickSplitter` (`meter/tick_split.hpp`) weighs each status by its potency from `include/hub/game/tick_statuses.hpp` times its source's strength, damage or healing per potency point, learned only from ticks where every such status on the target came from one source, which makes that tick exactly theirs; a source not learned yet takes the mean of those that are. The shares add up to the tick and its overheal exactly (`split_exact`). With no status read, or none in the table with a real source, the tick stays whole under its named source. A tick that names its status is a ground effect's and is never split; its status takes no share of a combined tick again (`note_own_tick`). Crits inside a combined tick cannot be told apart, so a share is an expected value; the total is exact. See "How the client reports DoT and HoT ticks".
 - **Friendly Raid Damage Isolation**: Enemy incoming damage to players is tracked under `damage_taken` on the target. Enemy damage must never be added to `m_total_damage` or raid DPS.
 - **Only Landed Damage Opens An Encounter**: `EncounterEngine::starts_encounter` gates the Idle -> InCombat transition on a `Damage`, `Blocked` or `Parried` effect carrying a non-zero damage value. Healing used to qualify, so a prepull cure opened a pull whose clock was already seconds old by the first hit, with the healer ranked in a table nobody had attacked in yet. Buffs, debuffs, misses and zero-damage effects are not a pull starting either. The rule governs the *start* only: once InCombat, a heal is recorded and refreshes `m_last_activity_time` like any other activity.
 - **Direct Action Encounter Initiation Only**: Passive DoT/HoT ticks must never initiate encounters when combat state is Idle, Wipe, or Complete.
@@ -75,7 +77,7 @@ Whether a boss's object stands, at 0 HP, long enough for a vitals pass (every 25
 
 - **Credits Are Built In-Game And Shipped**: `CombatPlugin` attributes every damage hit from a friendly source with `attribute_hit` before `process_action` and the ring-buffer push, the same place the overheal split happens, and ships the result in `CombatActionPayload::credits`. Both engines book exactly those credits and nothing downstream re-attributes. The statuses come from the `StatusReader` (`ObjectReader::read_attribution_statuses`) on the game's main thread at the hit; the app has no way to see them then, since status lists reach it at 4 Hz on another lane. See "How the client applies statuses".
 - **Credits Move Damage, They Never Make It**: A hit's credits never add up to more than the hit (`record_credits` clamps them), go only to another player, and are booked on both the receiver (`buff_received`) and the giver (`buff_given`). The party's rDPS therefore sums to its DPS; `MeterRdps.CreditsMoveDamageWithoutCreatingIt` holds that. A player whose buffs are their only damage still ranks: `sorted_by_dps` and `CombatOverlay::sorted_combatants` keep a row with `buff_given > 0`. Heals, the Limit Break and a player's own buffs earn nothing.
-- **A DoT Keeps The Buffs It Was Applied Under**: An effect entry of kind 14 on an enemy snapshots the attacker's statuses, keyed by target, status and source. `on_status_tick` credits a damage tick from that snapshot and the enemy's debuffs as they stand at the tick; a tick with no snapshot, or one older than `kDotSnapshotTtlUs`, earns nothing. Ticks carry no crit or direct hit, so rate buffs earn their expected value on them.
+- **A DoT Keeps The Buffs It Was Applied Under**: An effect entry of kind 14 on an enemy snapshots the attacker's statuses, keyed by target, status and source. `on_status_tick` credits each share of a combined tick, which carries its status and source, from that snapshot and the enemy's debuffs as they stand at the tick; a tick with no snapshot, or one older than `kDotSnapshotTtlUs`, earns nothing. Ticks carry no crit or direct hit, so rate buffs earn their expected value on them.
 - **Rates Come From Clean Hits Only**: `RateEstimator` learns a player's crit and direct hit rates only from hits with no rate status on either side, no guarantee, and both status lists read. It starts from `kPriorCrit`/`kPriorDirectHit` at weight `kPriorWeight` and is clamped to `[kMinRate, kMaxRate]`. The crit multiplier is the rate plus 1.35, because one stat term drives both. It lives in the payload for the whole game session, so an app restart does not reset it.
 - **Guaranteed Hits Turn Rates Into Damage**: A hit in `GUARANTEED_HIT_ACTIONS`, a GCD under a `GUARANTEED_HIT_STATUSES` status, or a form-bonus action under its form treats each rate buff as a damage multiplier of `1 + rate x bonus`. Both tables are generated from the sentence the game adds to such hits; do not hand-edit them.
 - **Raid Buff Values Are Hand-Maintained**: `include/hub/game/raid_buffs.hpp` holds the status ids and strengths. The Status sheet names the statuses but carries no percentages; each value comes from its action's ActionTransient text. `MeterGameData.RaidBuffTableMatchesTheStatusSheet` pins every id to its sheet name. Strengths the applying action decides, Technical and Standard Finish by the finish used and Radiant Finale by the songs sung since the last one, are tracked by `BuffStrengths` from every action a player uses.
@@ -181,14 +183,24 @@ Read from `ffxiv_dx11.exe` on 2026-09-22 with `tools/inspect_exe.py` (see the
 
 ## How the client reads an effect entry
 
-Read from `ffxiv_dx11.exe` on 2026-09-24 with `tools/inspect_exe.py`, and the LogMessage
-sheet with `tools/xivdata`. Addresses are for that build only; re-check after a patch.
+Read from `ffxiv_dx11.exe` on 2026-09-24, and the dealer, receiver and value rules on
+2026-10-10, with `tools/inspect_exe.py`, and the LogMessage sheet with `tools/xivdata`.
+Addresses are for that build only; re-check after a patch.
 
 - **Effects are queued, then run.** `ReceiveActionEffect` (`0x140902eb0`) passes the
   header, effect blocks and target list through `0x140902d80` to `0x1409011b0`, which
   copies each target's eight entries unchanged into a 32-slot queue of `0x78`-byte
   records (`0x140901b60`). Running a record (`0x140901f40`) calls the per-effect handler
   `0x1408ffbf0` once per entry, which switches on the entry's first byte.
+- **Each entry runs between a dealer and a receiver its flags pick.** The queue filler
+  (`0x1409011b0`) stores the caster's id (ReceiveActionEffect's first argument, through
+  `0x140902d80`) at record `+0x18` and the block's target at `+0x28`, and skips a block
+  whose target is `0xE0000000`. The runner (`0x140901f40`) passes the handler a dealer,
+  the target when `byte[5] & 0x20` and the caster otherwise, and a receiver, the caster
+  when `byte[5] & 0x80` and the target otherwise, for every kind. The damage case prints
+  its log line (`0x140c545b0`, LogMessage 504/510) with the dealer first.
+- **The value is 24 bits.** The damage case (`0x1408ffd52`) reads the `u16` at +6 and,
+  when `byte[5] & 0x40`, adds `byte[4] << 16`.
 - **Byte 1 is the damage severity.** The damage case (`0x1408ffd52`) picks LogMessage
   505/511 ("Critical!") on `0x20`, 447/448 ("Direct hit!") on `0x40`, and 450/451
   ("Critical direct hit!") on both. The hit-effect function `0x1408fec50`, run for each
@@ -209,8 +221,8 @@ sheet with `tools/xivdata`. Addresses are for that build only; re-check after a 
 
 ## How the client reports DoT and HoT ticks
 
-Read from `ffxiv_dx11.exe` on 2026-09-24 with `tools/inspect_exe.py`. Addresses are for
-that build only; re-check after a patch.
+Read from `ffxiv_dx11.exe` on 2026-09-24, and the status argument on 2026-10-10, with
+`tools/inspect_exe.py`. Addresses are for that build only; re-check after a patch.
 
 - **One function, three packets.** `ProcessHotDot` (`0x1408a81d0`, the
   `PROCESS_HOT_DOT_PRIMARY` signature) is a StatusManager method. The ActorControl
@@ -226,6 +238,8 @@ that build only; re-check after a patch.
   it is an attack type: `0x1408e0160` maps 1-4 to one damage kind, 5 to another, and 0
   or anything else to a third, and a negative value skips it. On `0x604` a few HoT
   statuses use it to pick their flytext.
+- **The status is always the third argument, param1.** All three call sites
+  (`0x140b3c7f8`, `0x140b3c83e`, `0x140b3c884`) pass the same ActorControl parameter.
 - **Amount and source are always the fifth and sixth arguments,** whichever packet
   called, and the second is the target Character. The detour forwards exactly those.
 - **A tick moves no HP itself.** `ProcessHotDot` only prints the log line and flytext and
@@ -233,12 +247,26 @@ that build only; re-check after a patch.
   in the HP/MP update packet (handler `0x140b38040`: `u32` HP, `u16` MP, `u16` GP, also
   copied into the party list), a status list or an effect result. Whether the server
   sends it before or after the tick is not in the client.
-- **The tick split holds up under either order.** `on_status_tick` reads the target's HP
+- **The overheal split holds up under either order.** `on_status_tick` reads the target's HP
   at the hook, like an action. A tick on a target already at full reads full HP either
   way and is all overheal, which is right. If the HP update comes after the tick, the
   split is exact. If it comes first, a tick landing while the target is missing less than
   two ticks' worth of HP books up to one tick of extra overheal. Counting every tick as
   fully effective was off by all of its overheal.
+
+What the server sends is not in the client. Other parsers document it, and the meter is
+built on their account:
+
+- **Most ticks are combined.** Every 3 s the server sums every DoT (or HoT) on a target,
+  from all sources, into one `0x17` tick with status 0 that names one source. ACT and
+  FFLogs split it with estimates for the same reason. Sources: cactbot's
+  `docs/LogGuide.md` (line 24, NetworkDoT), and the Sapphire emulator's `Chara::onTick`,
+  which sums every status and sends one `HPFloatingText` with param1 0.
+- **Ground effects tick on their own.** Their packets carry the status and an attack
+  type, which matches `0x604`/`0x605`.
+- **Which source a combined tick names is the server's choice.** The split ignores it.
+  Live, a party of two DoT users should each show their own DoT rows, adding up to the
+  tick damage the boss took.
 
 ## How the client applies statuses
 

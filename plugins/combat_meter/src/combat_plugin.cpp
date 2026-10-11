@@ -309,7 +309,9 @@ void CombatPlugin::on_receive_action_effect(
         }
         decoder::decode_status_applications(source_entity_id, *header, effect_data, targets,
             [&](const decoder::StatusApplication& applied) {
-                if (!hub::game::is_real_entity_id(applied.receiver_id) || registry.is_friendly(applied.receiver_id)) {
+                // Only the caster's statuses were read; one its target applied is not its DoT.
+                if (applied.dealer_id != source_entity_id || !hub::game::is_real_entity_id(applied.receiver_id)
+                    || registry.is_friendly(applied.receiver_id)) {
                     return;
                 }
                 const StatusSnapshot& snapshot = source_snapshot(owner);
@@ -332,6 +334,11 @@ void CombatPlugin::on_receive_action_effect(
             if (m_actor_resolver && packet.target_id != 0) {
                 m_actor_resolver(static_cast<uint32_t>(packet.target_id));
             }
+            // A reflect's dealer is the block's target, which nothing else reads.
+            const bool by_target = (packet.hit_flags & HitFlags::ByTarget) != 0;
+            if (m_actor_resolver && by_target) {
+                m_actor_resolver(static_cast<uint32_t>(packet.source_id));
+            }
             // The heal has not reached the target's HP yet (a later effect-result
             // packet applies it), so the object table still holds the pre-heal value.
             // Split here, before both the local engine and the wire see the packet.
@@ -343,8 +350,10 @@ void CombatPlugin::on_receive_action_effect(
             }
             // Buff credits are worked out here for the same reason: the statuses read
             // now are the ones the hit was dealt under, and the app has no way to see them.
-            // Only damage that landed earns any, the same test that opens a pull.
-            if (EncounterEngine::starts_encounter(packet)) {
+            // Only damage that landed earns any, the same test that opens a pull, and only
+            // the caster's own: the statuses read are the caster's, and a reflect is not
+            // a swing its crit or direct hit rate says anything about.
+            if (!by_target && EncounterEngine::starts_encounter(packet)) {
                 m_engine.with_registry([&](CombatantRegistry& registry) {
                     const EntityId owner = registry.resolve_owner(source_entity_id);
                     const EntityId target = static_cast<EntityId>(packet.target_id);
@@ -465,32 +474,71 @@ void CombatPlugin::on_status_tick(
         decoder::apply_overheal(tick, current_hp, max_hp);
     }
 
-    // A DoT tick is credited from the buffs its status was applied under. Debuffs on
-    // the enemy count as they stand now.
-    if (!is_heal && damage_or_heal > 0) {
-        m_engine.with_registry([&](CombatantRegistry& registry) {
-            const EntityId owner = registry.resolve_owner(source_entity_id);
-            if (!registry.is_friendly(owner) || registry.is_friendly(target_entity_id)) {
-                return;
-            }
-            const auto it = m_dot_snapshots.find(DotKey{target_entity_id, source_entity_id, status_id});
-            if (it == m_dot_snapshots.end()
-                || (tick.timestamp_us > it->second.applied_us
-                    && tick.timestamp_us - it->second.applied_us > kDotSnapshotTtlUs)) {
-                return;
-            }
-            const StatusSnapshot target_statuses = read_statuses(target_entity_id, nullptr);
-            tick.credits = attribute(registry, owner, 0, damage_or_heal, 0, it->second.source, target_statuses, true);
-        });
+    // The server folds every DoT (or HoT) on a target into one tick that names no
+    // status and one source. It is split across the statuses the target holds now,
+    // read on this thread like a hit's, so each player books their own. A tick that
+    // names its status, a ground effect's, is whole.
+    StatusSnapshot target_statuses;
+    bool target_statuses_tried = false;
+    if (status_id == 0 && damage_or_heal > 0) {
+        target_statuses = read_statuses(target_entity_id, nullptr);
+        target_statuses_tried = true;
     }
 
-    m_engine.process_status_tick(tick);
+    std::vector<ipc::StatusTickPacket> parts;
+    m_engine.with_registry([&](CombatantRegistry& registry) {
+        std::vector<TickShare> shares;
+        if (status_id != 0) {
+            m_ticks.note_own_tick(status_id);
+        } else if (target_statuses.read) {
+            shares = m_ticks.split(is_heal ? game::TickKind::Heal : game::TickKind::Damage, damage_or_heal,
+                                   tick.overheal, target_statuses.view());
+        }
+        if (shares.empty()) {
+            parts.push_back(tick);
+        } else {
+            for (const TickShare& share : shares) {
+                ipc::StatusTickPacket part = tick;
+                part.source_id = share.source;
+                part.status_id = share.status_id;
+                part.damage_or_heal = share.amount;
+                part.overheal = share.overheal;
+                parts.push_back(part);
+            }
+        }
+        if (is_heal) {
+            return;
+        }
+        // A DoT tick is credited from the buffs its status was applied under. Debuffs on
+        // the enemy count as they stand now.
+        for (ipc::StatusTickPacket& part : parts) {
+            const EntityId owner = registry.resolve_owner(part.source_id);
+            if (part.damage_or_heal == 0 || !registry.is_friendly(owner) || registry.is_friendly(part.target_id)) {
+                continue;
+            }
+            const auto it = m_dot_snapshots.find(DotKey{part.target_id, part.source_id, part.status_id});
+            if (it == m_dot_snapshots.end()
+                || (part.timestamp_us > it->second.applied_us
+                    && part.timestamp_us - it->second.applied_us > kDotSnapshotTtlUs)) {
+                continue;
+            }
+            if (!target_statuses_tried) {
+                target_statuses = read_statuses(target_entity_id, nullptr);
+                target_statuses_tried = true;
+            }
+            part.credits = attribute(registry, owner, 0, part.damage_or_heal, 0, it->second.source,
+                                     target_statuses, true);
+        }
+    });
 
-    if (streaming()) {
-        auto bytes = ipc::serialize_typed_packet(
-            PluginId::CombatMeter, MessageType::CombatStatusTick, ++m_sequence, tick
-        );
-        m_ring_buffer->push(std::move(bytes));
+    for (const ipc::StatusTickPacket& part : parts) {
+        m_engine.process_status_tick(part);
+        if (streaming()) {
+            auto bytes = ipc::serialize_typed_packet(
+                PluginId::CombatMeter, MessageType::CombatStatusTick, ++m_sequence, part
+            );
+            m_ring_buffer->push(std::move(bytes));
+        }
     }
 }
 

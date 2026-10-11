@@ -220,6 +220,9 @@ private:
     std::unordered_map<EntityId, CombatantStats> m_combatants;
     std::unordered_map<DamageTakenKey, DamageTakenRow, DamageTakenKeyHash> m_damage_taken;
     std::unordered_map<BuffCreditKey, uint64_t, BuffCreditKeyHash> m_buff_credits;
+    /// Damage each row dealt while its source was not friendly, which m_total_damage
+    /// left out: a pet's hits before the registry knew it, or an enemy's.
+    std::unordered_map<EntityId, uint64_t> m_uncounted_damage;
     std::unordered_map<EntityId, RecapRing> m_recaps;
     /// Each player's GCD casts, oldest first.
     std::unordered_map<EntityId, std::vector<GcdCast>> m_gcds;

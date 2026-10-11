@@ -90,8 +90,9 @@ struct Attribution {
 /// Total a hit's credits hand to other players.
 [[nodiscard]] uint64_t credited_total(const ipc::CombatBuffCredits& credits) noexcept;
 
-/// True for a status attribute_hit reads: a raid buff, or one that guarantees a hit.
-/// The payload keeps only these when it snapshots a status list for a hit.
+/// True for a status attribute_hit reads, a raid buff or one that guarantees a hit, or
+/// one a combined tick is split across (hub::game::TICK_STATUSES). The payload keeps
+/// only these when it snapshots a status list for a hit or a tick.
 [[nodiscard]] bool is_attribution_status(uint32_t status_id) noexcept;
 
 } // namespace hub::meter

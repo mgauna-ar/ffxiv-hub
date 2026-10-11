@@ -120,6 +120,8 @@ to the player and merges the stats there:
   A pet attributed late counts once toward that figure, and if the owner had no row yet,
   the merged row takes the owner's name and job rather than the pet's.
 - Pet skills appear in the player's own per-action breakdown.
+- Hits a pet landed before the meter knew whose it was join the raid total when it is
+  merged, so the party's shares still add up to 100%.
 
 The result is no orphan rows: a raid table shows eight players, not eight players and
 six pets.
@@ -144,6 +146,24 @@ game may update the target's HP just before or just after it. A tick on a target
 at full counts as overheal either way. When the update comes first, a tick landing while
 the target is missing less than two ticks' worth of HP can count up to one tick more
 overheal than it should.
+
+### Damage and healing over time
+
+The game does not report each DoT on its own. Every three seconds the server adds up every
+DoT on a target, from every player, and sends one tick that names no status and only one
+of the players. Booked as sent, all of the party's DoT damage on a boss would go to that
+one player. HoTs on a party member arrive the same way.
+
+The meter splits each such tick in-game, before it reaches the desktop app, across the
+DoTs (or HoTs) the target carries at that moment. Each one's share follows its potency and
+how hard its player's ticks hit, which is learned from ticks where that player's statuses
+were the only ones on the target. A player with one DoT up alone, on a striking dummy or
+early in a pull, teaches the meter their strength. Each player then gets their own DoT
+rows, such as Dia or Higanbana, and DoT damage earns raid-buff credit like any other hit.
+
+The total is exact; each player's share is an estimate, since the game does not say which
+DoT crit. Ground effects such as Salted Earth or Asylum tick on their own and are booked as
+they come.
 
 ### Limit Break
 
@@ -208,6 +228,13 @@ Balance, the Spear and the Wanderer's Minuet.
 - **Only damage and heal ticks count.** The game's tick handler also delivers MP and
   job-gauge gains, such as Dancer's Esprit. They are neither damage nor healing and are
   ignored.
+- **Reflected damage belongs to whoever reflected it.** A Vengeance reflect rides in the
+  enemy's own attack, and the game marks it as dealt by the warrior. It counts toward the
+  warrior's damage, not their damage taken, and an attack that bounces off an enemy's
+  reflect counts as damage taken, not damage dealt. A reflect earns no raid-buff credit and
+  stays out of crit and direct hit rates.
+- **An effect that hit nobody** carries no target, and the game ignores it, so the meter
+  does too.
 - **Enemy damage to players** is tracked as damage taken on the target, and never added to
   raid DPS. Each hit of an AoE is booked on the target it actually hit, so a self-centred
   AoE never lands on its caster and a raidwide never lands on the boss.

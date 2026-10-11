@@ -1,4 +1,5 @@
 #include "meter/action_decoder.hpp"
+#include "hub/game/entity.hpp"
 #include <chrono>
 #include <algorithm>
 #include <optional>
@@ -7,8 +8,9 @@ namespace hub::meter::decoder {
 
 namespace {
     /// ActionEffectEntry::flags bits.
+    constexpr uint8_t EFFECT_FLAG_FROM_TARGET = 0x20;    // dealt by the block's target, e.g. a reflect
     constexpr uint8_t EFFECT_FLAG_EXTENDED_VALUE = 0x40; // high_byte holds bits 16-23 of the value
-    constexpr uint8_t EFFECT_FLAG_ON_SOURCE = 0x80;      // lands on the source, e.g. a drain's self-heal
+    constexpr uint8_t EFFECT_FLAG_ON_SOURCE = 0x80;      // lands on the caster, e.g. a drain's self-heal
 
     /// ActionEffectEntry::hit_severity bits for damage, blocked and parried hits.
     constexpr uint8_t SEVERITY_CRIT = 0x20;
@@ -28,6 +30,21 @@ namespace {
             return targets[block];
         }
         return header.animation_target_id;
+    }
+
+    /// Who dealt an entry and who it landed on. The client runs every entry, whatever its
+    /// kind, between these two (record runner 0x140901f40).
+    uint64_t dealer_of(const game::ActionEffectEntry& entry, uint64_t caster, uint64_t block_target) noexcept {
+        return (entry.flags & EFFECT_FLAG_FROM_TARGET) ? block_target : caster;
+    }
+
+    uint64_t receiver_of(const game::ActionEffectEntry& entry, uint64_t caster, uint64_t block_target) noexcept {
+        return (entry.flags & EFFECT_FLAG_ON_SOURCE) ? caster : block_target;
+    }
+
+    /// The client queues no effect for a block aimed at the placeholder id (0x1409011b0).
+    bool is_placeholder_target(uint64_t target_id) noexcept {
+        return target_id == hub::game::NO_ENTITY_ID;
     }
 
     const game::ActionEffectEntry* block_entries(const void* effect_data, uint8_t block) noexcept {
@@ -80,6 +97,9 @@ size_t decode_action_effects(
 
     for (uint8_t t = 0; t < num_targets; ++t) {
         const uint64_t target_id = target_of_block(header, target_ids_ptr, t);
+        if (is_placeholder_target(target_id)) {
+            continue;
+        }
         const auto* entries = block_entries(effect_data, t);
 
         for (size_t i = 0; i < game::definitions::MAX_EFFECT_ENTRIES_PER_TARGET; ++i) {
@@ -147,15 +167,17 @@ size_t decode_action_effects(
                 }
             }
 
+            // A reflect is the target's hit on the caster, not the caster's own swing.
+            const uint64_t dealer = dealer_of(entry, source_id, target_id);
+            if (dealer != source_id) {
+                flags |= HitFlags::ByTarget;
+            }
             const HitSeverity severity = hit_flags_to_severity(flags);
 
             ipc::CombatActionPacket pkt{};
-            pkt.source_id = source_id;
-            // A heal carried in the target's block but landing on the caster (drains,
-            // Bloodwhetting-style self-heals) must be measured against the caster's HP.
-            pkt.target_id = (effect_type == EffectType::Heal && (entry.flags & EFFECT_FLAG_ON_SOURCE))
-                ? source_id
-                : target_id;
+            pkt.source_id = dealer;
+            // A heal landing on the caster (a drain) is measured against the caster's HP.
+            pkt.target_id = receiver_of(entry, source_id, target_id);
             pkt.action_id = action_id;
             pkt.damage = damage;
             pkt.effective_heal = effective_heal;
@@ -186,6 +208,10 @@ size_t decode_status_applications(
     const auto* target_ids = static_cast<const uint64_t*>(targets);
     size_t count = 0;
     for (uint8_t t = 0; t < block_count(header); ++t) {
+        const uint64_t target_id = target_of_block(header, target_ids, t);
+        if (is_placeholder_target(target_id)) {
+            continue;
+        }
         const auto* entries = block_entries(effect_data, t);
         for (size_t i = 0; i < game::definitions::MAX_EFFECT_ENTRIES_PER_TARGET; ++i) {
             const auto& entry = entries[i];
@@ -193,9 +219,10 @@ size_t decode_status_applications(
                 continue;
             }
             StatusApplication applied{};
+            applied.dealer_id = static_cast<uint32_t>(dealer_of(entry, source_id, target_id));
             applied.receiver_id = entry.effect_type == EFFECT_APPLY_STATUS_TO_SOURCE
-                ? source_id
-                : static_cast<uint32_t>(target_of_block(header, target_ids, t));
+                ? applied.dealer_id
+                : static_cast<uint32_t>(receiver_of(entry, source_id, target_id));
             applied.status_id = entry.value;
             if (applied.status_id == 0) continue;
             callback(applied);

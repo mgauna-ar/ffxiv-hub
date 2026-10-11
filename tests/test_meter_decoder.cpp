@@ -1,7 +1,9 @@
 #include "test_framework.hpp"
 #include "meter/types.hpp"
 #include "meter/action_decoder.hpp"
+#include "hub/game/entity.hpp"
 #include <array>
+#include <vector>
 
 using namespace hub::meter;
 
@@ -231,6 +233,106 @@ TEST_CASE(MeterDecoder, HealOnSourceTargetsTheCaster) {
     TEST_ASSERT_EQ(packets.size(), 2u);
     TEST_ASSERT_EQ(packets[0].target_id, 0x40000001u);
     TEST_ASSERT_EQ(packets[1].target_id, 1001u);
+}
+
+TEST_CASE(MeterDecoder, ReflectedDamageIsTheTargetsHit) {
+    // An enemy's swing at a tank under Vengeance: the tank takes the hit, and the
+    // reflect rides in the same block flagged as dealt by the target, landing on the
+    // caster. The client runs it that way round (record runner 0x140901f40).
+    hub::game::ActionEffectHeader header{};
+    header.animation_target_id = 1001;
+    header.action_id = 7;
+    header.num_targets = 1;
+
+    std::array<hub::game::ActionEffectEntry, 8> entries{};
+    entries[0].effect_type = 0x03;
+    entries[0].value = 3000;
+    entries[1].effect_type = 0x03;
+    entries[1].value = 800;
+    entries[1].flags = 0xA0;
+
+    const auto packets = decoder::decode_action_effects(0x40000001, header, entries.data(), nullptr);
+    TEST_ASSERT_EQ(packets.size(), 2u);
+    TEST_ASSERT_EQ(packets[0].source_id, 0x40000001u);
+    TEST_ASSERT_EQ(packets[0].target_id, 1001u);
+    TEST_ASSERT((packets[0].hit_flags & HitFlags::ByTarget) == 0);
+    TEST_ASSERT_EQ(packets[1].source_id, 1001u);
+    TEST_ASSERT_EQ(packets[1].target_id, 0x40000001u);
+    TEST_ASSERT_EQ(packets[1].damage, 800u);
+    TEST_ASSERT((packets[1].hit_flags & HitFlags::ByTarget) != 0);
+}
+
+TEST_CASE(MeterDecoder, FlagsPickDealerAndReceiverForEveryKind) {
+    hub::game::ActionEffectHeader header{};
+    header.animation_target_id = 0x40000001;
+    header.action_id = 7;
+    header.num_targets = 1;
+
+    std::array<hub::game::ActionEffectEntry, 8> entries{};
+    // Damage landing on the caster, dealt by the caster.
+    entries[0].effect_type = 0x03;
+    entries[0].value = 500;
+    entries[0].flags = 0x80;
+    // A heal the target dealt itself, triggered by the hit.
+    entries[1].effect_type = 0x04;
+    entries[1].value = 2000;
+    entries[1].flags = 0x20;
+
+    const auto packets = decoder::decode_action_effects(1001, header, entries.data(), nullptr);
+    TEST_ASSERT_EQ(packets.size(), 2u);
+    TEST_ASSERT_EQ(packets[0].source_id, 1001u);
+    TEST_ASSERT_EQ(packets[0].target_id, 1001u);
+    TEST_ASSERT((packets[0].hit_flags & HitFlags::ByTarget) == 0);
+    TEST_ASSERT_EQ(packets[1].source_id, 0x40000001u);
+    TEST_ASSERT_EQ(packets[1].target_id, 0x40000001u);
+    TEST_ASSERT((packets[1].hit_flags & HitFlags::ByTarget) != 0);
+
+    // Status applications follow the same flags: kind 14 lands on the receiver.
+    std::array<hub::game::ActionEffectEntry, 8> applied{};
+    applied[0].effect_type = 0x0E;
+    applied[0].value = 1228;
+    applied[1].effect_type = 0x0E;
+    applied[1].value = 1229;
+    applied[1].flags = 0x80;
+    applied[2].effect_type = 0x0E;
+    applied[2].value = 1230;
+    applied[2].flags = 0x20;
+    std::vector<decoder::StatusApplication> seen;
+    decoder::decode_status_applications(1001, header, applied.data(), nullptr,
+        [&](const decoder::StatusApplication& a) { seen.push_back(a); });
+    TEST_ASSERT_EQ(seen.size(), 3u);
+    TEST_ASSERT_EQ(seen[0].dealer_id, 1001u);
+    TEST_ASSERT_EQ(seen[0].receiver_id, 0x40000001u);
+    TEST_ASSERT_EQ(seen[1].receiver_id, 1001u);
+    TEST_ASSERT_EQ(seen[2].dealer_id, 0x40000001u);
+    TEST_ASSERT_EQ(seen[2].receiver_id, 0x40000001u);
+}
+
+TEST_CASE(MeterDecoder, PlaceholderTargetBlockIsSkipped) {
+    // The client queues no effect for a block aimed at 0xE0000000 (0x1409011b0), so
+    // whatever it carries never happened.
+    hub::game::ActionEffectHeader header{};
+    header.animation_target_id = 0x40000002;
+    header.action_id = 139;
+    header.num_targets = 2;
+
+    uint64_t targets[2] = { hub::game::NO_ENTITY_ID, 0x40000002 };
+    std::array<hub::game::ActionEffectEntry, 16> entries{};
+    entries[0].effect_type = 0x03;
+    entries[0].value = 5000;
+    entries[1].effect_type = 0x0E;
+    entries[1].value = 1228;
+    entries[8].effect_type = 0x03;
+    entries[8].value = 1000;
+
+    const auto packets = decoder::decode_action_effects(1001, header, entries.data(), targets);
+    TEST_ASSERT_EQ(packets.size(), 1u);
+    TEST_ASSERT_EQ(packets[0].target_id, 0x40000002u);
+    TEST_ASSERT_EQ(packets[0].damage, 1000u);
+
+    size_t applications = decoder::decode_status_applications(1001, header, entries.data(), targets,
+        [](const decoder::StatusApplication&) {});
+    TEST_ASSERT_EQ(applications, 0u);
 }
 
 TEST_CASE(MeterDecoder, MpEffectsAreNotDecoded) {

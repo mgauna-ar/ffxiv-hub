@@ -19,6 +19,11 @@ using ActionPacketCallback = std::function<void(const ipc::CombatActionPacket&)>
 /**
  * @brief Decodes raw FFXIV ActionEffectHeader and ActionEffectEntry buffer into CombatActionPackets.
  *
+ * Each entry is dealt and received as the client runs it: by the caster unless its flags
+ * say the target dealt it (a reflect), and on the block's target unless they say it
+ * landed on the caster (a drain). One the target dealt carries HitFlags::ByTarget. A
+ * block whose target is the placeholder id is skipped, as the client skips it.
+ *
  * @param source_id Entity ID of the action instigator.
  * @param header ActionEffectHeader containing action ID, target count, and primary target.
  * @param effect_data Pointer to contiguous array of ActionEffectEntry[8] records per target.
@@ -48,8 +53,10 @@ size_t decode_action_effects(
     uint64_t timestamp_us = 0
 );
 
-/// A status an action applied: effect kind 14 lands on the target, 15 on the caster.
+/// A status an action applied: effect kind 14 lands on the entry's receiver, 15 on its
+/// dealer. Both follow the entry's flags, as for damage and heals.
 struct StatusApplication {
+    uint32_t dealer_id{0};
     uint32_t receiver_id{0};
     uint16_t status_id{0};
 };
