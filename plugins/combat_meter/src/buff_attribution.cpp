@@ -4,6 +4,7 @@
 #include "hub/game/entity.hpp"
 #include "hub/game/guaranteed_hits.hpp"
 #include "hub/game/raid_buffs.hpp"
+#include "hub/game/tick_statuses.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -268,7 +269,8 @@ uint64_t credited_total(const ipc::CombatBuffCredits& credits) noexcept {
 bool is_attribution_status(uint32_t status_id) noexcept {
     return game::find_raid_buff(status_id) != nullptr
         || game::guaranteed_hit_of_status(status_id) != game::GuaranteedHit::None
-        || game::is_form_bonus_status(status_id);
+        || game::is_form_bonus_status(status_id)
+        || game::find_tick_status(status_id) != nullptr;
 }
 
 } // namespace hub::meter

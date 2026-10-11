@@ -3,6 +3,8 @@
 #include "hub/game/entity.hpp"
 #include "meter/combatant_registry.hpp"
 #include "meter/metrics_accumulator.hpp"
+#include "meter/action_decoder.hpp"
+#include <array>
 #include <cstring>
 #include <string>
 
@@ -596,4 +598,86 @@ TEST_CASE(MeterAccumulator, PetMergedIntoOwnerWithoutRowTakesOwnersIdentity) {
     TEST_ASSERT_EQ(sch->total_damage, 4000u);
     TEST_ASSERT_EQ(sch->pet_damage, 4000u);
     TEST_ASSERT(acc.find_stats(30) == nullptr);
+}
+
+TEST_CASE(MeterAccumulator, ReflectsBelongToWhoeverReflected) {
+    MetricsAccumulator acc;
+    CombatantRegistry reg;
+    reg.register_actor(10, "Warrior", Job::WAR);
+    reg.register_actor(20, "Dragoon", Job::DRG);
+    reg.register_actor(0x40000001, "Boss", Job::None, 0, ActorType::Monster);
+
+    // The boss swings at the warrior under Vengeance; the reflect rides in its packet.
+    hub::game::ActionEffectHeader header{};
+    header.animation_target_id = 10;
+    header.action_id = 7;
+    header.num_targets = 1;
+    std::array<hub::game::ActionEffectEntry, 8> entries{};
+    entries[0].effect_type = 0x03;
+    entries[0].value = 3000;
+    entries[1].effect_type = 0x03;
+    entries[1].value = 800;
+    entries[1].flags = 0xA0;
+    for (const auto& packet : decoder::decode_action_effects(0x40000001, header, entries.data(), nullptr)) {
+        acc.record_action(packet, reg);
+    }
+
+    // The dragoon hits a boss that reflects: what bounces back is the boss's damage.
+    header.animation_target_id = 0x40000001;
+    header.action_id = 36952;
+    entries[0].value = 5000;
+    entries[0].hit_severity = 0x20;
+    entries[1].value = 600;
+    for (const auto& packet : decoder::decode_action_effects(20, header, entries.data(), nullptr)) {
+        acc.record_action(packet, reg);
+    }
+
+    const auto* war = acc.find_stats(10);
+    TEST_ASSERT_EQ(war->total_damage, 800u);
+    TEST_ASSERT_EQ(war->damage_taken, 3000u);
+    // A reflect is not the warrior's swing, so it says nothing about their crit rate.
+    TEST_ASSERT_EQ(war->hits.total_hits, 1u);
+    TEST_ASSERT_EQ(war->hits.rated_hits(), 0u);
+
+    const auto* drg = acc.find_stats(20);
+    TEST_ASSERT_EQ(drg->total_damage, 5000u);
+    TEST_ASSERT_EQ(drg->damage_taken, 600u);
+    TEST_ASSERT_NEAR(drg->hits.crit_rate(), 100.0, 1e-9);
+
+    const auto* boss = acc.find_stats(0x40000001);
+    TEST_ASSERT_EQ(boss->damage_taken, 5800u);
+    TEST_ASSERT_EQ(acc.total_damage(), 5800u);
+}
+
+TEST_CASE(MeterAccumulator, LateMergedPetJoinsTheRaidTotal) {
+    // A pet's hits before the registry knows it come from an id with the monster bit,
+    // not friendly then, so the raid total left them out. The merge must count them.
+    MetricsAccumulator acc;
+    CombatantRegistry reg;
+    reg.register_actor(10, "Summoner", Job::SMN);
+    constexpr EntityId kBahamut = 0x40001234;
+
+    hub::ipc::CombatActionPacket own{};
+    own.source_id = 10;
+    own.target_id = 0x40000001;
+    own.damage = 15000;
+    own.effect_type = static_cast<uint16_t>(EffectType::Damage);
+    acc.record_action(own, reg);
+
+    hub::ipc::CombatActionPacket pet = own;
+    pet.source_id = kBahamut;
+    pet.damage = 5000;
+    acc.record_action(pet, reg);
+    TEST_ASSERT_EQ(acc.total_damage(), 15000u);
+
+    reg.register_actor(kBahamut, "Demi-Bahamut", Job::SMN, 10);
+    acc.recalculate(5.0, &reg);
+
+    TEST_ASSERT(acc.find_stats(kBahamut) == nullptr);
+    const auto* smn = acc.find_stats(10);
+    TEST_ASSERT_EQ(smn->total_damage, 20000u);
+    TEST_ASSERT_EQ(smn->pet_damage, 5000u);
+    TEST_ASSERT_EQ(acc.total_damage(), 20000u);
+    TEST_ASSERT_NEAR(smn->damage_share_pct, 100.0, 1e-9);
+    TEST_ASSERT_NEAR(acc.total_dps(), 4000.0, 1e-9);
 }

@@ -85,6 +85,9 @@ namespace HitFlags {
     constexpr uint16_t Miss = 1 << 4;
     constexpr uint16_t Blocked = 1 << 5;
     constexpr uint16_t Parried = 1 << 6;
+    /// Dealt by the action's target rather than its caster, such as a reflect. Not
+    /// the dealer's own swing, so it carries no severity the rates can use.
+    constexpr uint16_t ByTarget = 1 << 7;
 }
 
 enum class EncounterState : uint8_t {

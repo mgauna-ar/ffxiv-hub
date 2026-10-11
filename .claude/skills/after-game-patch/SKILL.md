@@ -224,8 +224,9 @@ A patch can renumber it without breaking the signature. Disassemble the function
 
 - It still branches on the fourth argument, with 3 taking the damage path and 4 the
   healing one (`HOT_DOT_KIND_DAMAGE`, `HOT_DOT_KIND_HEAL`).
-- Its callers in the ActorControl handler (`xrefs <function>`) still pass the amount
-  fifth and the source sixth.
+- Its callers in the ActorControl handler (`xrefs <function>`) still pass the status
+  third (param1 on all three), the amount fifth and the source sixth. The combined-tick
+  split keys on a status of 0.
 
 If either moved, update the constants and that section together.
 
@@ -259,7 +260,11 @@ first byte, and confirm:
 
 - The heal case (type 4) picks LogMessage 520 ("Critical!") over 519 on `byte[2] & 0x20`.
 - The damage case (type 3) picks its "Critical!" and "Direct hit!" rows on `byte[1]`'s
-  `0x20` and `0x40`.
+  `0x20` and `0x40`, and builds its value from the `u16` at +6 plus `byte[4] << 16` when
+  `byte[5] & 0x40`.
+- The record runner that calls the per-effect handler for each queued entry still passes
+  the block's target as the dealer on `byte[5] & 0x20` and the caster as the receiver on
+  `byte[5] & 0x80`, and the queue filler still skips a block aimed at `0xE0000000`.
 
 Read the row texts from the LogMessage sheet with `tools/xivdata`, since the same patch
 can renumber them. If a bit moved, update the decoder's constants, the `ActionEffectEntry`
@@ -283,6 +288,14 @@ The meter also depends on effect kinds 14 and 15 being status applications, as r
 in [How the client applies statuses](../../../plugins/combat_meter/AGENTS.md#how-the-client-applies-statuses).
 Re-run `tools/inspect_exe.py jumptable` on the per-effect handler's switch (see 4e for how
 to find it) and confirm both still reach the handler that prints "gains the effect of".
+
+`include/hub/game/tick_statuses.hpp` is hand-maintained the same way: the Status sheet
+names each DoT and HoT but carries no potency. `make` runs
+`MeterGameData.TickStatusTableMatchesTheStatusSheet`. Render each DoT and HoT action's
+ActionTransient text at level 100 and compare its per-tick potency with the table; the
+text keeps level-dependent values inside `If` macros, which `tools/xivdata` strips, so
+read the raw string and take the branch for the job at level 100. A new DoT or HoT needs
+an entry, sorted by status id, and a line in that test. A ground effect stays out.
 
 ## 4g. Re-check the combat condition byte
 
