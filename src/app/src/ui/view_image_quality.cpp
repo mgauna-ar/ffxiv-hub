@@ -79,8 +79,8 @@ void send_resolution(AppState& app_state) {
 
 void send_jitter(AppState& app_state) {
     const bool override_game = cfg_get(IQ, "override_dlss_jitter", true);
-    const float amount = cfg_get(IQ, "dlss_jitter_amount", iq::constants::DEFAULT_JITTER_AMOUNT);
-    app_state.send_command(PluginId::ImageQuality, CommandId::SetDlssJitter, override_game ? 1u : 0u, amount);
+    app_state.send_command(PluginId::ImageQuality, CommandId::SetDlssJitter, override_game ? 1u : 0u,
+                           iq::constants::DLSS_JITTER_AMOUNT);
 }
 
 // ---------------------------------------------------------------------------
@@ -127,10 +127,10 @@ void render_tiles(const State& state) {
         std::snprintf(jitter_sub, sizeof(jitter_sub), "render heights unknown");
     }
 
-    char frame[32];
-    std::snprintf(frame, sizeof(frame), "%.1f ms", static_cast<double>(state.frame_time_ms));
-    char frame_sub[48];
-    std::snprintf(frame_sub, sizeof(frame_sub), "GPU %.1f ms", static_cast<double>(state.gpu_time_ms));
+    char gpu[32];
+    std::snprintf(gpu, sizeof(gpu), "%.1f ms", static_cast<double>(state.gpu_time_ms));
+    char gpu_sub[48];
+    std::snprintf(gpu_sub, sizeof(gpu_sub), "CPU %.1f ms", static_cast<double>(state.cpu_time_ms));
 
     const StatTileSpec tiles[] = {
         { "##IqUpscaler", ICON_MONITOR, "UPSCALER", upscaler_name(state),
@@ -138,7 +138,7 @@ void render_tiles(const State& state) {
         { "##IqHeight", ICON_LAYERS, "RENDER HEIGHT", height, colors::TextPrimary, height_sub, colors::Success },
         { "##IqScale", ICON_GAUGE, "RENDER SCALE", scale, colors::TextPrimary, scale_sub, colors::Violet },
         { "##IqJitter", ICON_CROSSHAIR, "CAMERA JITTER", jitter, colors::TextPrimary, jitter_sub, colors::Accent },
-        { "##IqFrame", ICON_TIMER, "FRAME TIME", frame, colors::TextPrimary, frame_sub, colors::Warning },
+        { "##IqTime", ICON_TIMER, "GPU TIME", gpu, colors::TextPrimary, gpu_sub, colors::Warning },
     };
     const char* const tooltips[] = {
         "The upscaler chosen in the game's graphics settings, and the edge smoothing beside it. "
@@ -146,9 +146,12 @@ void render_tiles(const State& state) {
         "The height the game renders each frame at, before the upscaler. Under DLSS the game moves "
         "it by GPU load anywhere in the range DLSS reports, 9 px every half second.",
         "The render height as a share of the screen's. DLSS's Quality mode is 67%.",
-        "How far the camera is nudged each frame. 1.0 covers the whole pixel. The game's amount "
-        "shrinks with the square of its 3D resolution slider, and again as the render height drops.",
-        "The game's own smoothed frame and GPU times, which its resolution controller acts on.",
+        "How far the camera is nudged each frame, as a share of the nudge the game tells DLSS about. "
+        "Only 1.0 agrees with it. The game's own amount shrinks with the square of its 3D resolution "
+        "slider and again as the render height drops.",
+        "The game's smoothed GPU time per frame, and its CPU time per frame without the wait to "
+        "present. Its dynamic resolution lowers the height when the GPU time passes 90% of the "
+        "longer of the CPU time and the frame time your refresh rate or frame cap allows.",
     };
     stat_tile_row(tiles, std::size(tiles), tooltips);
 }
@@ -204,7 +207,8 @@ void render_status_card(const State& state) {
     } else {
         std::snprintf(jitter, sizeof(jitter), "Unknown");
     }
-    status_row("Camera jitter", "Only DLSS and TSCMAA + camera jitter use it.", jitter, colors::TextBody);
+    status_row("Camera jitter", "1.00 moves the camera by as much as the game tells DLSS it moved.", jitter,
+               colors::TextBody);
 
     end_card();
 }
@@ -270,27 +274,12 @@ void render_plugin_section(AppState& app_state) {
 
     bool override_jitter = cfg_get(IQ, "override_dlss_jitter", true);
     if (setting_toggle("Full camera jitter",
-                       "Jitter by the amount below. The game's amount shrinks with its 3D resolution "
-                       "slider, which leaves still edges jagged under DLSS.", &override_jitter)) {
+                       "Move the camera by as much as the game tells DLSS it moved. The game moves it "
+                       "less, so DLSS places each frame's pixels slightly off and still edges stay "
+                       "jagged.", &override_jitter)) {
         cfg_store(IQ, "override_dlss_jitter", override_jitter);
         send_jitter(app_state);
     }
-
-    // Reaches the payload and the file on release: a drag would otherwise save
-    // on every frame.
-    float amount = cfg_get(IQ, "dlss_jitter_amount", iq::constants::DEFAULT_JITTER_AMOUNT);
-    begin_setting_row("Jitter amount", "1.0 covers the whole pixel.");
-    ImGui::BeginDisabled(!override_jitter);
-    if (ImGui::SliderFloat("##iq_jitter", &amount, iq::constants::MIN_JITTER_AMOUNT,
-                           iq::constants::MAX_JITTER_AMOUNT, "%.2f")) {
-        cfg_set(IQ, "dlss_jitter_amount", iq::clamp_jitter_amount(amount));
-    }
-    if (ImGui::IsItemDeactivatedAfterEdit()) {
-        cfg_save();
-        send_jitter(app_state);
-    }
-    ImGui::EndDisabled();
-    end_setting_row();
 
     end_settings_card();
 }
@@ -304,8 +293,7 @@ void render_maintenance_section(AppState& app_state) {
         const iq::ImageQualitySettings defaults{};
         cfg_set(IQ, "fixed_dlss_resolution", defaults.fixed_dlss_resolution);
         cfg_set(IQ, "dlss_render_scale", defaults.dlss_render_scale);
-        cfg_set(IQ, "override_dlss_jitter", defaults.override_dlss_jitter);
-        cfg_store(IQ, "dlss_jitter_amount", defaults.dlss_jitter_amount);
+        cfg_store(IQ, "override_dlss_jitter", defaults.override_dlss_jitter);
         send_resolution(app_state);
         send_jitter(app_state);
     }

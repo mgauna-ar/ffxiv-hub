@@ -218,17 +218,6 @@ TEST_CASE(ImageQuality, FullJitterOnlyUnderDlss) {
     TEST_ASSERT(writes.jitter_multiplier.has_value());
 }
 
-TEST_CASE(ImageQuality, JitterAmountIsClamped) {
-    Enforcer enforcer;
-    ImageQualitySettings settings{};
-    settings.dlss_jitter_amount = 9.0f;
-    const auto writes = enforcer.plan(dlss_at_floor(), settings, true);
-    TEST_ASSERT(writes.jitter_multiplier.has_value());
-    const auto scale_squared = jitter_scale_squared(1080, 2160, 0.77f);
-    TEST_ASSERT_NEAR(effective_jitter(*writes.jitter_multiplier, *scale_squared), constants::MAX_JITTER_AMOUNT,
-                     0.0001f);
-}
-
 TEST_CASE(ImageQuality, LettingGoRestoresTheGameValues) {
     Enforcer enforcer;
     const auto snap = dlss_at_floor();
@@ -310,7 +299,7 @@ TEST_CASE(ImageQuality, PluginHoldsDlssInGameMemoryAndReports) {
     plugin.update(0.05);
     TEST_ASSERT_EQ(game.stepping(), 0u);
     const auto scale_squared = jitter_scale_squared(1080, 2160, 0.77f);
-    TEST_ASSERT_NEAR(effective_jitter(game.jitter(), *scale_squared), constants::DEFAULT_JITTER_AMOUNT, 0.0001f);
+    TEST_ASSERT_NEAR(effective_jitter(game.jitter(), *scale_squared), constants::DLSS_JITTER_AMOUNT, 0.0001f);
     plugin.update(0.05);
     TEST_ASSERT_EQ(game.current_height(), 1440u);
 
@@ -419,16 +408,14 @@ TEST_CASE(ImageQuality, SettingsRoundTripAndClamp) {
     in["fixed_dlss_resolution"] = config::JsonValue(false);
     in["dlss_render_scale"] = config::JsonValue(0.2);
     in["override_dlss_jitter"] = config::JsonValue(false);
-    in["dlss_jitter_amount"] = config::JsonValue(0.1);
     plugin.deserialize_config(in);
     TEST_ASSERT_FALSE(plugin.is_plugin_enabled());
     TEST_ASSERT_FALSE(plugin.settings().fixed_dlss_resolution);
     TEST_ASSERT_NEAR(plugin.settings().dlss_render_scale, constants::MIN_DLSS_RENDER_SCALE, 0.0001f);
     TEST_ASSERT_FALSE(plugin.settings().override_dlss_jitter);
-    TEST_ASSERT_NEAR(plugin.settings().dlss_jitter_amount, constants::MIN_JITTER_AMOUNT, 0.0001f);
 
     // A command lands where the autosave reads it from.
-    plugin.set_dlss_jitter(true, 1.25f);
+    plugin.set_dlss_jitter(true);
     plugin.set_fixed_dlss_resolution(true, 0.58f);
     config::JsonValue out;
     plugin.serialize_config(out);
@@ -436,12 +423,11 @@ TEST_CASE(ImageQuality, SettingsRoundTripAndClamp) {
     TEST_ASSERT(out["fixed_dlss_resolution"].as_bool(false));
     TEST_ASSERT_NEAR(out["dlss_render_scale"].as_float(), 0.58f, 0.0001f);
     TEST_ASSERT(out["override_dlss_jitter"].as_bool(false));
-    TEST_ASSERT_NEAR(out["dlss_jitter_amount"].as_float(), 1.25f, 0.0001f);
 
     // A key absent from the section keeps its value.
     config::JsonValue partial{config::JsonValue::ObjectType{}};
     partial["fixed_dlss_resolution"] = config::JsonValue(false);
     plugin.deserialize_config(partial);
-    TEST_ASSERT_NEAR(plugin.settings().dlss_jitter_amount, 1.25f, 0.0001f);
+    TEST_ASSERT(plugin.settings().override_dlss_jitter);
     TEST_ASSERT_NEAR(plugin.settings().dlss_render_scale, 0.58f, 0.0001f);
 }

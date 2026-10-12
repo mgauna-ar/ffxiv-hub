@@ -16,10 +16,10 @@ a guess about the game.
 - **The Target Is Not The Mode**: Under DLSS, `RTM+0x704` is the top of DLSS's own range (the screen height at 4K), not a quality mode, so pinning to it is DLAA. The pinned height is `pinned_height()` in `iq/render_math.hpp`: the screen height times `dlss_render_scale`, clamped to `[floor, target]`, the range the controller itself moves in.
 - **The Screen Height Is Derived**: `RTM+0x700` is the height frames render at, not the screen's; taking it for the screen's pinned nothing once the controller had lowered the height. The screen height is `screen_height()`: the target over `RTM+0x71c`, the target's share of the screen. With that share unknown (0, or above 1) nothing is pinned.
 - **Pin Only A Settled Range**: The render thread rewrites the range and the current height together when DLSS's range changes (`0x1402db890`). The plugin pins only inside a range that read the same on the tick before, and only one whose target does not pass the screen height, so a race costs at most one tick at a height the controller could also have chosen.
-- **The Jitter Amount Is What The Client Applies**: The client scales the multiplier by `s^2` (see below), so the plugin writes `multiplier_for(amount, s^2)`, kept within `MIN_WRITTEN_MULTIPLIER`-`MAX_WRITTEN_MULTIPLIER`, and the view shows `effective_jitter()`. Both live in `iq/render_math.hpp`; never write `dlss_jitter_amount` as the multiplier. `s` follows the height frames render at, so the multiplier is rewritten on the tick after the height moves. With the heights unknown nothing is written.
+- **The Camera Moves By What DLSS Is Told**: DLSS is handed the raw sample, and the camera moves by the amplitude times it (see below), so only an amplitude of 1.0 (`DLSS_JITTER_AMOUNT`) agrees with DLSS. It is not a quality setting and has no slider: any other value tells DLSS the wrong offset every frame. The client scales the multiplier by `s^2`, so the plugin writes `multiplier_for(DLSS_JITTER_AMOUNT, s^2)`, kept within `MIN_WRITTEN_MULTIPLIER`-`MAX_WRITTEN_MULTIPLIER`, and the view shows `effective_jitter()`; both live in `iq/render_math.hpp`. `s` follows the height frames render at, so the multiplier is rewritten on the tick after the height moves. With the heights unknown nothing is written.
 - **Hand Back What Was Taken**: `Enforcer` records each field's game value before the plugin's first write to it and writes it back when the plugin lets go: master switch off, app disconnected, upscaler no longer DLSS, the field's own setting off, or `release()` on an unload. Teardown calls `release()` because no tick runs after it; the game's exit needs nothing. The current render height is never restored: the controller, once running again, moves it itself.
 - **The Orchestration Thread Owns It**: `update()`, the commands and the autosave all run on the payload's orchestration thread, and nothing else touches the plugin. It consumes no hook and pushes from no new thread. Each write is one aligned 1, 2 or 4 byte store, which the render thread reads whole.
-- **Its Keys Live In `iq_settings.cpp`**: the table there is the only list of the `image_quality` section's keys and their defaults (`ImageQualitySettings{}`). `dlss_render_scale` and `dlss_jitter_amount` are clamped on read and on every command. See the root AGENTS.md, *Every Plugin Key Has A Default On File*.
+- **Its Keys Live In `iq_settings.cpp`**: the table there is the only list of the `image_quality` section's keys and their defaults (`ImageQualitySettings{}`). `dlss_render_scale` is clamped on read and on every command. `SetDlssJitter`'s amount, which apps up to v1.3.2 send, is ignored, and their `dlss_jitter_amount` key is no longer read. See the root AGENTS.md, *Every Plugin Key Has A Default On File*.
 - **The App Hears The Game, Not The Settings**: `ImageQualityStatePayload` reports what the two singletons read after the tick's writes, sent on a change and every `STATE_KEEPALIVE_SECONDS`, nothing while switched off or disconnected. The view takes a report older than `AppState::kImageQualityStateTtl` as none. `found == 0` means a signature or a singleton is missing, and the plugin writes nothing then.
 
 ## How the client jitters and scales with DLSS
@@ -43,11 +43,19 @@ Addresses are for that build only; re-check after a patch.
   `s = RTM.u16+0x700 / RTM.u16+0x704 * GraphicsConfig+0x4c`: the height frames render at
   over the top of the range, times the slider. Under DLSS, `+0x704` is the top of DLSS's
   range, so the game's jitter shrinks as its controller lowers the height: at 4K and a
-  77% slider, 0.36 at 2160, 0.16 at 1440 (seen live on 2026-10-12) and 0.09 at 1080. The
-  camera keeps only that scaled offset (`+0x280`,
-  the previous frame's at `+0x288`). Which value the DLSS pass hands NGX as its jitter
-  (`0x1403757c0` reads it from its parameters at `+0x28`) was not traced back to the
-  camera. Under DLSS the Halton period is unbounded; otherwise `8 * (screen / +0x428)^2`.
+  77% slider, 0.36 at 2160, 0.16 at 1440 (seen live on 2026-10-12) and 0.09 at 1080.
+  Under DLSS the Halton period is unbounded; otherwise `8 * (screen / +0x428)^2`.
+- **DLSS is told the raw sample, not the camera's offset.** The camera points at its
+  jitter state at `+0x278`. `0x1402ebf70` writes the sample there, Halton(2) and
+  Halton(3) minus 0.5, in pixels, at `+0x0` and `+0x4`; the jitter method then stores
+  the NDC offset `(2a * x / W, -2a * y / H)` at `+0x8` and moves the projection by it.
+  The DLSS pass (`0x1403741a0`, called from `0x140362430`) fills NGX's parameters at
+  `DLSS+0xf8` and takes the jitter at `DLSS+0x120` (parameters `+0x28`, which
+  `0x140375790` passes on as NGX's jitter offset) from the state's `+0x0`, through
+  `0x14025f7f0` on the camera at `[0x1428f5ba0]+0x3028`. So the camera moves `a` times
+  the sample in render pixels while DLSS is told the sample: they agree only at
+  `a = 1`. At the game's 0.16, DLSS places each frame's samples up to 0.42 of a pixel
+  from where they were rendered.
 - **`RTM+0x700` is the height frames render at.** The controller's tail (from
   `0x1402dac36`), which runs whether or not `+0x47` let it step, calls `0x140236ca0`
   and copies `+0x702` into `+0x700` whenever the two differ (`+0x704` when the
@@ -76,8 +84,18 @@ Addresses are for that build only; re-check after a patch.
   `RTM+0x702` by 9 px (18 above 1440) between `RTM+0x706` (the floor) and `RTM+0x704`
   (the target). Under DLSS it steps down when the GPU time (`RTM+0x70c`, ms, from
   timestamp queries) exceeds `0.9 * max(RTM+0x710, budget)` and up below `0.8 * ...`;
-  FSR uses 0.97 and 0.9. `RTM+0x710` is the smoothed frame time in ms
-  (`old * 0.9833 + frame / 60`). The stepping is skipped when `GraphicsConfig+0x47` is 0
+  FSR uses 0.97 and 0.9. `RTM+0x710` is the smoothed CPU time per frame
+  (`old * 0.9833 + new / 60`), from `Device+0x9bc`: the milliseconds from the device's
+  stamp just after it presents (`0x1402273b1`) to just before the next present
+  (`0x1402270ec`), so neither the wait in Present nor a frame cap counts. Seen live at
+  4.0 ms at 100 fps. The budget is 1000 ms over the refresh rate divided by the vsync
+  interval (1000 with vsync off), lowered to `Device+0xac` when set and to 30 or 60 by
+  `GraphicsConfig+0x49` values 1 and 2; what those two fields are was not traced
+  further. It steps only while the camera moves: each frame it compares a matrix of the
+  camera at `[0x1428f5ba0]+0x3028` (`+0x10` to `+0x4f`) with its copy at `RTM+0x6c0`,
+  and with no element moved by more than 0.03 it primes the half-second count instead
+  (`0x1402dac09`), so the first step after the camera moves comes at once. The
+  stepping is skipped when `GraphicsConfig+0x47` is 0
   (`0x1402daa2f`), but not the tail that applies a changed `+0x702`, which is what lets
   a pinned height take; no other reader or writer of `+0x47` turned up among the
   global's 327 users.

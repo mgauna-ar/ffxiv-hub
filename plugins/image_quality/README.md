@@ -1,7 +1,7 @@
 # 🖼️ Image Quality
 
-Lets you pick the resolution DLSS renders at and keeps it there, and gives DLSS the camera
-jitter it needs to smooth edges that are standing still. It changes nothing unless the
+Lets you pick the resolution DLSS renders at and keeps it there, and makes the camera
+jitter match what DLSS is told, so it can smooth edges that are standing still. It changes nothing unless the
 game's upscaler is DLSS, and hands every value back to the game when it is switched off.
 
 Part of [FFXIV Hub](../../README.md). Enable or disable it from its page in the desktop
@@ -12,16 +12,18 @@ app, or from its card on the dashboard.
 ## At a glance
 
 - **A DLSS mode that holds.** With DLSS the game picks its render resolution by GPU load,
-  anywhere from half the screen to all of it, and moves it 9 pixels every half second.
+  anywhere from half the screen to all of it, and moves it 9 pixels every half second
+  while the camera moves.
   The plugin holds the mode you choose instead: DLAA, Ultra Quality, Quality, Balanced or
   Performance.
 - **Full camera jitter.** DLSS smooths edges by nudging the camera a fraction of a pixel
-  every frame. The game's nudge shrinks with its 3D resolution slider and with the render
-  height: at 77% and 4K it is 0.36 of a pixel at native, 0.16 at Quality and 0.09 at the
-  bottom of DLSS's range. Edges that stay still never get sampled across the whole pixel
-  and stay jagged. The plugin uses a full pixel.
+  every frame, and the game tells DLSS each nudge. It then moves the camera by less than
+  it said: the amount shrinks with its 3D resolution slider and with the render height,
+  to 0.16 of what it told DLSS at 77% and 4K Quality. DLSS lays every frame's pixels a
+  little off, and edges that stay still stay jagged. The plugin moves the camera by what
+  DLSS is told.
 - **Visible.** The desktop view shows the upscaler, the height the game renders at within
-  its range, the jitter in use, and the game's frame and GPU times.
+  its range, the jitter in use, and the game's GPU and CPU times.
 - **Reversible.** Switching it off, closing the Hub, or picking FSR puts the game's own
   values back within 50 ms.
 
@@ -36,17 +38,22 @@ and runs a resolution controller inside it, whatever the *Enable dynamic resolut
 checkbox says. The range depends on DLSS's mode: at 4K, 1080 to 2160 lines in Quality,
 and 2138 to 2160 in DLAA, which leaves the controller nowhere to go. The controller:
 
-- It lowers the height when the GPU takes more than 90% of the frame, and raises it when
-  it takes less than 80%.
-- It moves 9 pixels at a time (18 above 1440), once every half second.
+- It lowers the height when the GPU time per frame passes 90% of the longer of two: the
+  CPU time per frame, and the frame time your refresh rate (with vsync) or frame cap
+  allows. It raises it below 80%.
+- It moves 9 pixels at a time (18 above 1440), once every half second, and only while
+  the camera moves. Standing still, the height stays where it is.
 
 So in Quality DLSS renders at anything between Performance and DLAA, and changes with
-the scene. Going from the bottom of the range to the top takes about half a minute.
+the scene. Going from the bottom of the range to the top takes about half a minute of
+moving around.
 
-The camera jitter has its own catch. The game starts from 0.6 of a pixel and scales it by
-the square of its 3D resolution slider times the render height's share of the range's
-top, even under DLSS, where the slider sets nothing else. At 77% and 4K that is 0.36 of
-a pixel at native, 0.16 at Quality, and 0.09 when the controller sits at the bottom.
+The camera jitter has its own catch. Each frame the game picks where in the pixel to
+nudge the camera and tells DLSS. It then nudges the camera by less: 0.6 of that, scaled
+by the square of its 3D resolution slider times the render height's share of the
+range's top. At 77% and 4K the camera moves 0.36 of what DLSS is told at native, 0.16 at
+Quality and 0.09 at the bottom of the range, so DLSS lays each frame's pixels slightly
+off.
 
 ### What gets changed
 
@@ -57,7 +64,7 @@ and only when they differ from what the plugin wants:
 |---|---|---|
 | The resolution controller | On | Off, under DLSS with *Fixed render resolution* |
 | The height a frame renders at | Wherever the controller left it | The chosen mode's share of the screen, kept within the game's range |
-| The camera jitter | 0.6, scaled down by the slider and the render height | The *Jitter amount*, 1.0 by default, under DLSS with *Full camera jitter* |
+| The camera jitter | 0.6 of what DLSS is told, scaled down by the slider and the render height | What DLSS is told, under DLSS with *Full camera jitter* |
 
 The plugin remembers the game's values before its first change and writes them back when
 it lets go. The controller then resumes from where the height is.
@@ -80,8 +87,10 @@ it lets go. The controller then resumes from where the height is.
   setting.
 - **Render height**: what the frame renders at, with the game's range.
 - **Render scale**: that height as a share of the screen's.
-- **Camera jitter**: the amount in use, and what the game's own would be.
-- **Frame time**: the game's smoothed frame and GPU times, which its controller acts on.
+- **Camera jitter**: how far the camera moves, as a share of what DLSS is told, and what
+  the game's own would be.
+- **GPU time**: the game's smoothed GPU time per frame, and its CPU time per frame
+  without the wait to present. The controller acts on both.
 
 Below them, *What the game is doing* says whether the height is held by the plugin or
 moving with GPU load, and whose jitter is in use.
@@ -92,9 +101,8 @@ moving with GPU load, and whose jitter is in use.
 |---|---|
 | Fixed render resolution | Under DLSS, stop the controller and render at the mode below. |
 | Render resolution | DLAA (100%), Ultra Quality (77%), Quality (67%), Balanced (58%) or Performance (50%). |
-| Full camera jitter | Under DLSS, jitter by *Jitter amount* instead of the game's amount. |
-| Jitter amount | 0.5 to 1.5. 1.0 covers the whole pixel. |
-| Reset to defaults | Both switches on, Quality, 1.0. |
+| Full camera jitter | Under DLSS, move the camera by what DLSS is told instead of the game's smaller amount. |
+| Reset to defaults | Both switches on, Quality. |
 
 ---
 
@@ -109,8 +117,7 @@ format, not the intended interface.
 | `plugin_enabled` | bool | `true` | Master switch. Off hands every value back to the game and streams nothing. |
 | `fixed_dlss_resolution` | bool | `true` | Under DLSS, stop the resolution controller and render at `dlss_render_scale`. |
 | `dlss_render_scale` | float | `0.667` | Render height as a share of the screen's, `0.5`–`1.0`, kept within the game's range. |
-| `override_dlss_jitter` | bool | `true` | Under DLSS, jitter by `dlss_jitter_amount` instead of the game's amount. |
-| `dlss_jitter_amount` | float | `1.0` | Jitter amplitude, `0.5`–`1.5`. |
+| `override_dlss_jitter` | bool | `true` | Under DLSS, move the camera by what DLSS is told instead of the game's smaller amount. |
 
 ---
 
@@ -121,9 +128,18 @@ format, not the intended interface.
 
 It depends on where the game had you. If its controller kept DLSS near the bottom of its
 range, a fixed Quality renders more pixels and costs frames; if it kept you near the top,
-Quality is cheaper. The Live tab shows the height and the frame time, so you can compare
+Quality is cheaper. The Live tab shows the height and the GPU time, so you can compare
 with *Fixed render resolution* on and off, and pick Balanced or Performance for more
 frames.
+
+</details>
+
+<details>
+<summary><b>Why is there no jitter amount to pick?</b></summary>
+
+The game tells DLSS where in the pixel it nudged the camera each frame. Only a camera
+moved by exactly that much matches, so a larger or smaller nudge would leave DLSS
+misplacing pixels again. The switch either matches it or leaves the game's own amount.
 
 </details>
 

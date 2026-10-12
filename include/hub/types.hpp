@@ -98,8 +98,9 @@ enum class CommandId : uint32_t {
     SetFixedDlssResolution = 40,
     // 41 was SetDlssJitterMultiplier, whose value was the raw multiplier. Never
     // reused: an older app may still send it.
-    /// param_uint 0/1: replace the game's camera jitter under DLSS; param_float: the
-    /// amplitude to jitter by
+    /// param_uint 0/1: under DLSS, move the camera by the sample the game tells DLSS
+    /// about. param_float: 1.0, the amplitude a payload up to v1.3.2 reads there;
+    /// newer ones ignore it
     SetDlssJitter = 42,
 };
 

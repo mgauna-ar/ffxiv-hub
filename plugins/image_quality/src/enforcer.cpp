@@ -34,7 +34,7 @@ GraphicsWrites Enforcer::plan(const GraphicsSnapshot& snap, const ImageQualitySe
         // Without the heights there is no knowing what a multiplier amounts to.
         if (scale_squared) {
             if (!m_game_jitter) m_game_jitter = snap.config.jitter_multiplier;
-            const float wanted = multiplier_for(clamp_jitter_amount(settings.dlss_jitter_amount), *scale_squared,
+            const float wanted = multiplier_for(constants::DLSS_JITTER_AMOUNT, *scale_squared,
                                                 constants::MIN_WRITTEN_MULTIPLIER,
                                                 constants::MAX_WRITTEN_MULTIPLIER);
             if (snap.config.jitter_multiplier != wanted) writes.jitter_multiplier = wanted;
@@ -83,7 +83,7 @@ ipc::ImageQualityStatePayload state_payload(const GraphicsSnapshot& snap, uint8_
     state.target_height = snap.scale.target_height;
     state.floor_height = snap.scale.floor_height;
     state.gpu_time_ms = snap.scale.gpu_time_ms;
-    state.frame_time_ms = snap.scale.frame_time_ms;
+    state.cpu_time_ms = snap.scale.cpu_time_ms;
     state.enforcing = enforcing;
     state.screen_height = screen_height(snap.scale.target_height, snap.scale.target_ratio).value_or(0);
     return state;

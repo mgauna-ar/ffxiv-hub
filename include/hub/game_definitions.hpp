@@ -134,7 +134,7 @@ namespace offsets {
     constexpr size_t RENDER_TARGET_MANAGER_TARGET_HEIGHT = 0x704;
     constexpr size_t RENDER_TARGET_MANAGER_FLOOR_HEIGHT = 0x706;
     constexpr size_t RENDER_TARGET_MANAGER_GPU_TIME = 0x70C;
-    constexpr size_t RENDER_TARGET_MANAGER_FRAME_TIME = 0x710;
+    constexpr size_t RENDER_TARGET_MANAGER_CPU_TIME = 0x710;
     constexpr size_t RENDER_TARGET_MANAGER_TARGET_RATIO = 0x71C;    // The target over the screen's height
 } // namespace offsets
 
@@ -441,7 +441,7 @@ struct RenderScaleState {
     uint16_t floor_height{0};                // +0x6: The bottom of it
     uint8_t pad_08[0x04]{0};                 // +0x8 - +0xC
     float gpu_time_ms{0.0f};                 // +0xC: Smoothed GPU time per frame
-    float frame_time_ms{0.0f};               // +0x10: Smoothed frame time (FrametimeAverage)
+    float cpu_time_ms{0.0f};                 // +0x10: Smoothed CPU time per frame, Present not included
     uint8_t pad_14[0x08]{0};                 // +0x14 - +0x1C
     float target_ratio{0.0f};                // +0x1C: target_height over the screen's height
 };
@@ -450,7 +450,7 @@ static_assert(offsetof(RenderScaleState, current_height) == offsets::RENDER_TARG
 static_assert(offsetof(RenderScaleState, target_height) == offsets::RENDER_TARGET_MANAGER_TARGET_HEIGHT - offsets::RENDER_TARGET_MANAGER_RENDER_SCALE, "RenderScaleState::target_height offset mismatch");
 static_assert(offsetof(RenderScaleState, floor_height) == offsets::RENDER_TARGET_MANAGER_FLOOR_HEIGHT - offsets::RENDER_TARGET_MANAGER_RENDER_SCALE, "RenderScaleState::floor_height offset mismatch");
 static_assert(offsetof(RenderScaleState, gpu_time_ms) == offsets::RENDER_TARGET_MANAGER_GPU_TIME - offsets::RENDER_TARGET_MANAGER_RENDER_SCALE, "RenderScaleState::gpu_time_ms offset mismatch");
-static_assert(offsetof(RenderScaleState, frame_time_ms) == offsets::RENDER_TARGET_MANAGER_FRAME_TIME - offsets::RENDER_TARGET_MANAGER_RENDER_SCALE, "RenderScaleState::frame_time_ms offset mismatch");
+static_assert(offsetof(RenderScaleState, cpu_time_ms) == offsets::RENDER_TARGET_MANAGER_CPU_TIME - offsets::RENDER_TARGET_MANAGER_RENDER_SCALE, "RenderScaleState::cpu_time_ms offset mismatch");
 static_assert(offsetof(RenderScaleState, target_ratio) == offsets::RENDER_TARGET_MANAGER_TARGET_RATIO - offsets::RENDER_TARGET_MANAGER_RENDER_SCALE, "RenderScaleState::target_ratio offset mismatch");
 
 #pragma pack(pop)

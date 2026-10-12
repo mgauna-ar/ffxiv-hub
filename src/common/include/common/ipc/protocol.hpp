@@ -220,7 +220,7 @@ struct ImageQualityStatePayload {
     uint16_t target_height{0};
     uint16_t floor_height{0};
     float    gpu_time_ms{0.0f};
-    float    frame_time_ms{0.0f};
+    float    cpu_time_ms{0.0f};       // Per frame, Present not included
     uint8_t  enforcing{0};            // ImageQualityEnforced bits
     uint8_t  pad[3]{0};
     uint16_t screen_height{0};        // 0 when unknown

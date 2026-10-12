@@ -16,7 +16,7 @@ bool write_field(uintptr_t object, size_t offset, const void* value, size_t size
 /// and ride on the keepalive.
 bool same_state(ipc::ImageQualityStatePayload a, ipc::ImageQualityStatePayload b) noexcept {
     a.gpu_time_ms = b.gpu_time_ms = 0.0f;
-    a.frame_time_ms = b.frame_time_ms = 0.0f;
+    a.cpu_time_ms = b.cpu_time_ms = 0.0f;
     return std::memcmp(&a, &b, sizeof(a)) == 0;
 }
 
@@ -33,9 +33,8 @@ void ImageQualityPlugin::set_fixed_dlss_resolution(bool enabled, float render_sc
     m_settings.dlss_render_scale = clamp_render_scale(render_scale);
 }
 
-void ImageQualityPlugin::set_dlss_jitter(bool override_game, float amount) noexcept {
+void ImageQualityPlugin::set_dlss_jitter(bool override_game) noexcept {
     m_settings.override_dlss_jitter = override_game;
-    m_settings.dlss_jitter_amount = clamp_jitter_amount(amount);
 }
 
 std::optional<GraphicsSnapshot> ImageQualityPlugin::read_snapshot(RenderObjects& objects) const {
