@@ -6,12 +6,12 @@
 ![C++20](https://img.shields.io/badge/standard-C%2B%2B20-crimson)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-**A combat meter and a latency mitigator for Final Fantasy XIV, in one app with in-game
-overlays.**
+**A combat meter, a latency mitigator and a DLSS fix for Final Fantasy XIV, in one app
+with in-game overlays.**
 
 See the DPS, healing, deaths and buff uptime of every pull. Weave oGCDs on a 200 ms
-connection the way you would sitting next to the datacenter. It comes as two files with
-no installer.
+connection the way you would sitting next to the datacenter. Keep DLSS sharp at the
+resolution you chose. It comes as two files with no installer.
 
 ![The FFXIV Hub desktop app switching between its Latency Mitigator and Combat Meter pages, beside the in-game combat meter and ping HUD](docs/images/hero.png)
 
@@ -52,6 +52,16 @@ high-ping connection.**
 - Never goes below a 25 ms floor, never shortens cast locks (slide-casting still works),
   and never touches an action the server rejected.
 - A small in-game badge shows your network ping and action round-trip time.
+
+**🖼️ [Image Quality](plugins/image_quality/README.md) keeps DLSS at the resolution you
+set.**
+
+- Stops the game from lowering the DLSS render resolution under load and taking half a
+  minute to bring it back.
+- Gives DLSS a full-pixel camera jitter instead of the game's 0.6, so edges that stand
+  still get smoothed too.
+- Shows what the game renders at, against its target, live.
+- Changes nothing under FSR, and puts the game's own values back when switched off.
 
 **🖥️ The app**
 
@@ -180,12 +190,14 @@ same wording as the sidebar), or right-click for the menu:
 ## 🧩 Plugins
 
 Each plugin has a master switch. Off means it consumes no game hooks, streams no
-telemetry and draws no overlay. Flip it from the plugin's page or its dashboard card.
+telemetry, draws no overlay and leaves no setting changed. Flip it from the plugin's page
+or its dashboard card.
 
 | Plugin | What it does |
 |---|---|
 | [**Combat Meter**](plugins/combat_meter/README.md) | DPS and HPS with overheal separated, rDPS/aDPS/nDPS/cDPS from raid buff credit, crit/DH/CDH rates, automatic pet attribution, deaths with killing blow and recap, buff/debuff/DoT uptime, damage taken by ability, casts and GCD uptime, a per-second timeline with raid buff windows, encounter tracking and pull history with the boss's HP left |
 | [**Latency Mitigator**](plugins/latency_mitigator/README.md) | Animation lock compensation for clean double-weaving on high latency, with a live ping and RTT HUD |
+| [**Image Quality**](plugins/image_quality/README.md) | DLSS held at its configured render resolution, with full-pixel camera jitter, and a live view of what the game renders at |
 
 Each plugin's README covers how it works, its in-game overlay, its desktop view and its
 configuration keys.
@@ -198,14 +210,16 @@ FFXIV Hub runs entirely on your PC and stays within what the server already allo
 
 - **What it reads.** Combat results as the game receives them. The names, jobs, HP and
   status effects of your party and of the enemies you are fighting.
-- **The one thing it writes.** Your local animation-lock timer, after the server has
-  already confirmed the action.
-  - It never sets the timer below a 25 ms floor.
-  - It leaves cast locks alone.
-  - It skips rejected actions and locks over 2.5 s.
+- **What it writes.** Two things, both on your PC only:
+  - Your local animation-lock timer, after the server has already confirmed the action.
+    It never sets the timer below a 25 ms floor, leaves cast locks alone, and skips
+    rejected actions and locks over 2.5 s. Turn off *Enable animation lock mitigation*,
+    or switch on *Dry-run mode*, and it writes none.
+  - Three of the game's graphics settings, only while DLSS is the upscaler: whether the
+    render resolution follows GPU load, the resolution itself, and the camera jitter.
+    Switch the Image Quality plugin off and they are the game's again.
 
-  Turn off *Enable animation lock mitigation*, or switch on *Dry-run mode*, and it writes
-  nothing at all. The Combat Meter only ever reads.
+  The Combat Meter only ever reads.
 - **What it never does.** Modify, send or delay network packets. Automate any input.
   Change cooldowns or the GCD.
 - **Nothing about you or your play leaves your PC.** The Hub makes two kinds of network
@@ -217,8 +231,9 @@ FFXIV Hub runs entirely on your PC and stays within what the server already allo
     Settings turns it off. A release is only downloaded, from this repository, when you
     click **Update & restart**.
 - **It goes quiet when you close it.** With the Hub closed, the payload is dormant until
-  the Hub reconnects: the overlays hide, mitigation stops and nothing is queued for the
-  Hub. The combat meter keeps counting in the background.
+  the Hub reconnects: the overlays hide, mitigation stops, the graphics settings go back
+  to the game's and nothing is queued for the Hub. The combat meter keeps counting in the
+  background.
 
 **Keep it to yourself.** Square Enix takes action when a third-party tool is brought up
 in game or used against other players. So don't mention it in chat, and never use its
@@ -406,7 +421,8 @@ plugin:
 {
   "hub":               { /* the keys below */ },
   "combat_meter":      { /* see the Combat Meter README */ },
-  "latency_mitigator": { /* see the Latency Mitigator README */ }
+  "latency_mitigator": { /* see the Latency Mitigator README */ },
+  "image_quality":     { /* see the Image Quality README */ }
 }
 ```
 
@@ -428,8 +444,9 @@ Hub keys:
 | `show_notifications` | bool | `true` | Windows notifications on attach and detach, and when a new version is out. |
 | `check_for_updates` | bool | `true` | Ask GitHub for a newer release each time the Hub starts. |
 
-Plugin keys are documented in [Combat Meter](plugins/combat_meter/README.md#configuration)
-and [Latency Mitigator](plugins/latency_mitigator/README.md#configuration).
+Plugin keys are documented in [Combat Meter](plugins/combat_meter/README.md#configuration),
+[Latency Mitigator](plugins/latency_mitigator/README.md#configuration) and
+[Image Quality](plugins/image_quality/README.md#configuration).
 
 ---
 
@@ -457,8 +474,8 @@ flowchart LR
   - Close the Hub and the payload goes dormant. Start it again and it reconnects within
     a second, without hooking anything twice.
   - Overlays restore every render target they touch.
-  - Game memory is only read inside exception guards, so a bad read after a patch fails
-    safely.
+  - Game memory is only read and written inside exception guards, so a bad address after
+    a patch fails safely.
   - The named pipe admits only your own Windows user, so another account or service on
     the machine cannot send the payload commands.
 - **Portable core.** The analytics, timing math, IPC protocol and config are plain C++20
@@ -481,6 +498,7 @@ ffxiv-hub/
 ├── src/app/                     The desktop manager: app state, views, updater, entry point
 ├── plugins/combat_meter/        Combat Meter: analytics core, in-game table, plugin glue
 ├── plugins/latency_mitigator/   Latency Mitigator: RTT tracking, lock math, ping HUD
+├── plugins/image_quality/       Image Quality: DLSS render resolution and camera jitter
 ├── tests/                       Unit tests, runnable on Windows, macOS and Linux
 └── tools/                       Table generators, signature checks, game-client inspection,
                                  README screenshots
@@ -576,8 +594,9 @@ as a release, whose page shows its SHA256; the tag must match the version in
 |---|---|
 | [Combat Meter README](plugins/combat_meter/README.md) | How pulls, pets, deaths, casts, uptime and the timeline are tracked; its views and settings |
 | [Latency Mitigator README](plugins/latency_mitigator/README.md) | How the lock is adjusted and what is left alone; its HUD, view and settings |
+| [Image Quality README](plugins/image_quality/README.md) | What the game does with DLSS, what the plugin changes and gives back; its view and settings |
 | [AGENTS.md](AGENTS.md) | Architecture, runtime topology, and the invariants every change must keep |
-| [Combat Meter AGENTS.md](plugins/combat_meter/AGENTS.md) · [Latency Mitigator AGENTS.md](plugins/latency_mitigator/AGENTS.md) | Plugin-specific rules, and what was verified about the game client |
+| [Combat Meter AGENTS.md](plugins/combat_meter/AGENTS.md) · [Latency Mitigator AGENTS.md](plugins/latency_mitigator/AGENTS.md) · [Image Quality AGENTS.md](plugins/image_quality/AGENTS.md) | Plugin-specific rules, and what was verified about the game client |
 | [`.claude/skills/`](.claude/skills/) | Procedures: after a game patch, inspecting the game client, the ThreadSanitizer run, cutting a Windows release |
 
 ---

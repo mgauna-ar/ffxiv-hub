@@ -19,6 +19,7 @@ const char* plugin_icon(DesktopView view) {
     switch (view) {
         case DesktopView::CombatMeter:      return ICON_SWORDS;
         case DesktopView::LatencyMitigator: return ICON_ACTIVITY;
+        case DesktopView::ImageQuality:     return ICON_MONITOR;
         case DesktopView::Dashboard:
         case DesktopView::Settings:         break;
     }
@@ -29,6 +30,7 @@ uint32_t plugin_accent(DesktopView view) {
     switch (view) {
         case DesktopView::CombatMeter:      return colors::Danger;
         case DesktopView::LatencyMitigator: return colors::Accent;
+        case DesktopView::ImageQuality:     return colors::Success;
         case DesktopView::Dashboard:
         case DesktopView::Settings:         break;
     }

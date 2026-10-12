@@ -36,13 +36,21 @@ inline constexpr PluginDescriptor LATENCY_MITIGATOR{
     "latency_mitigator",
 };
 
+inline constexpr PluginDescriptor IMAGE_QUALITY{
+    PluginId::ImageQuality,
+    "Image Quality",
+    HUB_VERSION_STRING,
+    "DLSS held at its chosen resolution, with full-pixel camera jitter",
+    "image_quality",
+};
+
 /// Key of every plugin's master switch in its config section. Deliberately absent
 /// from the defaults: see ConfigManager::set_defaults and the meter's legacy key.
 inline constexpr const char* MASTER_SWITCH_KEY = "plugin_enabled";
 
 /// Every plugin, in the order the app lists them. Not the payload's hook dispatch
 /// order, which dllmain.cpp's registration sets.
-inline constexpr std::array ALL{COMBAT_METER, LATENCY_MITIGATOR};
+inline constexpr std::array ALL{COMBAT_METER, LATENCY_MITIGATOR, IMAGE_QUALITY};
 
 /// The descriptor for `id`, or nullptr for an id that is not a plugin (None, Core).
 [[nodiscard]] constexpr const PluginDescriptor* find(PluginId id) noexcept {

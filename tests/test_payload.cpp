@@ -11,6 +11,7 @@
 #include "payload/periodic.hpp"
 #include "payload/status_report.hpp"
 #include "meter/combat_plugin.hpp"
+#include "iq/image_quality_plugin.hpp"
 #include "common/config/json.hpp"
 #include <array>
 #include <atomic>
@@ -706,6 +707,46 @@ TEST_CASE(Payload, MitigatorSettingsFromTheAppSurviveTheAutosave) {
     TEST_ASSERT_EQ(saved["overlay_mode"].as_int(-1), static_cast<int>(mitigator::OverlayDisplayMode::PingOnly));
 
     plugin.set_overlay(nullptr);
+}
+
+TEST_CASE(Payload, ImageQualitySettingsFromTheAppSurviveTheAutosave) {
+    iq::ImageQualityPlugin plugin;
+    payload::CommandDispatchTargets targets;
+    targets.image_quality_plugin = &plugin;
+
+    ipc::CommandPayload cmd{};
+    cmd.target_plugin_id = static_cast<uint32_t>(PluginId::ImageQuality);
+    const auto send = [&](CommandId id, uint32_t value, float value_float = 0.0f) {
+        cmd.command_id = static_cast<uint32_t>(id);
+        cmd.param_uint = value;
+        cmd.param_float = value_float;
+        payload::dispatch_command(targets, cmd);
+    };
+    send(CommandId::SetFixedDlssResolution, 0);
+    send(CommandId::SetDlssJitterMultiplier, 1, 1.2f);
+    send(CommandId::SetPluginEnabled, 0);
+
+    TEST_ASSERT_FALSE(plugin.is_plugin_enabled());
+    config::JsonValue saved(config::JsonValue::ObjectType{});
+    plugin.serialize_config(saved);
+    TEST_ASSERT_FALSE(saved["fixed_dlss_resolution"].as_bool(true));
+    TEST_ASSERT_TRUE(saved["override_dlss_jitter"].as_bool(false));
+    TEST_ASSERT_NEAR(saved["dlss_jitter_multiplier"].as_double(0.0), 1.2, 1e-6);
+    TEST_ASSERT_FALSE(saved["plugin_enabled"].as_bool(true));
+
+    // Another plugin's commands never reach it, and a missing target is a no-op.
+    cmd.target_plugin_id = static_cast<uint32_t>(PluginId::LatencyMitigator);
+    send(CommandId::SetPluginEnabled, 1);
+    TEST_ASSERT_FALSE(plugin.is_plugin_enabled());
+    payload::CommandDispatchTargets empty;
+    cmd.target_plugin_id = static_cast<uint32_t>(PluginId::ImageQuality);
+    payload::dispatch_command(empty, cmd);
+}
+
+TEST_CASE(Payload, StatusMaskCarriesImageQuality) {
+    payload::StatusFacts facts{};
+    facts.image_quality_enabled = true;
+    TEST_ASSERT_EQ(payload::build_status(facts).active_plugins_mask, ipc::plugin_mask_bit(PluginId::ImageQuality));
 }
 
 TEST_CASE(Payload, ResetOverlayGeometryRearmsRestoreLatch) {

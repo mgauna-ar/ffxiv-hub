@@ -145,10 +145,11 @@ the function in the copied executable, then re-cut the broken pattern from the b
 that address. Nothing external is needed. A call-site broken by compiler reordering gets a
 verified-unique prologue as its replacement, and vice versa.
 
-### Four signatures have no fallback
+### Six signatures have no fallback
 
-`PROCESS_HOT_DOT_PRIMARY`, `GAME_OBJECT_MANAGER_INSTANCE`, `GROUP_MANAGER_INSTANCE` and
-`CONDITIONS_INSTANCE` are single-pattern. If one of those breaks there is nothing to
+`PROCESS_HOT_DOT_PRIMARY`, `GAME_OBJECT_MANAGER_INSTANCE`, `GROUP_MANAGER_INSTANCE`,
+`CONDITIONS_INSTANCE`, `GRAPHICS_CONFIG_INSTANCE` and `RENDER_TARGET_MANAGER_INSTANCE` are
+single-pattern. If one of those breaks there is nothing to
 recover from, and locating the function is ordinary disassembly of the copied exe. The
 `inspect-game-client` skill covers it: find a unique instruction that references the
 same global (`tools/inspect_exe.py xrefs`) and re-cut the pattern from its bytes.
@@ -192,6 +193,26 @@ disassembles the copied exe; find the hooked `UseActionLocation` through the res
 
 If any of these changed, update that section and the rules built on it before changing the
 mitigator's timing math.
+
+## 4a. Re-check the render settings
+
+The image quality plugin writes three fields of the game's render singletons, recorded in
+[How the client jitters and scales with DLSS](../../../plugins/image_quality/AGENTS.md#how-the-client-jitters-and-scales-with-dlss).
+The two signatures only find the globals; a patch that moves a field breaks nothing
+loudly, and the plugin would then write the wrong byte. With `tools/inspect_exe.py`:
+
+- The `GraphicsConfig` constructor (the call right after the `0xD8` allocation stored
+  into the global `GRAPHICS_CONFIG_INSTANCE` resolves) still writes `0.6f` at the jitter
+  multiplier's offset and `0x01010100` at `+0x44`.
+- The camera's jitter method (the only reader of the multiplier) still checks
+  `+0x54 == 2` and `+0x2c == 2`, and still reads the multiplier and `RTM+0x700`/`+0x704`.
+- The resolution controller still gates its stepping on `+0x47`, still steps
+  `RTM+0x702` between `+0x706` and `+0x704`, and nothing else writes `+0x47`.
+- The config apply (`0x14025e573` in 7.x) still stores the upscaler option plus one at
+  `+0x54`.
+
+Update the offsets and the `GraphicsConfigObject` / `RenderScaleState` padding together;
+their `static_assert`s pin each field.
 
 ## 4b. Re-check the status list layout
 

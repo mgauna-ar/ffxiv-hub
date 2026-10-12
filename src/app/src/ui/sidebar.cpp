@@ -21,6 +21,7 @@ constexpr NavItem kNavItems[] = {
     { "Dashboard",         ICON_DASHBOARD, DesktopView::Dashboard,        "WORKSPACE", PluginId::None },
     { "Combat Meter",      ICON_SWORDS,    DesktopView::CombatMeter,      "PLUGINS",   PluginId::CombatMeter },
     { "Latency Mitigator", ICON_ACTIVITY,  DesktopView::LatencyMitigator, nullptr,     PluginId::LatencyMitigator },
+    { "Image Quality",     ICON_MONITOR,   DesktopView::ImageQuality,     nullptr,     PluginId::ImageQuality },
     { "Hub Settings",      ICON_SETTINGS,  DesktopView::Settings,         "SYSTEM",    PluginId::None },
 };
 

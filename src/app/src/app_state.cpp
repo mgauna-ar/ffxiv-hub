@@ -10,6 +10,7 @@
 #include "common/os/paths.hpp"
 #include "meter/combat_settings.hpp"
 #include "mitigator/latency_settings.hpp"
+#include "iq/iq_settings.hpp"
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
@@ -22,6 +23,7 @@ DesktopView view_for_plugin(PluginId id) noexcept {
     switch (id) {
         case PluginId::CombatMeter:      return DesktopView::CombatMeter;
         case PluginId::LatencyMitigator: return DesktopView::LatencyMitigator;
+        case PluginId::ImageQuality:     return DesktopView::ImageQuality;
         case PluginId::None:
         case PluginId::Core:             break;
     }
@@ -68,6 +70,7 @@ config::JsonValue AppState::default_config() {
     }
     doc[plugins::COMBAT_METER.config_section] = std::move(meter);
     doc[plugins::LATENCY_MITIGATOR.config_section] = mitigator::default_settings();
+    doc[plugins::IMAGE_QUALITY.config_section] = iq::default_settings();
     return doc;
 }
 
@@ -242,6 +245,12 @@ void AppState::register_ipc_callbacks() {
         // The same word the in-game engine ends its pulls on, so both close together.
         std::lock_guard<std::mutex> lock(m_combat_mutex);
         m_engine.set_game_state(gs.client_flags);
+    });
+
+    m_pipe_server.set_image_quality_state_callback([this](const ipc::ImageQualityStatePayload& state) {
+        std::lock_guard<std::mutex> lock(m_status_mutex);
+        m_image_quality_state = state;
+        m_image_quality_state_at = std::chrono::steady_clock::now();
     });
 
     m_pipe_server.set_mitigator_telemetry_callback([this](const ipc::MitigatorTelemetryPayload& telem) {
@@ -475,6 +484,16 @@ std::string AppState::payload_status_message() const {
 std::optional<Version> AppState::payload_version() const {
     std::lock_guard<std::mutex> lock(m_status_mutex);
     return m_payload_version;
+}
+
+std::optional<ipc::ImageQualityStatePayload> AppState::image_quality_state() const {
+    // The TTL also covers a disconnect: the payload stops reporting.
+    std::lock_guard<std::mutex> lock(m_status_mutex);
+    if (!m_image_quality_state ||
+        std::chrono::steady_clock::now() - m_image_quality_state_at > kImageQualityStateTtl) {
+        return std::nullopt;
+    }
+    return m_image_quality_state;
 }
 
 std::optional<ipc::OverlayGeometryPayload> AppState::overlay_geometry(PluginId id) const {

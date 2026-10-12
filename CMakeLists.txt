@@ -142,8 +142,13 @@ add_library(hub_mitigator STATIC ${HUB_MITIGATOR_SOURCES})
 target_include_directories(hub_mitigator PUBLIC plugins/latency_mitigator/include)
 target_link_libraries(hub_mitigator PUBLIC hub_common PRIVATE hub_warnings)
 
+file(GLOB HUB_IMAGE_QUALITY_SOURCES CONFIGURE_DEPENDS plugins/image_quality/src/*.cpp)
+add_library(hub_image_quality STATIC ${HUB_IMAGE_QUALITY_SOURCES})
+target_include_directories(hub_image_quality PUBLIC plugins/image_quality/include)
+target_link_libraries(hub_image_quality PUBLIC hub_common PRIVATE hub_warnings)
+
 add_library(hub_plugins INTERFACE)
-target_link_libraries(hub_plugins INTERFACE hub_meter hub_mitigator)
+target_link_libraries(hub_plugins INTERFACE hub_meter hub_mitigator hub_image_quality)
 
 # The payload less its DllMain, so the tests link it too.
 file(GLOB HUB_PAYLOAD_SOURCES CONFIGURE_DEPENDS src/payload/src/*.cpp)

@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -70,6 +71,31 @@ TEST_CASE(IPC, MitigatorTelemetryPacket) {
     TEST_ASSERT_EQ(unpacked.action_id, 12345u);
     TEST_ASSERT_NEAR(unpacked.adjusted_lock_ms, 520.0f, 0.01f);
     TEST_ASSERT_EQ(unpacked.applied, 1u);
+}
+
+TEST_CASE(IPC, ImageQualityStateReachesItsCallback) {
+    ImageQualityStatePayload state{};
+    state.found = 1;
+    state.upscale_type = static_cast<uint8_t>(hub::game::UpscaleType::Dlss);
+    state.current_height = 964;
+    state.target_height = 1447;
+    state.jitter_multiplier = 0.6f;
+
+    PipeServer server;
+    std::optional<ImageQualityStatePayload> received;
+    server.set_image_quality_state_callback([&](const ImageQualityStatePayload& p) { received = p; });
+
+    // Under another plugin's id it is not this plugin's state.
+    TEST_ASSERT(server.process_raw_packet(serialize_typed_packet(
+        PluginId::LatencyMitigator, MessageType::ImageQualityState, 1, state)));
+    TEST_ASSERT_FALSE(received.has_value());
+
+    TEST_ASSERT(server.process_raw_packet(serialize_typed_packet(
+        PluginId::ImageQuality, MessageType::ImageQualityState, 2, state)));
+    TEST_ASSERT(received.has_value());
+    TEST_ASSERT_EQ(received->current_height, 964u);
+    TEST_ASSERT_EQ(received->target_height, 1447u);
+    TEST_ASSERT_NEAR(received->jitter_multiplier, 0.6f, 1e-6f);
 }
 
 TEST_CASE(IPC, SpscRingBufferQueuePop) {

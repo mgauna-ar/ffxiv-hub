@@ -5,6 +5,7 @@
 #include "common/ui/overlay_config.hpp"
 #include "meter/combat_plugin.hpp"
 #include "mitigator/latency_plugin.hpp"
+#include "iq/image_quality_plugin.hpp"
 #include "hub/plugin_registry.hpp"
 #include "app/app_state.hpp"
 #include "common/config/key_table.hpp"
@@ -450,6 +451,14 @@ TEST_CASE(Config, DefaultsCoverEveryLatencyMitigatorKey) {
     JsonValue out{JsonValue::ObjectType{}};
     plugin.serialize_config(out);
     assert_defaults_cover(out, "latency_mitigator");
+}
+
+TEST_CASE(Config, DefaultsCoverEveryImageQualityKey) {
+    hub::iq::ImageQualityPlugin plugin;
+    plugin.initialize();
+    JsonValue out{JsonValue::ObjectType{}};
+    plugin.serialize_config(out);
+    assert_defaults_cover(out, "image_quality");
 }
 
 TEST_CASE(Config, DefaultsKeepTheAppOnlyMeterKeys) {

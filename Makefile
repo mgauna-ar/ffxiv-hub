@@ -12,7 +12,9 @@ CXXFLAGS = -std=c++20 -Wall -Wextra -Wpedantic -Werror
 COMMON_INC = -Iinclude -Isrc/common/include
 METER_INC = $(COMMON_INC) -Iplugins/combat_meter/include
 MITIGATOR_INC = $(COMMON_INC) -Iplugins/latency_mitigator/include
-PLUGINS_INC = $(COMMON_INC) -Iplugins/combat_meter/include -Iplugins/latency_mitigator/include
+IQ_INC = $(COMMON_INC) -Iplugins/image_quality/include
+PLUGINS_INC = $(COMMON_INC) -Iplugins/combat_meter/include -Iplugins/latency_mitigator/include \
+              -Iplugins/image_quality/include
 PAYLOAD_INC = $(PLUGINS_INC) -Isrc/payload/include
 APP_INC = $(PLUGINS_INC) -Isrc/app/include
 ALL_INC = $(PLUGINS_INC) -Isrc/payload/include -Isrc/app/include
@@ -23,12 +25,13 @@ layer_inc = $(strip \
     $(if $(filter include/% src/common/%,$(1)),$(COMMON_INC), \
     $(if $(filter plugins/combat_meter/%,$(1)),$(METER_INC), \
     $(if $(filter plugins/latency_mitigator/%,$(1)),$(MITIGATOR_INC), \
+    $(if $(filter plugins/image_quality/%,$(1)),$(IQ_INC), \
     $(if $(filter src/payload/%,$(1)),$(PAYLOAD_INC), \
     $(if $(filter src/app/%,$(1)),$(APP_INC), \
-    $(TEST_INC)))))))
+    $(TEST_INC))))))))
 
 # Recorded in each variant's flags stamp, so a change of include roots rebuilds.
-LAYER_INC_STAMP = $(COMMON_INC) | $(METER_INC) | $(MITIGATOR_INC) | $(PAYLOAD_INC) | $(APP_INC) | $(TEST_INC)
+LAYER_INC_STAMP = $(COMMON_INC) | $(METER_INC) | $(MITIGATOR_INC) | $(IQ_INC) | $(PAYLOAD_INC) | $(APP_INC) | $(TEST_INC)
 
 COMMON_SRCS = $(wildcard src/common/src/*.cpp) \
               $(wildcard src/common/src/archive/*.cpp) \
@@ -38,7 +41,8 @@ COMMON_SRCS = $(wildcard src/common/src/*.cpp) \
               $(wildcard src/common/src/ui/*.cpp)
 
 PLUGIN_SRCS = $(wildcard plugins/latency_mitigator/src/*.cpp) \
-              $(wildcard plugins/combat_meter/src/*.cpp)
+              $(wildcard plugins/combat_meter/src/*.cpp) \
+              $(wildcard plugins/image_quality/src/*.cpp)
 
 PAYLOAD_SRCS = $(wildcard src/payload/src/*.cpp)
 
@@ -141,7 +145,8 @@ build/check-ui/flags: FORCE
 # a common header that only the payload includes could reach into payload/ unseen.
 # It also keeps each header self-contained. One stamp per header, as check-ui.
 HEADERS = $(shell find include src/common/include src/payload/include src/app/include \
-                       plugins/combat_meter/include plugins/latency_mitigator/include tests \
+                       plugins/combat_meter/include plugins/latency_mitigator/include \
+                       plugins/image_quality/include tests \
                        -name '*.hpp')
 HEADER_CHECK_STAMPS = $(patsubst %.hpp,build/check-headers/%.ok,$(HEADERS))
 

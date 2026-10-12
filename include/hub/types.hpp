@@ -11,6 +11,7 @@ enum class PluginId : uint16_t {
     Core             = 0x0001,
     CombatMeter      = 0x0002,
     LatencyMitigator = 0x0003,
+    ImageQuality     = 0x0004,
 };
 
 /// IPC binary packet message types multiplexed across the single Named Pipe
@@ -37,6 +38,9 @@ enum class MessageType : uint16_t {
     CombatLifeEvent     = 0x0208,
     CombatEnemyHp       = 0x0209,
     CombatCast          = 0x020A,
+
+    // Image Quality Messages (0x0300 - 0x03FF)
+    ImageQualityState   = 0x0301,
 };
 
 /// Runtime command IDs sent from desktop manager to payload plugins
@@ -88,6 +92,12 @@ enum class CommandId : uint32_t {
     SetDpsMetric        = 38,
     /// param_float: seconds an overlay shown only in combat stays up after it
     SetHideAfterCombat  = 39,
+    /// param_uint 0/1: hold DLSS at its configured scale instead of the game's
+    /// frame-time controller
+    SetFixedDlssResolution = 40,
+    /// param_uint 0/1: replace the game's jitter multiplier under DLSS;
+    /// param_float: the multiplier
+    SetDlssJitterMultiplier = 41,
 };
 
 /// 2D Floating-point rectangle coordinates for overlay geometry

@@ -14,6 +14,10 @@ class LatencyPlugin;
 class LatencyOverlay;
 }
 
+namespace hub::iq {
+class ImageQualityPlugin;
+}
+
 namespace hub::payload {
 
 /// Non-owning references to the live plugin/overlay instances a command may target.
@@ -23,6 +27,7 @@ struct CommandDispatchTargets {
     hub::meter::CombatOverlay* combat_overlay{nullptr};
     hub::mitigator::LatencyPlugin* latency_plugin{nullptr};
     hub::mitigator::LatencyOverlay* latency_overlay{nullptr};
+    hub::iq::ImageQualityPlugin* image_quality_plugin{nullptr};
 
     /// Set by UnhookAndExit to ask the payload thread to unload. Until this
     /// existed the only way to unload was killing the game.
@@ -36,7 +41,8 @@ struct CommandDispatchTargets {
 /// Serializes each plugin into its section and saves when one changed since the
 /// last load or save. Only those sections reach the file
 /// (ConfigManager::set_owned_sections). A null plugin is skipped.
-bool save_plugin_config(hub::meter::CombatPlugin* combat, hub::mitigator::LatencyPlugin* latency);
+bool save_plugin_config(hub::meter::CombatPlugin* combat, hub::mitigator::LatencyPlugin* latency,
+                        hub::iq::ImageQualityPlugin* image_quality);
 
 /// Routes an incoming CommandPayload (received from the desktop app over the
 /// named pipe) to the targeted plugin/overlay. Extracted from dllmain.cpp so it

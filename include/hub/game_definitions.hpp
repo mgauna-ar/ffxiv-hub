@@ -117,6 +117,24 @@ namespace offsets {
     constexpr size_t PARTY_MEMBER_TERRITORY_TYPE = 0x418;
     constexpr size_t PARTY_MEMBER_NAME = 0x41C;
     constexpr size_t PARTY_MEMBER_CLASS_JOB = 0x469;
+
+    // GraphicsConfig, the render settings singleton (0xD8 bytes). How the client
+    // jitters and scales with these: plugins/image_quality/AGENTS.md.
+    constexpr size_t GRAPHICS_CONFIG_ANTI_ALIASING = 0x2C;          // 2: TSCMAA + camera jitter
+    constexpr size_t GRAPHICS_CONFIG_DYNAMIC_REZO_ENABLE = 0x44;    // The in-game checkbox; DLSS ignores it
+    constexpr size_t GRAPHICS_CONFIG_REZO_DOWNSCALE = 0x45;         // 0 renders at native whatever the scale
+    constexpr size_t GRAPHICS_CONFIG_DYNAMIC_REZO_STEPPING = 0x47;  // Read only by the frame-time controller
+    constexpr size_t GRAPHICS_CONFIG_REZO_SCALE = 0x4C;
+    constexpr size_t GRAPHICS_CONFIG_UPSCALE_TYPE = 0x54;           // The upscaler option + 1
+    constexpr size_t GRAPHICS_CONFIG_JITTER_MULTIPLIER = 0x78;      // 0.6 from the constructor
+
+    // RenderTargetManager's render heights, which the frame-time controller moves
+    constexpr size_t RENDER_TARGET_MANAGER_RENDER_SCALE = 0x700;
+    constexpr size_t RENDER_TARGET_MANAGER_CURRENT_HEIGHT = 0x702;
+    constexpr size_t RENDER_TARGET_MANAGER_TARGET_HEIGHT = 0x704;
+    constexpr size_t RENDER_TARGET_MANAGER_FLOOR_HEIGHT = 0x706;
+    constexpr size_t RENDER_TARGET_MANAGER_GPU_TIME = 0x70C;
+    constexpr size_t RENDER_TARGET_MANAGER_FRAME_TIME = 0x710;
 } // namespace offsets
 
 /// IDA-style AOB pattern signatures for memory scanning (FFXIV Dawntrail 7.x)
@@ -173,6 +191,17 @@ namespace signatures {
     // Fallback: the party list update handler loading it, mov ebx, [rip+disp32].
     constexpr std::string_view LOCAL_PLAYER_ENTITY_ID_FALLBACK =
         "8B 1D ? ? ? ? 45 8B E6 89 5C 24 4C 44 38 A5 ? ? ? ? 0F 86";
+
+    // 9. GraphicsConfig* (FFXIVClientStructs): mov rax, [rip + disp32] in the
+    // config apply that saves and clears its +0x45. The global holds a pointer.
+    constexpr std::string_view GRAPHICS_CONFIG_INSTANCE =
+        "48 8B 05 ? ? ? ? 0F B6 8B ? ? ? ? 88 48";
+
+    // 10. RenderTargetManager*: mov rax, [rip + disp32]; mov r8d, [rsi + disp32];
+    // mov r9d, imm32. FFXIVClientStructs' pattern stops before the last instruction
+    // and matches twice. The global holds a pointer.
+    constexpr std::string_view RENDER_TARGET_MANAGER_INSTANCE =
+        "48 8B 05 ? ? ? ? 44 8B 86 ? ? ? ? 41 B9";
 } // namespace signatures
 
 /// Where the RIP-relative operand sits in each signature that resolves a static
@@ -206,7 +235,28 @@ namespace definitions {
     // 8B 1D [disp32]: mov ebx, [rip + disp32]
     constexpr size_t LOCAL_PLAYER_ENTITY_ID_FALLBACK_RIP_DISP_OFFSET = 2;
     constexpr size_t LOCAL_PLAYER_ENTITY_ID_FALLBACK_RIP_INSN_END = 6;
+
+    // 48 8B 05 [disp32]: mov rax, [rip + disp32]
+    constexpr size_t GRAPHICS_CONFIG_INSTANCE_RIP_DISP_OFFSET = 3;
+    constexpr size_t GRAPHICS_CONFIG_INSTANCE_RIP_INSN_END = 7;
+    constexpr size_t RENDER_TARGET_MANAGER_INSTANCE_RIP_DISP_OFFSET = 3;
+    constexpr size_t RENDER_TARGET_MANAGER_INSTANCE_RIP_INSN_END = 7;
 } // namespace definitions
+
+/// GraphicsConfig::upscale_type: the in-game upscaler option plus one.
+enum class UpscaleType : uint8_t {
+    Fsr = 1,
+    Dlss = 2,
+};
+
+/// GraphicsConfig::anti_aliasing, the in-game edge smoothing option. Only
+/// TscmaaJitter is read by the client's jitter; the others follow the menu order.
+enum class AntiAliasing : uint32_t {
+    Off = 0,
+    Fxaa = 1,
+    TscmaaJitter = 2,
+    Tscmaa = 3,
+};
 
 /// GameObject::ObjectKind, the byte at offsets::CHARACTER_OBJECT_KIND. Named as in
 /// Dalamud's ObjectKind.
@@ -353,6 +403,51 @@ static_assert(offsetof(PartyMemberObject, max_hp) == offsets::PARTY_MEMBER_MAX_H
 static_assert(offsetof(PartyMemberObject, territory_type) == offsets::PARTY_MEMBER_TERRITORY_TYPE, "PartyMemberObject::territory_type offset mismatch");
 static_assert(offsetof(PartyMemberObject, name) == offsets::PARTY_MEMBER_NAME, "PartyMemberObject::name offset mismatch");
 static_assert(offsetof(PartyMemberObject, class_job) == offsets::PARTY_MEMBER_CLASS_JOB, "PartyMemberObject::class_job offset mismatch");
+
+/// GraphicsConfig up to the jitter multiplier, the part the image quality plugin
+/// reads and writes. The object is 0xD8 bytes; its other fields are untouched.
+struct GraphicsConfigObject {
+    void* vtable{nullptr};                   // 0x00
+    uint8_t pad_08[0x24]{0};                 // 0x08 - 0x2C
+    uint32_t anti_aliasing{0};               // 0x2C: AntiAliasing
+    uint8_t pad_30[0x14]{0};                 // 0x30 - 0x44
+    uint8_t dynamic_rezo_enable{0};          // 0x44: The checkbox; with DLSS the client skips it
+    uint8_t rezo_downscale{0};               // 0x45: 0 renders at native whatever the scale
+    uint8_t dynamic_rezo_cutscene{0};        // 0x46
+    uint8_t dynamic_rezo_stepping{0};        // 0x47: 1 from the constructor; 0 stops the controller
+    uint8_t pad_48[0x04]{0};                 // 0x48 - 0x4C
+    float rezo_scale{0.0f};                  // 0x4C: 3D resolution scale, 0.5 - 1.0
+    uint8_t pad_50[0x04]{0};                 // 0x50 - 0x54
+    uint8_t upscale_type{0};                 // 0x54: UpscaleType
+    uint8_t pad_55[0x23]{0};                 // 0x55 - 0x78
+    float jitter_multiplier{0.0f};           // 0x78: Jitter amplitude in render pixels
+};
+static_assert(sizeof(GraphicsConfigObject) == 0x7C, "GraphicsConfigObject must end after the jitter multiplier");
+static_assert(offsetof(GraphicsConfigObject, anti_aliasing) == offsets::GRAPHICS_CONFIG_ANTI_ALIASING, "GraphicsConfigObject::anti_aliasing offset mismatch");
+static_assert(offsetof(GraphicsConfigObject, dynamic_rezo_enable) == offsets::GRAPHICS_CONFIG_DYNAMIC_REZO_ENABLE, "GraphicsConfigObject::dynamic_rezo_enable offset mismatch");
+static_assert(offsetof(GraphicsConfigObject, rezo_downscale) == offsets::GRAPHICS_CONFIG_REZO_DOWNSCALE, "GraphicsConfigObject::rezo_downscale offset mismatch");
+static_assert(offsetof(GraphicsConfigObject, dynamic_rezo_stepping) == offsets::GRAPHICS_CONFIG_DYNAMIC_REZO_STEPPING, "GraphicsConfigObject::dynamic_rezo_stepping offset mismatch");
+static_assert(offsetof(GraphicsConfigObject, rezo_scale) == offsets::GRAPHICS_CONFIG_REZO_SCALE, "GraphicsConfigObject::rezo_scale offset mismatch");
+static_assert(offsetof(GraphicsConfigObject, upscale_type) == offsets::GRAPHICS_CONFIG_UPSCALE_TYPE, "GraphicsConfigObject::upscale_type offset mismatch");
+static_assert(offsetof(GraphicsConfigObject, jitter_multiplier) == offsets::GRAPHICS_CONFIG_JITTER_MULTIPLIER, "GraphicsConfigObject::jitter_multiplier offset mismatch");
+
+/// RenderTargetManager's render heights and timings, read as one block at
+/// offsets::RENDER_TARGET_MANAGER_RENDER_SCALE. Heights are in pixels, times in ms.
+struct RenderScaleState {
+    uint16_t display_height{0};              // +0x0: The swap chain's height
+    uint16_t current_height{0};              // +0x2: What the frame renders at
+    uint16_t target_height{0};               // +0x4: display_height x rezo_scale
+    uint16_t floor_height{0};                // +0x6: Two thirds of the target
+    uint8_t pad_08[0x04]{0};                 // +0x8 - +0xC
+    float gpu_time_ms{0.0f};                 // +0xC: Smoothed GPU time per frame
+    float frame_time_ms{0.0f};               // +0x10: Smoothed frame time (FrametimeAverage)
+};
+static_assert(sizeof(RenderScaleState) == 0x14, "RenderScaleState must be 0x14 bytes");
+static_assert(offsetof(RenderScaleState, current_height) == offsets::RENDER_TARGET_MANAGER_CURRENT_HEIGHT - offsets::RENDER_TARGET_MANAGER_RENDER_SCALE, "RenderScaleState::current_height offset mismatch");
+static_assert(offsetof(RenderScaleState, target_height) == offsets::RENDER_TARGET_MANAGER_TARGET_HEIGHT - offsets::RENDER_TARGET_MANAGER_RENDER_SCALE, "RenderScaleState::target_height offset mismatch");
+static_assert(offsetof(RenderScaleState, floor_height) == offsets::RENDER_TARGET_MANAGER_FLOOR_HEIGHT - offsets::RENDER_TARGET_MANAGER_RENDER_SCALE, "RenderScaleState::floor_height offset mismatch");
+static_assert(offsetof(RenderScaleState, gpu_time_ms) == offsets::RENDER_TARGET_MANAGER_GPU_TIME - offsets::RENDER_TARGET_MANAGER_RENDER_SCALE, "RenderScaleState::gpu_time_ms offset mismatch");
+static_assert(offsetof(RenderScaleState, frame_time_ms) == offsets::RENDER_TARGET_MANAGER_FRAME_TIME - offsets::RENDER_TARGET_MANAGER_RENDER_SCALE, "RenderScaleState::frame_time_ms offset mismatch");
 
 #pragma pack(pop)
 

@@ -6,6 +6,8 @@
 #include "mitigator/latency_plugin.hpp"
 #include "mitigator/latency_overlay.hpp"
 #include "mitigator/latency_settings.hpp"
+#include "iq/image_quality_plugin.hpp"
+#include "iq/iq_settings.hpp"
 #include "common/config/config_manager.hpp"
 #include "common/ui/overlay_base.hpp"
 
@@ -15,11 +17,13 @@ namespace {
 
 /// ReloadConfig: re-reads config.json and hands each plugin given its own section.
 /// A null plugin is skipped; the file is re-read either way.
-void reload_config(meter::CombatPlugin* combat, mitigator::LatencyPlugin* latency) {
+void reload_config(meter::CombatPlugin* combat, mitigator::LatencyPlugin* latency,
+                   iq::ImageQualityPlugin* image_quality) {
     auto& config = config::ConfigManager::instance();
     config.load();
     if (combat) combat->deserialize_config(config.section(plugins::COMBAT_METER.config_section));
     if (latency) latency->deserialize_config(config.section(plugins::LATENCY_MITIGATOR.config_section));
+    if (image_quality) image_quality->deserialize_config(config.section(plugins::IMAGE_QUALITY.config_section));
 }
 
 } // namespace
@@ -28,10 +32,12 @@ config::JsonValue plugin_config_defaults() {
     config::JsonValue doc{config::JsonValue::ObjectType{}};
     doc[plugins::COMBAT_METER.config_section] = meter::default_settings();
     doc[plugins::LATENCY_MITIGATOR.config_section] = mitigator::default_settings();
+    doc[plugins::IMAGE_QUALITY.config_section] = iq::default_settings();
     return doc;
 }
 
-bool save_plugin_config(meter::CombatPlugin* combat, mitigator::LatencyPlugin* latency) {
+bool save_plugin_config(meter::CombatPlugin* combat, mitigator::LatencyPlugin* latency,
+                        iq::ImageQualityPlugin* image_quality) {
     auto& config = config::ConfigManager::instance();
     config::JsonValue section;
     if (combat) {
@@ -41,6 +47,10 @@ bool save_plugin_config(meter::CombatPlugin* combat, mitigator::LatencyPlugin* l
     if (latency) {
         latency->serialize_config(section);
         config.set_section(plugins::LATENCY_MITIGATOR.config_section, std::move(section));
+    }
+    if (image_quality) {
+        image_quality->serialize_config(section);
+        config.set_section(plugins::IMAGE_QUALITY.config_section, std::move(section));
     }
     return config.save_if_changed();
 }
@@ -160,7 +170,7 @@ void dispatch_combat_meter(const CommandDispatchTargets& t, const ipc::CommandPa
             if (t.combat_plugin) t.combat_plugin->set_dps_metric(meter::dps_metric_from(cmd.param_uint));
             break;
         case CommandId::ReloadConfig:
-            if (t.combat_plugin) reload_config(t.combat_plugin, nullptr);
+            if (t.combat_plugin) reload_config(t.combat_plugin, nullptr, nullptr);
             break;
         default:
             break;
@@ -203,7 +213,27 @@ void dispatch_latency_mitigator(const CommandDispatchTargets& t, const ipc::Comm
             if (t.latency_plugin) t.latency_plugin->mitigator().reset();
             break;
         case CommandId::ReloadConfig:
-            if (t.latency_plugin) reload_config(nullptr, t.latency_plugin);
+            if (t.latency_plugin) reload_config(nullptr, t.latency_plugin, nullptr);
+            break;
+        default:
+            break;
+    }
+}
+
+void dispatch_image_quality(const CommandDispatchTargets& t, const ipc::CommandPayload& cmd) {
+    if (t.image_quality_plugin == nullptr) return;
+    switch (static_cast<CommandId>(cmd.command_id)) {
+        case CommandId::SetPluginEnabled:
+            t.image_quality_plugin->set_plugin_enabled(cmd.param_uint != 0);
+            break;
+        case CommandId::SetFixedDlssResolution:
+            t.image_quality_plugin->set_fixed_dlss_resolution(cmd.param_uint != 0);
+            break;
+        case CommandId::SetDlssJitterMultiplier:
+            t.image_quality_plugin->set_dlss_jitter(cmd.param_uint != 0, cmd.param_float);
+            break;
+        case CommandId::ReloadConfig:
+            reload_config(nullptr, nullptr, t.image_quality_plugin);
             break;
         default:
             break;
@@ -221,6 +251,9 @@ void dispatch_command(const CommandDispatchTargets& targets, const ipc::CommandP
         case PluginId::LatencyMitigator:
             dispatch_latency_mitigator(targets, cmd);
             break;
+        case PluginId::ImageQuality:
+            dispatch_image_quality(targets, cmd);
+            break;
         case PluginId::Core:
             if (static_cast<CommandId>(cmd.command_id) == CommandId::UnhookAndExit) {
                 if (targets.shutdown_requested) {
@@ -229,7 +262,7 @@ void dispatch_command(const CommandDispatchTargets& targets, const ipc::CommandP
                 break;
             }
             if (static_cast<CommandId>(cmd.command_id) == CommandId::ReloadConfig) {
-                reload_config(targets.combat_plugin, targets.latency_plugin);
+                reload_config(targets.combat_plugin, targets.latency_plugin, targets.image_quality_plugin);
             }
             break;
         default:

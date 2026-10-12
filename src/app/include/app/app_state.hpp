@@ -24,6 +24,7 @@ enum class DesktopView : uint8_t {
     Dashboard,
     CombatMeter,
     LatencyMitigator,
+    ImageQuality,
     Settings
 };
 
@@ -147,6 +148,16 @@ public:
     /// Clears the app's own copy of the telemetry: the tiles, graph and feed.
     void clear_mitigator_stats();
 
+    // ==========================================
+    // Image Quality Plugin Integration
+    // ==========================================
+    /// The render settings the payload last reported, or nullopt when none arrived
+    /// within kImageQualityStateTtl (no payload, an older one, or the plugin off).
+    [[nodiscard]] std::optional<ipc::ImageQualityStatePayload> image_quality_state() const;
+
+    /// The payload reports once a second, so a report older than this is gone.
+    static constexpr std::chrono::milliseconds kImageQualityStateTtl{3000};
+
     /// Asks the payload to unhook and go dormant without killing the game. Its
     /// DLL stays mapped, so it cannot be attached again until the game restarts;
     /// the supervisor reports ConnectionState::Unloaded once the pipe drops.
@@ -217,6 +228,8 @@ private:
     std::optional<Version> m_payload_version;
     std::optional<ipc::OverlayGeometryPayload> m_combat_geometry;
     std::optional<ipc::OverlayGeometryPayload> m_latency_geometry;
+    std::optional<ipc::ImageQualityStatePayload> m_image_quality_state;
+    std::chrono::steady_clock::time_point m_image_quality_state_at{};
     /// A report arrived that mirror_geometry_to_config() has not folded yet.
     bool m_combat_geometry_new{false};
     bool m_latency_geometry_new{false};

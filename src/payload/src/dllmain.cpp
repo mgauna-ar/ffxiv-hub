@@ -4,6 +4,7 @@
 #include "hub/plugin_registry.hpp"
 #include "payload/overlay_host.hpp"
 #include "payload/game_state_reader.hpp"
+#include "payload/graphics_locator.hpp"
 #include "payload/object_reader.hpp"
 #include "payload/command_dispatcher.hpp"
 #include "payload/command_queue.hpp"
@@ -19,6 +20,7 @@
 #include "meter/combat_overlay.hpp"
 #include "mitigator/latency_plugin.hpp"
 #include "mitigator/latency_overlay.hpp"
+#include "iq/image_quality_plugin.hpp"
 
 #include <array>
 #include <atomic>
@@ -134,6 +136,7 @@ private:
     void create_plugins() {
         m_latency_plugin->initialize();
         m_combat_plugin->initialize();
+        m_image_quality_plugin->initialize();
 
         m_latency_plugin->set_overlay(m_latency_overlay.get());
         m_combat_plugin->set_overlay(m_combat_overlay.get());
@@ -157,6 +160,7 @@ private:
         config.load();
         m_combat_plugin->deserialize_config(config.section(hub::plugins::COMBAT_METER.config_section));
         m_latency_plugin->deserialize_config(config.section(hub::plugins::LATENCY_MITIGATOR.config_section));
+        m_image_quality_plugin->deserialize_config(config.section(hub::plugins::IMAGE_QUALITY.config_section));
     }
 
     // Connects to the desktop app's pipe before touching any game memory below,
@@ -167,10 +171,11 @@ private:
         m_pipe_client = std::make_unique<hub::ipc::PipeClient>();
         m_combat_plugin->set_ring_buffer(&m_pipe_client->ring_buffer());
         m_latency_plugin->set_ring_buffer(&m_pipe_client->ring_buffer());
+        m_image_quality_plugin->set_ring_buffer(&m_pipe_client->ring_buffer());
 
         m_dispatch_targets = hub::payload::CommandDispatchTargets{
             m_combat_plugin.get(), m_combat_overlay.get(), m_latency_plugin.get(), m_latency_overlay.get(),
-            &g_shutdown_requested
+            m_image_quality_plugin.get(), &g_shutdown_requested
         };
         m_pipe_client->set_command_handler([this](const hub::ipc::CommandPayload& cmd) {
             if (m_command_queue.push(cmd)) return;
@@ -201,6 +206,15 @@ private:
         hub::os::Logger::info(
             std::string("GameStateReader::initialize() -> ") +
             (game_state_ok ? "ok" : std::string("FAILED (") + m_game_state_reader.last_error() + ")"));
+
+        // The render settings the image quality plugin holds. Both globals stay null
+        // until the device setup runs, so the plugin reads through them every tick.
+        const bool graphics_ok = m_graphics_locator.initialize();
+        hub::os::Logger::info(
+            std::string("GraphicsLocator::initialize() -> ") +
+            (graphics_ok ? "ok" : std::string("FAILED (") + m_graphics_locator.last_error() + ")"));
+        m_image_quality_plugin->set_render_slots(m_graphics_locator.graphics_config_slot(),
+                                                 m_graphics_locator.render_target_manager_slot());
 
         m_combat_plugin->set_actor_resolver(
             [reader = m_object_reader.get(), plugin = m_combat_plugin.get()](uint32_t entity_id) {
@@ -285,6 +299,7 @@ private:
         m_prev_connected = m_pipe_client->is_connected();
         m_latency_plugin->set_connected(m_prev_connected);
         m_combat_plugin->set_connected(m_prev_connected);
+        m_image_quality_plugin->set_connected(m_prev_connected);
 
         while (!g_shutdown_requested.load() && !hub::payload::Dx11Hook::is_shutting_down()) {
             std::this_thread::sleep_for(intervals::TICK);
@@ -326,7 +341,8 @@ private:
         // changed, since it hits disk; periodic because the game process can be
         // killed outright on exit rather than reaching the graceful teardown below.
         if (m_schedule.config_autosave.fire(now)) {
-            hub::payload::save_plugin_config(m_combat_plugin.get(), m_latency_plugin.get());
+            hub::payload::save_plugin_config(m_combat_plugin.get(), m_latency_plugin.get(),
+                                             m_image_quality_plugin.get());
         }
     }
 
@@ -342,6 +358,8 @@ private:
         m_latency_plugin->set_connected(connected);
         // The meter keeps counting but draws and queues nothing.
         m_combat_plugin->set_connected(connected);
+        // Hands the render settings back: nobody could switch them off.
+        m_image_quality_plugin->set_connected(connected);
         if (connected) {
             // Whoever just connected has none of the names, party, zone or
             // status lists this session already published. The caches
@@ -406,6 +424,7 @@ private:
     void update_plugins(double elapsed_seconds) {
         m_combat_plugin->update(elapsed_seconds);
         m_latency_plugin->update(elapsed_seconds);
+        m_image_quality_plugin->update(elapsed_seconds);
 
         // Update latency overlay with smoothed RTT and what mitigation is doing
         m_latency_overlay->update_rtt(
@@ -462,6 +481,7 @@ private:
         facts.status_reads_enabled = m_object_reader->status_reads_enabled();
         facts.combat_meter_enabled = m_combat_plugin->is_enabled();
         facts.latency_mitigator_enabled = m_latency_plugin->is_plugin_enabled();
+        facts.image_quality_enabled = m_image_quality_plugin->is_plugin_enabled();
         const auto status = hub::payload::build_status(facts);
         m_pipe_client->ring_buffer().push(hub::ipc::serialize_typed_packet(
             hub::PluginId::Core, hub::MessageType::Status, hb.sequence, status));
@@ -522,7 +542,10 @@ private:
         hub::os::Logger::info("Payload shutting down.");
         // First, so an app that starts while the rest runs already finds it.
         hub::os::mark_payload_unloaded(static_cast<uint32_t>(GetCurrentProcessId()));
-        hub::payload::save_plugin_config(m_combat_plugin.get(), m_latency_plugin.get());
+        hub::payload::save_plugin_config(m_combat_plugin.get(), m_latency_plugin.get(),
+                                         m_image_quality_plugin.get());
+        // No tick runs after this, so the render settings go back to the game's now.
+        m_image_quality_plugin->release();
         m_hook_mgr.uninstall();
         hub::payload::Dx11Hook::instance().uninstall();
         m_pipe_client->disconnect();
@@ -543,6 +566,7 @@ private:
 
     std::shared_ptr<hub::mitigator::LatencyPlugin> m_latency_plugin = std::make_shared<hub::mitigator::LatencyPlugin>();
     std::shared_ptr<hub::meter::CombatPlugin> m_combat_plugin = std::make_shared<hub::meter::CombatPlugin>();
+    std::shared_ptr<hub::iq::ImageQualityPlugin> m_image_quality_plugin = std::make_shared<hub::iq::ImageQualityPlugin>();
     std::shared_ptr<hub::mitigator::LatencyOverlay> m_latency_overlay = std::make_shared<hub::mitigator::LatencyOverlay>();
     std::shared_ptr<hub::meter::CombatOverlay> m_combat_overlay =
         std::make_shared<hub::meter::CombatOverlay>(&m_combat_plugin->engine());
@@ -554,6 +578,7 @@ private:
 
     std::unique_ptr<hub::payload::ObjectReader> m_object_reader;
     hub::payload::GameStateReader m_game_state_reader;
+    hub::payload::GraphicsLocator m_graphics_locator;
     hub::payload::HookManager& m_hook_mgr = hub::payload::HookManager::instance();
 
     // The loop's own state.

@@ -256,6 +256,10 @@ bool PipeServer::process_raw_packet(std::span<const uint8_t> data) {
         if (msg_type == MessageType::MitigatorTelemetry) {
             deliver<MitigatorTelemetryPayload>(p, m_on_mitigator_telemetry);
         }
+    } else if (plugin == PluginId::ImageQuality) {
+        if (msg_type == MessageType::ImageQualityState) {
+            deliver<ImageQualityStatePayload>(p, m_on_image_quality_state);
+        }
     }
 
     // Common messages
