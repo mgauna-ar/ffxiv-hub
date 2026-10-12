@@ -43,6 +43,8 @@ constexpr float kCombatWindowW = 1180.0f;
 constexpr float kCombatWindowH = 740.0f;
 constexpr float kLatencyWindowW = 1280.0f;
 constexpr float kLatencyWindowH = 800.0f;
+constexpr float kImageQualityWindowW = 1180.0f;
+constexpr float kImageQualityWindowH = 700.0f;
 /// How long the hero shows each plugin page before switching to the next.
 constexpr int kHeroPageMs = 4000;
 /// ffxiv_dx11.exe's process id, as the tray and the dashboard would show it.
@@ -120,6 +122,7 @@ int main(int argc, char** argv) {
     app.pipe_server().process_raw_packet(
         hub::ipc::serialize_typed_packet(hub::PluginId::Core, hub::MessageType::Status, 1, status));
     shots::access::pose_attached(app, kGamePid, hud.network_ping_ms);
+    shots::report_render_state(app);
 
     // Every frame is captured before any is drawn, so the live pull reads the same
     // elapsed time in each picture.
@@ -139,6 +142,8 @@ int main(int argc, char** argv) {
                                                                 kCombatWindowW, kCombatWindowH, kDensity);
     const shots::DesktopCapture latency = shots::capture_desktop(app, hub::app::DesktopView::LatencyMitigator,
                                                                  kLatencyWindowW, kLatencyWindowH, kDensity);
+    const shots::DesktopCapture image_quality = shots::capture_desktop(
+        app, hub::app::DesktopView::ImageQuality, kImageQualityWindowW, kImageQualityWindowH, kDensity);
 
     // The hero: the overlays on the left of the game's frame, the app's window
     // floating on the right of it, switching between the two plugin pages. Both pages
@@ -178,6 +183,7 @@ int main(int argc, char** argv) {
     ok &= save(game.crop(around(overlays.hud, px(24.0f))), out / "latency-hud.png");
     ok &= save(desktop_canvas(combat), out / "combat-damage-tab.png");
     ok &= save(desktop_canvas(latency), out / "latency-view.png");
+    ok &= save(desktop_canvas(image_quality), out / "image-quality-view.png");
 
     const auto hero_frame = [&](const shots::DesktopCapture& page) {
         shots::Canvas hero = shots::make_backdrop(hero_layout.display_w, hero_layout.display_h);

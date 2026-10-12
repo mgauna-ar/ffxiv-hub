@@ -640,4 +640,23 @@ HudReading play_raid_night(hub::app::AppState& app) {
     return hud;
 }
 
+void report_render_state(hub::app::AppState& app) {
+    hub::ipc::ImageQualityStatePayload state{};
+    state.found = 1;
+    state.upscale_type = static_cast<uint8_t>(hub::game::UpscaleType::Dlss);
+    state.anti_aliasing = static_cast<uint32_t>(hub::game::AntiAliasing::Tscmaa);
+    state.rezo_scale = 0.67f;
+    state.jitter_multiplier = 1.0f;
+    state.display_height = 2160;
+    state.current_height = 1447;
+    state.target_height = 1447;
+    state.floor_height = 964;
+    state.gpu_time_ms = 6.9f;
+    state.frame_time_ms = 8.3f;
+    state.enforcing = static_cast<uint8_t>(hub::ipc::ImageQualityEnforced::FixedResolution) |
+                      static_cast<uint8_t>(hub::ipc::ImageQualityEnforced::JitterMultiplier);
+    app.pipe_server().process_raw_packet(hub::ipc::serialize_typed_packet(
+        hub::PluginId::ImageQuality, hub::MessageType::ImageQualityState, 1, state));
+}
+
 } // namespace shots

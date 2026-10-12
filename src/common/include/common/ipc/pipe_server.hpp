@@ -25,6 +25,7 @@ using CombatEnemyHpCallback = std::function<void(const CombatEnemyHpPayload&)>;
 using CombatCastCallback = std::function<void(const CombatCastPayload&)>;
 
 using MitigatorTelemetryCallback = std::function<void(const MitigatorTelemetryPayload&)>;
+using ImageQualityStateCallback = std::function<void(const ImageQualityStatePayload&)>;
 
 using OverlayGeometryCallback = std::function<void(const OverlayGeometryPayload&)>;
 using GameStateCallback = std::function<void(const GameStatePayload&)>;
@@ -88,6 +89,8 @@ public:
 
     void set_mitigator_telemetry_callback(MitigatorTelemetryCallback cb) { m_on_mitigator_telemetry = std::move(cb); }
 
+    void set_image_quality_state_callback(ImageQualityStateCallback cb) { m_on_image_quality_state = std::move(cb); }
+
     void set_overlay_geometry_callback(OverlayGeometryCallback cb) { m_on_overlay_geometry = std::move(cb); }
     void set_game_state_callback(GameStateCallback cb) { m_on_game_state = std::move(cb); }
     void set_heartbeat_callback(HeartbeatCallback cb) { m_on_heartbeat = std::move(cb); }
@@ -148,6 +151,8 @@ private:
     CombatCastCallback m_on_cast;
 
     MitigatorTelemetryCallback m_on_mitigator_telemetry;
+
+    ImageQualityStateCallback m_on_image_quality_state;
 
     OverlayGeometryCallback m_on_overlay_geometry;
     GameStateCallback m_on_game_state;

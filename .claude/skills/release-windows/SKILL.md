@@ -20,8 +20,8 @@ Outputs `build/bin/Release/ffxiv-hub.exe` and `build/bin/Release/hub_payload.dll
 are `/MT` static-runtime builds, so no Visual C++ Redistributable is needed on the target
 machine.
 
-The build is layered (AGENTS.md, *Build layers*): `hub_common`, `hub_meter` and
-`hub_mitigator` (`hub_plugins`), then `hub_payload_core` and `hub_app_core`, which the DLL,
+The build is layered (AGENTS.md, *Build layers*): `hub_common`, `hub_meter`,
+`hub_mitigator` and `hub_image_quality` (`hub_plugins`), then `hub_payload_core` and `hub_app_core`, which the DLL,
 the executable and `hub_test_runner` link. Each publishes only its own include root, so
 an include across a layer fails to compile. Every target of ours links `hub_warnings`,
 which is `/W4 /WX`, so any MSVC warning in our code fails the build. Fix the warning;

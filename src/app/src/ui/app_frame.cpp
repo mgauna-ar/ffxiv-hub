@@ -4,6 +4,7 @@
 #include "app/ui/view_combat.hpp"
 #include "app/ui/view_dashboard.hpp"
 #include "app/ui/view_latency.hpp"
+#include "app/ui/view_image_quality.hpp"
 #include "app/ui/view_settings.hpp"
 #include "common/os/logger.hpp"
 #include "common/ui/icon_font.hpp"
@@ -83,6 +84,9 @@ void AppFrame::render(AppState& app_state) {
             break;
         case DesktopView::LatencyMitigator:
             render_view_latency(app_state);
+            break;
+        case DesktopView::ImageQuality:
+            render_view_image_quality(app_state);
             break;
         case DesktopView::Settings:
             render_view_settings(app_state, m_settings);

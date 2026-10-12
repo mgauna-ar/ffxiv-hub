@@ -20,6 +20,7 @@ struct StatusFacts {
     /// Each plugin's master switch.
     bool combat_meter_enabled{false};
     bool latency_mitigator_enabled{false};
+    bool image_quality_enabled{false};
 };
 
 /// The Status packet for `facts`. The app acts on the flags; the message is for
@@ -35,6 +36,9 @@ struct StatusFacts {
     }
     if (facts.latency_mitigator_enabled) {
         status.active_plugins_mask |= ipc::plugin_mask_bit(PluginId::LatencyMitigator);
+    }
+    if (facts.image_quality_enabled) {
+        status.active_plugins_mask |= ipc::plugin_mask_bit(PluginId::ImageQuality);
     }
 
     status.flags = ipc::to_bits(PayloadStatusFlag::Reported);

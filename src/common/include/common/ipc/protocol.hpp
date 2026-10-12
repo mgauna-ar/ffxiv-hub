@@ -197,6 +197,35 @@ struct MitigatorTelemetryPayload {
 };
 static_assert(sizeof(MitigatorTelemetryPayload) == 48, "MitigatorTelemetryPayload must be 48 bytes");
 
+/// ImageQualityStatePayload::enforcing bits: what the plugin holds in place now.
+enum class ImageQualityEnforced : uint8_t {
+    /// The frame-time controller is stopped and the render height held at the target.
+    FixedResolution = 1u << 0,
+    /// The jitter multiplier is the plugin's, not the game's.
+    JitterMultiplier = 1u << 1,
+};
+
+/// 0x0301: What the game's render settings read now, sent when they change and
+/// every second while connected.
+struct ImageQualityStatePayload {
+    uint8_t  found{0};                // 1 once both render singletons were read
+    uint8_t  upscale_type{0};         // game::UpscaleType, 0 when unknown
+    uint8_t  dynamic_rezo_enable{0};  // The in-game checkbox, which DLSS ignores
+    uint8_t  stepping{0};             // The frame-time controller may move the height
+    uint32_t anti_aliasing{0};        // game::AntiAliasing
+    float    rezo_scale{0.0f};        // 3D resolution scale
+    float    jitter_multiplier{0.0f}; // As the game reads it now
+    uint16_t display_height{0};
+    uint16_t current_height{0};
+    uint16_t target_height{0};
+    uint16_t floor_height{0};
+    float    gpu_time_ms{0.0f};
+    float    frame_time_ms{0.0f};
+    uint8_t  enforcing{0};            // ImageQualityEnforced bits
+    uint8_t  pad[3]{0};
+};
+static_assert(sizeof(ImageQualityStatePayload) == 36, "ImageQualityStatePayload must be 36 bytes");
+
 /// Damage one player's buffs added to a hit, owed to that player.
 struct CombatBuffCredit {
     uint32_t giver_id{0};

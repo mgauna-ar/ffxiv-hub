@@ -511,6 +511,7 @@ TEST_CASE(AppState, PluginListComesFromTheDescriptorTable) {
     // config.json keys are on disk, so the sections are pinned as literals here.
     TEST_ASSERT(std::string(plugins::COMBAT_METER.config_section) == "combat_meter");
     TEST_ASSERT(std::string(plugins::LATENCY_MITIGATOR.config_section) == "latency_mitigator");
+    TEST_ASSERT(std::string(plugins::IMAGE_QUALITY.config_section) == "image_quality");
     TEST_ASSERT(plugins::find(PluginId::Core) == nullptr);
     TEST_ASSERT(plugins::find(PluginId::None) == nullptr);
 }
@@ -521,7 +522,7 @@ TEST_CASE(AppState, InitializationAndRegisteredPlugins) {
 
     // Verify dynamic plugins registry
     const auto& plugins = state.registered_plugins();
-    TEST_ASSERT_EQ(plugins.size(), 2u);
+    TEST_ASSERT_EQ(plugins.size(), 3u);
 
     TEST_ASSERT_EQ(static_cast<uint16_t>(plugins[0].id), static_cast<uint16_t>(PluginId::CombatMeter));
     TEST_ASSERT(plugins[0].name == "Combat Meter");
@@ -530,6 +531,10 @@ TEST_CASE(AppState, InitializationAndRegisteredPlugins) {
     TEST_ASSERT_EQ(static_cast<uint16_t>(plugins[1].id), static_cast<uint16_t>(PluginId::LatencyMitigator));
     TEST_ASSERT(plugins[1].name == "Latency Mitigator");
     TEST_ASSERT(plugins[1].view == app::DesktopView::LatencyMitigator);
+
+    TEST_ASSERT_EQ(static_cast<uint16_t>(plugins[2].id), static_cast<uint16_t>(PluginId::ImageQuality));
+    TEST_ASSERT(plugins[2].name == "Image Quality");
+    TEST_ASSERT(plugins[2].view == app::DesktopView::ImageQuality);
 
     // Navigation default
     TEST_ASSERT(state.current_view() == app::DesktopView::Dashboard);
@@ -576,6 +581,29 @@ TEST_CASE(AppState, CombatTelemetryAndSummary) {
     auto reset_summary = state.get_live_summary();
     TEST_ASSERT_EQ(reset_summary.total_damage, 0u);
     TEST_ASSERT(reset_summary.state == meter::EncounterState::Idle);
+
+    state.shutdown();
+}
+
+TEST_CASE(AppState, ImageQualityStateIsTheLatestReport) {
+    app::AppState state;
+    state.initialize();
+    TEST_ASSERT_FALSE(state.image_quality_state().has_value());
+
+    ipc::ImageQualityStatePayload report{};
+    report.found = 1;
+    report.current_height = 964;
+    report.target_height = 1447;
+    state.pipe_server().process_raw_packet(
+        ipc::serialize_typed_packet(PluginId::ImageQuality, MessageType::ImageQualityState, 1, report));
+    report.current_height = 1447;
+    state.pipe_server().process_raw_packet(
+        ipc::serialize_typed_packet(PluginId::ImageQuality, MessageType::ImageQualityState, 2, report));
+
+    const auto latest = state.image_quality_state();
+    TEST_ASSERT(latest.has_value());
+    TEST_ASSERT_EQ(latest->current_height, 1447u);
+    TEST_ASSERT_EQ(latest->target_height, 1447u);
 
     state.shutdown();
 }
@@ -859,12 +887,13 @@ TEST_CASE(AppState, PluginMasterSwitchPersistsAndMirrors) {
 
     TEST_ASSERT(state.is_plugin_enabled(PluginId::CombatMeter));
     TEST_ASSERT(state.is_plugin_enabled(PluginId::LatencyMitigator));
-    TEST_ASSERT_EQ(state.enabled_plugin_count(), 2u);
+    TEST_ASSERT(state.is_plugin_enabled(PluginId::ImageQuality));
+    TEST_ASSERT_EQ(state.enabled_plugin_count(), 3u);
 
     state.set_plugin_enabled(PluginId::CombatMeter, false);
     TEST_ASSERT(!state.is_plugin_enabled(PluginId::CombatMeter));
     TEST_ASSERT(state.is_plugin_enabled(PluginId::LatencyMitigator));
-    TEST_ASSERT_EQ(state.enabled_plugin_count(), 1u);
+    TEST_ASSERT_EQ(state.enabled_plugin_count(), 2u);
 
     // The dashboard and sidebar read the mirrored list rather than the config,
     // so the two must not drift.
@@ -882,7 +911,7 @@ TEST_CASE(AppState, PluginMasterSwitchPersistsAndMirrors) {
 
     state.set_plugin_enabled(PluginId::CombatMeter, true);
     TEST_ASSERT(state.is_plugin_enabled(PluginId::CombatMeter));
-    TEST_ASSERT_EQ(state.enabled_plugin_count(), 2u);
+    TEST_ASSERT_EQ(state.enabled_plugin_count(), 3u);
 
     // Ids that own no config section answer "enabled" and are never written out.
     TEST_ASSERT(state.plugin_config_section(PluginId::Core) == nullptr);
@@ -909,7 +938,7 @@ TEST_CASE(AppState, ResetConfigRestoresDefaultsEverywhere) {
     state.reset_config();
 
     TEST_ASSERT(state.is_plugin_enabled(PluginId::CombatMeter));
-    TEST_ASSERT_EQ(state.enabled_plugin_count(), 2u);
+    TEST_ASSERT_EQ(state.enabled_plugin_count(), 3u);
 
     // What the payload reads back on ReloadConfig.
     config::ConfigManager reader;

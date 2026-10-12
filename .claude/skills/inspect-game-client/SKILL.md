@@ -68,6 +68,7 @@ example "entry i goes to slot i", which is exactly the kind of fact premises dep
   keeps status lists" and "How the client fills the party list", effect entries, ticks
   and status applications in "How the client reads an effect entry", "How the client
   reports DoT and HoT ticks" and "How the client applies statuses", and GCD/button flags
-  in "How the Action sheet marks a button". In the root `AGENTS.md`: "How the client
+  in "How the Action sheet marks a button". In the image quality plugin's `AGENTS.md`:
+  "How the client jitters and scales with DLSS". In the root `AGENTS.md`: "How the client
   keeps a character's worlds", "How the client builds an aetheryte", "How the client
   marks the lobby", and "How the client keeps its window and swap chain".
