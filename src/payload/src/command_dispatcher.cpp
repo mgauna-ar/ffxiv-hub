@@ -230,7 +230,7 @@ void dispatch_image_quality(const CommandDispatchTargets& t, const ipc::CommandP
             t.image_quality_plugin->set_fixed_dlss_resolution(cmd.param_uint != 0, cmd.param_float);
             break;
         case CommandId::SetDlssJitter:
-            t.image_quality_plugin->set_dlss_jitter(cmd.param_uint != 0, cmd.param_float);
+            t.image_quality_plugin->set_dlss_jitter(cmd.param_uint != 0);
             break;
         case CommandId::ReloadConfig:
             reload_config(nullptr, nullptr, t.image_quality_plugin);

@@ -12,14 +12,10 @@ struct ImageQualitySettings {
     /// dlss_render_scale of the screen's height.
     bool fixed_dlss_resolution{true};
     float dlss_render_scale{constants::DEFAULT_DLSS_RENDER_SCALE};
-    /// Under DLSS, make the camera jitter by dlss_jitter_amount instead of the
-    /// game's amount.
+    /// Under DLSS, make the camera move by the sample the game tells DLSS about,
+    /// instead of the game's smaller amount.
     bool override_dlss_jitter{true};
-    float dlss_jitter_amount{constants::DEFAULT_JITTER_AMOUNT};
 };
-
-/// `value` within the jitter slider's range; NaN reads as the default.
-[[nodiscard]] float clamp_jitter_amount(float value) noexcept;
 
 /// `value` within the DLSS render scale's range; NaN reads as the default.
 [[nodiscard]] float clamp_render_scale(float value) noexcept;

@@ -51,7 +51,7 @@ public:
     [[nodiscard]] bool is_plugin_enabled() const noexcept { return m_plugin_enabled.load(); }
 
     void set_fixed_dlss_resolution(bool enabled, float render_scale) noexcept;
-    void set_dlss_jitter(bool override_game, float amount) noexcept;
+    void set_dlss_jitter(bool override_game) noexcept;
     [[nodiscard]] const ImageQualitySettings& settings() const noexcept { return m_settings; }
 
     /// Hands every field back now. For an unload, which runs no further tick.

@@ -206,6 +206,9 @@ loudly, and the plugin would then write the wrong byte. With `tools/inspect_exe.
   multiplier's offset and `0x01010100` at `+0x44`.
 - The camera's jitter method (the only reader of the multiplier) still checks
   `+0x54 == 2` and `+0x2c == 2`, and still reads the multiplier and `RTM+0x700`/`+0x704`.
+- The DLSS pass still takes NGX's jitter offset from the raw sample at `+0x0` of the
+  camera's jitter state, not the scaled offset at `+0x8`. If it ever takes the scaled
+  one, an amplitude of 1.0 is no longer what keeps the two in step.
 - The resolution controller still gates its stepping on `+0x47`, still steps
   `RTM+0x702` between `+0x706` and `+0x704`, and nothing else writes `+0x47`. Its tail
   still copies a changed `+0x702` into `+0x700` with the stepping off.

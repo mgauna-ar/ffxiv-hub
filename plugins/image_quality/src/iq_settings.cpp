@@ -27,15 +27,9 @@ constexpr config::ConfigKey<S> KEYS[] = {
     field<S, &S::fixed_dlss_resolution>("fixed_dlss_resolution"),
     clamped_float<&S::dlss_render_scale, clamp_render_scale>("dlss_render_scale"),
     field<S, &S::override_dlss_jitter>("override_dlss_jitter"),
-    clamped_float<&S::dlss_jitter_amount, clamp_jitter_amount>("dlss_jitter_amount"),
 };
 
 } // namespace
-
-float clamp_jitter_amount(float value) noexcept {
-    if (std::isnan(value)) return constants::DEFAULT_JITTER_AMOUNT;
-    return std::clamp(value, constants::MIN_JITTER_AMOUNT, constants::MAX_JITTER_AMOUNT);
-}
 
 float clamp_render_scale(float value) noexcept {
     if (std::isnan(value)) return constants::DEFAULT_DLSS_RENDER_SCALE;

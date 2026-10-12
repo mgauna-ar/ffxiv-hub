@@ -3,19 +3,15 @@
 namespace hub::iq {
 
 namespace constants {
-    /// Jitter amplitude the plugin aims for, in the client's own units: a sample
-    /// anywhere in the pixel. Under DLSS the game's comes out at 0.6 times the
-    /// square of the 3D resolution slider times the render height's share of the
-    /// range's top: 0.16 at 77% and 1440 of 2160.
-    constexpr float DEFAULT_JITTER_AMOUNT = 1.0f;
-    /// What the desktop slider offers, and what a value read from config.json is
-    /// clamped to.
-    constexpr float MIN_JITTER_AMOUNT = 0.5f;
-    constexpr float MAX_JITTER_AMOUNT = 1.5f;
+    /// The jitter amplitude at which the camera moves by the sample the game hands
+    /// DLSS. Any other tells DLSS the wrong offset. The game's comes out at 0.6
+    /// times the square of the 3D resolution slider times the render height's
+    /// share of the range's top: 0.16 at 77% and 1440 of 2160.
+    constexpr float DLSS_JITTER_AMOUNT = 1.0f;
     /// GraphicsConfig's constructor value for the multiplier.
     constexpr float GAME_JITTER_MULTIPLIER = 0.6f;
-    /// The multiplier written never leaves this range. The top covers the most
-    /// that 1.5 can take: a 50% slider at a third of the range's top.
+    /// The multiplier written never leaves this range. The top covers a 50%
+    /// slider at a third of the range's top.
     constexpr float MIN_WRITTEN_MULTIPLIER = 0.05f;
     constexpr float MAX_WRITTEN_MULTIPLIER = 64.0f;
 

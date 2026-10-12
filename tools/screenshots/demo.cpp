@@ -655,7 +655,7 @@ void report_render_state(hub::app::AppState& app) {
     state.target_height = 2160;
     state.floor_height = 1080;
     state.gpu_time_ms = 7.4f;
-    state.frame_time_ms = 9.1f;
+    state.cpu_time_ms = 4.1f;
     state.enforcing = static_cast<uint8_t>(hub::ipc::ImageQualityEnforced::FixedResolution) |
                       static_cast<uint8_t>(hub::ipc::ImageQualityEnforced::JitterMultiplier);
     app.pipe_server().process_raw_packet(hub::ipc::serialize_typed_packet(
