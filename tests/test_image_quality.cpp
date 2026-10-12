@@ -7,6 +7,7 @@
 #include "iq/image_quality_plugin.hpp"
 #include "iq/iq_settings.hpp"
 #include "iq/render_math.hpp"
+#include <cmath>
 #include <cstring>
 #include <vector>
 
@@ -19,7 +20,8 @@ constexpr uint8_t kDlss = static_cast<uint8_t>(game::UpscaleType::Dlss);
 constexpr uint8_t kFsr = static_cast<uint8_t>(game::UpscaleType::Fsr);
 
 /// 4K under DLSS: the game's range is DLSS's own, 1080 to 2160, the controller has
-/// walked the height to the bottom of it, and the 3D resolution slider reads 77%.
+/// walked the height to the bottom of it and frames render there, and the 3D
+/// resolution slider reads 77%.
 GraphicsSnapshot dlss_at_floor() {
     GraphicsSnapshot snap;
     snap.config.upscale_type = kDlss;
@@ -27,10 +29,11 @@ GraphicsSnapshot dlss_at_floor() {
     snap.config.dynamic_rezo_stepping = 1;
     snap.config.rezo_scale = 0.77f;
     snap.config.jitter_multiplier = constants::GAME_JITTER_MULTIPLIER;
-    snap.scale.display_height = 2160;
+    snap.scale.applied_height = 1080;
     snap.scale.target_height = 2160;
     snap.scale.floor_height = 1080;
     snap.scale.current_height = 1080;
+    snap.scale.target_ratio = 1.0f;
     return snap;
 }
 
@@ -118,6 +121,32 @@ TEST_CASE(ImageQuality, FixedResolutionStopsTheControllerAndPinsTheChosenScale) 
     TEST_ASSERT(enforcer.enforcing() & static_cast<uint8_t>(ipc::ImageQualityEnforced::FixedResolution));
 }
 
+TEST_CASE(ImageQuality, PinFollowsTheScreenNotTheHeightInUse) {
+    // Held at Quality, frames render at 1440. Picking Performance moves it to half
+    // the screen, not half of what renders now.
+    auto snap = dlss_at_floor();
+    snap.scale.applied_height = 1440;
+    snap.scale.current_height = 1440;
+    ImageQualitySettings performance{};
+    performance.dlss_render_scale = 0.5f;
+    Enforcer enforcer;
+    (void)enforcer.plan(snap, performance, true);
+    const auto writes = enforcer.plan(snap, performance, true);
+    TEST_ASSERT(writes.current_height.has_value());
+    TEST_ASSERT_EQ(*writes.current_height, 1080u);
+}
+
+TEST_CASE(ImageQuality, ScreenHeightIsTheRangeTopOverItsShare) {
+    // DLSS: its largest render height is the screen's.
+    TEST_ASSERT_EQ(screen_height(2160, 1.0f).value_or(0), 2160u);
+    // FSR: the target is the screen times the slider, and the share is the slider.
+    TEST_ASSERT_EQ(screen_height(1663, 0.77f).value_or(0), 2160u);
+    TEST_ASSERT_FALSE(screen_height(0, 1.0f).has_value());
+    TEST_ASSERT_FALSE(screen_height(2160, 0.0f).has_value());
+    TEST_ASSERT_FALSE(screen_height(2160, std::nanf("")).has_value());
+    TEST_ASSERT_FALSE(screen_height(2160, 1.5f).has_value());
+}
+
 TEST_CASE(ImageQuality, PinStaysInsideTheGameRange) {
     // DLAA is the top of the range, never above it.
     TEST_ASSERT_EQ(pinned_height(2160, 1080, 2160, 1.0f).value_or(0), 2160u);
@@ -129,19 +158,27 @@ TEST_CASE(ImageQuality, PinStaysInsideTheGameRange) {
     TEST_ASSERT_FALSE(pinned_height(2160, 0, 2160, 0.67f).has_value());
     TEST_ASSERT_FALSE(pinned_height(0, 1080, 2160, 0.67f).has_value());
 
-    Enforcer enforcer;
-    auto snap = dlss_at_floor();
-    snap.scale.target_height = 2400;
-    (void)enforcer.plan(snap, ImageQualitySettings{}, true);
-    TEST_ASSERT_FALSE(enforcer.plan(snap, ImageQualitySettings{}, true).current_height.has_value());
+    // Without the screen's height there is nothing to take a share of.
+    for (const float ratio : { 0.0f, 1.2f }) {
+        Enforcer enforcer;
+        auto snap = dlss_at_floor();
+        snap.scale.target_ratio = ratio;
+        (void)enforcer.plan(snap, ImageQualitySettings{}, true);
+        TEST_ASSERT_FALSE(enforcer.plan(snap, ImageQualitySettings{}, true).current_height.has_value());
+    }
 }
 
-TEST_CASE(ImageQuality, JitterCompensatesTheResolutionSlider) {
-    // The game's own jitter under DLSS at a 77% slider.
-    const auto scale_squared = jitter_scale_squared(2160, 2160, 0.77f);
-    TEST_ASSERT(scale_squared.has_value());
-    TEST_ASSERT_NEAR(effective_jitter(constants::GAME_JITTER_MULTIPLIER, *scale_squared), 0.356f, 0.001f);
+TEST_CASE(ImageQuality, JitterCompensatesTheSliderAndTheHeight) {
+    // The game's own jitter under DLSS at a 77% slider: at native, at Quality, and
+    // at the bottom of the range, where the controller had left the fixture.
+    const auto at = [](uint16_t applied) {
+        return effective_jitter(constants::GAME_JITTER_MULTIPLIER, *jitter_scale_squared(applied, 2160, 0.77f));
+    };
+    TEST_ASSERT_NEAR(at(2160), 0.356f, 0.001f);
+    TEST_ASSERT_NEAR(at(1440), 0.159f, 0.001f);
+    TEST_ASSERT_NEAR(at(1080), 0.090f, 0.001f);
 
+    const auto scale_squared = jitter_scale_squared(1080, 2160, 0.77f);
     Enforcer enforcer;
     const auto writes = enforcer.plan(dlss_at_floor(), ImageQualitySettings{}, true);
     TEST_ASSERT(writes.jitter_multiplier.has_value());
@@ -187,7 +224,7 @@ TEST_CASE(ImageQuality, JitterAmountIsClamped) {
     settings.dlss_jitter_amount = 9.0f;
     const auto writes = enforcer.plan(dlss_at_floor(), settings, true);
     TEST_ASSERT(writes.jitter_multiplier.has_value());
-    const auto scale_squared = jitter_scale_squared(2160, 2160, 0.77f);
+    const auto scale_squared = jitter_scale_squared(1080, 2160, 0.77f);
     TEST_ASSERT_NEAR(effective_jitter(*writes.jitter_multiplier, *scale_squared), constants::MAX_JITTER_AMOUNT,
                      0.0001f);
 }
@@ -272,7 +309,7 @@ TEST_CASE(ImageQuality, PluginHoldsDlssInGameMemoryAndReports) {
 
     plugin.update(0.05);
     TEST_ASSERT_EQ(game.stepping(), 0u);
-    const auto scale_squared = jitter_scale_squared(2160, 2160, 0.77f);
+    const auto scale_squared = jitter_scale_squared(1080, 2160, 0.77f);
     TEST_ASSERT_NEAR(effective_jitter(game.jitter(), *scale_squared), constants::DEFAULT_JITTER_AMOUNT, 0.0001f);
     plugin.update(0.05);
     TEST_ASSERT_EQ(game.current_height(), 1440u);
@@ -280,6 +317,8 @@ TEST_CASE(ImageQuality, PluginHoldsDlssInGameMemoryAndReports) {
     const auto states = drain_states(ring);
     TEST_ASSERT_EQ(states.size(), 2u);
     TEST_ASSERT_EQ(states.back().current_height, 1440u);
+    TEST_ASSERT_EQ(states.back().applied_height, 1080u);
+    TEST_ASSERT_EQ(states.back().screen_height, 2160u);
     TEST_ASSERT_EQ(states.back().enforcing,
                    static_cast<uint8_t>(ipc::ImageQualityEnforced::FixedResolution) |
                    static_cast<uint8_t>(ipc::ImageQualityEnforced::JitterMultiplier));

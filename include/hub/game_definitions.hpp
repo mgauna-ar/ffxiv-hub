@@ -129,12 +129,13 @@ namespace offsets {
     constexpr size_t GRAPHICS_CONFIG_JITTER_MULTIPLIER = 0x78;      // 0.6 from the constructor
 
     // RenderTargetManager's render heights, which the frame-time controller moves
-    constexpr size_t RENDER_TARGET_MANAGER_RENDER_SCALE = 0x700;
+    constexpr size_t RENDER_TARGET_MANAGER_RENDER_SCALE = 0x700;    // Also the height frames render at
     constexpr size_t RENDER_TARGET_MANAGER_CURRENT_HEIGHT = 0x702;
     constexpr size_t RENDER_TARGET_MANAGER_TARGET_HEIGHT = 0x704;
     constexpr size_t RENDER_TARGET_MANAGER_FLOOR_HEIGHT = 0x706;
     constexpr size_t RENDER_TARGET_MANAGER_GPU_TIME = 0x70C;
     constexpr size_t RENDER_TARGET_MANAGER_FRAME_TIME = 0x710;
+    constexpr size_t RENDER_TARGET_MANAGER_TARGET_RATIO = 0x71C;    // The target over the screen's height
 } // namespace offsets
 
 /// IDA-style AOB pattern signatures for memory scanning (FFXIV Dawntrail 7.x)
@@ -434,20 +435,23 @@ static_assert(offsetof(GraphicsConfigObject, jitter_multiplier) == offsets::GRAP
 /// RenderTargetManager's render heights and timings, read as one block at
 /// offsets::RENDER_TARGET_MANAGER_RENDER_SCALE. Heights are in pixels, times in ms.
 struct RenderScaleState {
-    uint16_t display_height{0};              // +0x0: The swap chain's height
-    uint16_t current_height{0};              // +0x2: What the frame renders at
-    uint16_t target_height{0};               // +0x4: display_height x rezo_scale
-    uint16_t floor_height{0};                // +0x6: Two thirds of the target
+    uint16_t applied_height{0};              // +0x0: What frames render at; follows current_height
+    uint16_t current_height{0};              // +0x2: The controller's height
+    uint16_t target_height{0};               // +0x4: The top of the controller's range
+    uint16_t floor_height{0};                // +0x6: The bottom of it
     uint8_t pad_08[0x04]{0};                 // +0x8 - +0xC
     float gpu_time_ms{0.0f};                 // +0xC: Smoothed GPU time per frame
     float frame_time_ms{0.0f};               // +0x10: Smoothed frame time (FrametimeAverage)
+    uint8_t pad_14[0x08]{0};                 // +0x14 - +0x1C
+    float target_ratio{0.0f};                // +0x1C: target_height over the screen's height
 };
-static_assert(sizeof(RenderScaleState) == 0x14, "RenderScaleState must be 0x14 bytes");
+static_assert(sizeof(RenderScaleState) == 0x20, "RenderScaleState must be 0x20 bytes");
 static_assert(offsetof(RenderScaleState, current_height) == offsets::RENDER_TARGET_MANAGER_CURRENT_HEIGHT - offsets::RENDER_TARGET_MANAGER_RENDER_SCALE, "RenderScaleState::current_height offset mismatch");
 static_assert(offsetof(RenderScaleState, target_height) == offsets::RENDER_TARGET_MANAGER_TARGET_HEIGHT - offsets::RENDER_TARGET_MANAGER_RENDER_SCALE, "RenderScaleState::target_height offset mismatch");
 static_assert(offsetof(RenderScaleState, floor_height) == offsets::RENDER_TARGET_MANAGER_FLOOR_HEIGHT - offsets::RENDER_TARGET_MANAGER_RENDER_SCALE, "RenderScaleState::floor_height offset mismatch");
 static_assert(offsetof(RenderScaleState, gpu_time_ms) == offsets::RENDER_TARGET_MANAGER_GPU_TIME - offsets::RENDER_TARGET_MANAGER_RENDER_SCALE, "RenderScaleState::gpu_time_ms offset mismatch");
 static_assert(offsetof(RenderScaleState, frame_time_ms) == offsets::RENDER_TARGET_MANAGER_FRAME_TIME - offsets::RENDER_TARGET_MANAGER_RENDER_SCALE, "RenderScaleState::frame_time_ms offset mismatch");
+static_assert(offsetof(RenderScaleState, target_ratio) == offsets::RENDER_TARGET_MANAGER_TARGET_RATIO - offsets::RENDER_TARGET_MANAGER_RENDER_SCALE, "RenderScaleState::target_ratio offset mismatch");
 
 #pragma pack(pop)
 

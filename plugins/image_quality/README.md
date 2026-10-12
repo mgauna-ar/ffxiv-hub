@@ -16,8 +16,9 @@ app, or from its card on the dashboard.
   The plugin holds the mode you choose instead: DLAA, Ultra Quality, Quality, Balanced or
   Performance.
 - **Full camera jitter.** DLSS smooths edges by nudging the camera a fraction of a pixel
-  every frame. The game nudges it by 0.6 of a pixel times its 3D resolution slider
-  squared: 0.36 at 77%. Edges that stay still never get sampled across the whole pixel
+  every frame. The game's nudge shrinks with its 3D resolution slider and with the render
+  height: at 77% and 4K it is 0.36 of a pixel at native, 0.16 at Quality and 0.09 at the
+  bottom of DLSS's range. Edges that stay still never get sampled across the whole pixel
   and stay jagged. The plugin uses a full pixel.
 - **Visible.** The desktop view shows the upscaler, the height the game renders at within
   its range, the jitter in use, and the game's frame and GPU times.
@@ -42,9 +43,10 @@ and 2138 to 2160 in DLAA, which leaves the controller nowhere to go. The control
 So in Quality DLSS renders at anything between Performance and DLAA, and changes with
 the scene. Going from the bottom of the range to the top takes about half a minute.
 
-The camera jitter has its own catch. The game scales it by its 3D resolution slider
-squared, even under DLSS, where the slider sets nothing else: at 77% the jitter is 0.36
-of a pixel.
+The camera jitter has its own catch. The game starts from 0.6 of a pixel and scales it by
+the square of its 3D resolution slider times the render height's share of the range's
+top, even under DLSS, where the slider sets nothing else. At 77% and 4K that is 0.36 of
+a pixel at native, 0.16 at Quality, and 0.09 when the controller sits at the bottom.
 
 ### What gets changed
 
@@ -55,7 +57,7 @@ and only when they differ from what the plugin wants:
 |---|---|---|
 | The resolution controller | On | Off, under DLSS with *Fixed render resolution* |
 | The height a frame renders at | Wherever the controller left it | The chosen mode's share of the screen, kept within the game's range |
-| The camera jitter | 0.6 times the slider squared | The *Jitter amount*, 1.0 by default, under DLSS with *Full camera jitter* |
+| The camera jitter | 0.6, scaled down by the slider and the render height | The *Jitter amount*, 1.0 by default, under DLSS with *Full camera jitter* |
 
 The plugin remembers the game's values before its first change and writes them back when
 it lets go. The controller then resumes from where the height is.

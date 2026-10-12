@@ -258,7 +258,7 @@ bool PipeServer::process_raw_packet(std::span<const uint8_t> data) {
         }
     } else if (plugin == PluginId::ImageQuality) {
         if (msg_type == MessageType::ImageQualityState) {
-            deliver<ImageQualityStatePayload>(p, m_on_image_quality_state);
+            deliver_versioned<ImageQualityStatePayload>(p, IMAGE_QUALITY_STATE_V1_SIZE, m_on_image_quality_state);
         }
     }
 

@@ -254,6 +254,30 @@ TEST_CASE(PipeServer, GameStateFromAPayloadBeforeTheWorld) {
     TEST_ASSERT_EQ(received.current_world, uint16_t{40});
 }
 
+TEST_CASE(PipeServer, ImageQualityStateFromAPayloadBeforeTheScreenHeight) {
+    // A payload loaded before screen_height sends the 36-byte report. It arrives,
+    // and the screen's height reads as 0: the view shows no render scale.
+    ipc::PipeServer server;
+    ipc::ImageQualityStatePayload received{};
+    received.screen_height = 0xBEEF;
+    server.set_image_quality_state_callback([&](const ipc::ImageQualityStatePayload& s) { received = s; });
+
+    ipc::ImageQualityStatePayload state{};
+    state.found = 1;
+    state.current_height = 1440;
+    state.screen_height = 2160;
+    const auto* bytes = reinterpret_cast<const uint8_t*>(&state);
+    TEST_ASSERT(server.process_raw_packet(ipc::serialize_packet(
+        PluginId::ImageQuality, MessageType::ImageQualityState, 1,
+        std::span<const uint8_t>(bytes, ipc::IMAGE_QUALITY_STATE_V1_SIZE))));
+    TEST_ASSERT_EQ(received.current_height, uint16_t{1440});
+    TEST_ASSERT_EQ(received.screen_height, uint16_t{0});
+
+    TEST_ASSERT(server.process_raw_packet(ipc::serialize_typed_packet(
+        PluginId::ImageQuality, MessageType::ImageQualityState, 2, state)));
+    TEST_ASSERT_EQ(received.screen_height, uint16_t{2160});
+}
+
 TEST_CASE(PipeServer, StatusFromAnOlderPayload) {
     // A payload loaded before the status flags sends the 76-byte status. It must
     // still arrive, flags 0, and the hooks badge falls back to the message text.
