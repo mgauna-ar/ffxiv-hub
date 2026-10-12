@@ -64,7 +64,10 @@ Addresses are for that build only; re-check after a patch.
   `RTM+0x730` holds a callback, it takes them from it: `0x1403524a0`, installed by
   `0x140352c40` when the device reports DLSS, answers only while `+0x54 == 2`, with the
   DLSS object's sizes for the selected mode (`0x1403746e0`): the target from `+0xe4` and
-  the floor from `+0xdc`, NGX's largest and smallest render sizes, 2160 and 1080 at 4K.
+  the floor from `+0xdc`, NGX's largest and smallest render sizes. Seen live at 4K
+  (2026-10-12, through the Live tab) with the DLSS mode forced by NVIDIA's driver
+  override: 1080-2160 in Quality, 2138-2160 in DLAA, where the controller has one step
+  left and the pin always lands near native.
   The mode's own render size (`+0xd4`, NGX's optimal one, or the screen times the slider
   when the object's `+0x180` is 1) is not used by the controller. Without the callback
   (FSR) the target is the screen height times the slider and the floor two thirds of it.

@@ -31,15 +31,16 @@ app, or from its card on the dashboard.
 ### What the game does with DLSS
 
 With DLSS selected, the game asks DLSS for the range of render resolutions it accepts,
-which at 4K is 1080 to 2160 lines, and runs a resolution controller inside it, whatever
-the *Enable dynamic resolution* checkbox says:
+and runs a resolution controller inside it, whatever the *Enable dynamic resolution*
+checkbox says. The range depends on DLSS's mode: at 4K, 1080 to 2160 lines in Quality,
+and 2138 to 2160 in DLAA, which leaves the controller nowhere to go. The controller:
 
 - It lowers the height when the GPU takes more than 90% of the frame, and raises it when
   it takes less than 80%.
 - It moves 9 pixels at a time (18 above 1440), once every half second.
 
-So DLSS renders at anything between Performance and DLAA, and changes with the scene.
-Going from the bottom of the range to the top takes about half a minute.
+So in Quality DLSS renders at anything between Performance and DLAA, and changes with
+the scene. Going from the bottom of the range to the top takes about half a minute.
 
 The camera jitter has its own catch. The game scales it by its 3D resolution slider
 squared, even under DLSS, where the slider sets nothing else: at 77% the jitter is 0.36
@@ -64,7 +65,8 @@ it lets go. The controller then resumes from where the height is.
 - **FSR.** Nothing is changed while the upscaler is FSR, including *TSCMAA + camera
   jitter*, which keeps the game's jitter.
 - **The range.** The game's own lowest and highest heights are never crossed: a mode
-  outside them is held at the closest end.
+  outside them is held at the closest end, and the Live tab says so. In DLSS's DLAA mode
+  every choice comes out at native.
 
 ---
 

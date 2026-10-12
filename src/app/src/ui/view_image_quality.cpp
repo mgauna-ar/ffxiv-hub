@@ -171,10 +171,23 @@ void render_status_card(const State& state) {
     }
 
     char height[64];
+    char height_help[128];
+    std::snprintf(height_help, sizeof(height_help),
+                  "With DLSS the game runs its dynamic resolution whatever its checkbox says.");
     uint32_t height_color = colors::WarningLight;
     if (enforcing(state, ipc::ImageQualityEnforced::FixedResolution)) {
         std::snprintf(height, sizeof(height), "Held at %u px", static_cast<unsigned>(state.current_height));
         height_color = colors::SuccessLight;
+        // DLSS's mode sets the range; a pick outside it is held at the nearest end.
+        const float scale = cfg_get(IQ, "dlss_render_scale", iq::constants::DEFAULT_DLSS_RENDER_SCALE);
+        const long wanted = std::lround(state.display_height * static_cast<double>(scale));
+        if (state.display_height != 0 && (wanted < state.floor_height || wanted > state.target_height)) {
+            std::snprintf(height_help, sizeof(height_help),
+                          "The mode you picked, %ld px, is %s the %s height DLSS allows now.", wanted,
+                          wanted < state.floor_height ? "below" : "above",
+                          wanted < state.floor_height ? "lowest" : "highest");
+            height_color = colors::WarningLight;
+        }
     } else if (state.stepping != 0) {
         std::snprintf(height, sizeof(height), "Moving between %u and %u px",
                       static_cast<unsigned>(state.floor_height), static_cast<unsigned>(state.target_height));
@@ -182,9 +195,7 @@ void render_status_card(const State& state) {
         std::snprintf(height, sizeof(height), "Fixed by the game");
         height_color = colors::TextDim;
     }
-    status_row("Render resolution",
-               "With DLSS the game runs its dynamic resolution whatever its checkbox says.",
-               height, height_color);
+    status_row("Render resolution", height_help, height, height_color);
 
     char jitter[48];
     if (const auto applied = jitter_with(state, state.jitter_multiplier)) {
