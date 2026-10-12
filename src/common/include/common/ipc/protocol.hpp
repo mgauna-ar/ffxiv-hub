@@ -199,7 +199,7 @@ static_assert(sizeof(MitigatorTelemetryPayload) == 48, "MitigatorTelemetryPayloa
 
 /// ImageQualityStatePayload::enforcing bits: what the plugin holds in place now.
 enum class ImageQualityEnforced : uint8_t {
-    /// The frame-time controller is stopped and the render height held at the target.
+    /// The frame-time controller is stopped and the render height held at the chosen mode.
     FixedResolution = 1u << 0,
     /// The jitter multiplier is the plugin's, not the game's.
     JitterMultiplier = 1u << 1,
@@ -215,7 +215,7 @@ struct ImageQualityStatePayload {
     uint32_t anti_aliasing{0};        // game::AntiAliasing
     float    rezo_scale{0.0f};        // 3D resolution scale
     float    jitter_multiplier{0.0f}; // As the game reads it now
-    uint16_t display_height{0};
+    uint16_t applied_height{0};       // What frames render at now
     uint16_t current_height{0};
     uint16_t target_height{0};
     uint16_t floor_height{0};
@@ -223,8 +223,12 @@ struct ImageQualityStatePayload {
     float    frame_time_ms{0.0f};
     uint8_t  enforcing{0};            // ImageQualityEnforced bits
     uint8_t  pad[3]{0};
+    uint16_t screen_height{0};        // 0 when unknown
 };
-static_assert(sizeof(ImageQualityStatePayload) == 36, "ImageQualityStatePayload must be 36 bytes");
+static_assert(sizeof(ImageQualityStatePayload) == 38, "ImageQualityStatePayload must be 38 bytes");
+/// What a payload from before `screen_height` sends: no render scale to show.
+constexpr size_t IMAGE_QUALITY_STATE_V1_SIZE = 36;
+static_assert(offsetof(ImageQualityStatePayload, screen_height) == IMAGE_QUALITY_STATE_V1_SIZE, "screen_height must follow the old layout");
 
 /// Damage one player's buffs added to a hit, owed to that player.
 struct CombatBuffCredit {

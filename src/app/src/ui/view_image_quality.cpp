@@ -65,7 +65,7 @@ const char* anti_aliasing_name(uint32_t mode) {
 
 /// The jitter the game applies with `multiplier`, or nullopt while the heights are unknown.
 std::optional<float> jitter_with(const State& state, float multiplier) {
-    const auto scale_squared = iq::jitter_scale_squared(state.display_height, state.target_height, state.rezo_scale);
+    const auto scale_squared = iq::jitter_scale_squared(state.applied_height, state.target_height, state.rezo_scale);
     if (!scale_squared) return std::nullopt;
     return iq::effective_jitter(multiplier, *scale_squared);
 }
@@ -104,10 +104,10 @@ void render_tiles(const State& state) {
 
     char scale[32];
     char scale_sub[48];
-    if (state.display_height != 0) {
+    if (state.screen_height != 0) {
         std::snprintf(scale, sizeof(scale), "%.0f%%",
-                      100.0 * state.current_height / static_cast<double>(state.display_height));
-        std::snprintf(scale_sub, sizeof(scale_sub), "of %u px", static_cast<unsigned>(state.display_height));
+                      100.0 * state.current_height / static_cast<double>(state.screen_height));
+        std::snprintf(scale_sub, sizeof(scale_sub), "of %u px", static_cast<unsigned>(state.screen_height));
     } else {
         std::snprintf(scale, sizeof(scale), "--");
         std::snprintf(scale_sub, sizeof(scale_sub), "screen height unknown");
@@ -147,7 +147,7 @@ void render_tiles(const State& state) {
         "it by GPU load anywhere in the range DLSS reports, 9 px every half second.",
         "The render height as a share of the screen's. DLSS's Quality mode is 67%.",
         "How far the camera is nudged each frame. 1.0 covers the whole pixel. The game's amount "
-        "shrinks with the square of its 3D resolution slider.",
+        "shrinks with the square of its 3D resolution slider, and again as the render height drops.",
         "The game's own smoothed frame and GPU times, which its resolution controller acts on.",
     };
     stat_tile_row(tiles, std::size(tiles), tooltips);
@@ -180,8 +180,8 @@ void render_status_card(const State& state) {
         height_color = colors::SuccessLight;
         // DLSS's mode sets the range; a pick outside it is held at the nearest end.
         const float scale = cfg_get(IQ, "dlss_render_scale", iq::constants::DEFAULT_DLSS_RENDER_SCALE);
-        const long wanted = std::lround(state.display_height * static_cast<double>(scale));
-        if (state.display_height != 0 && (wanted < state.floor_height || wanted > state.target_height)) {
+        const long wanted = std::lround(state.screen_height * static_cast<double>(scale));
+        if (state.screen_height != 0 && (wanted < state.floor_height || wanted > state.target_height)) {
             std::snprintf(height_help, sizeof(height_help),
                           "The mode you picked, %ld px, is %s the %s height DLSS allows now.", wanted,
                           wanted < state.floor_height ? "below" : "above",

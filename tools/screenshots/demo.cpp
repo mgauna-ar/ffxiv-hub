@@ -646,9 +646,11 @@ void report_render_state(hub::app::AppState& app) {
     state.upscale_type = static_cast<uint8_t>(hub::game::UpscaleType::Dlss);
     state.anti_aliasing = static_cast<uint32_t>(hub::game::AntiAliasing::Tscmaa);
     state.rezo_scale = 0.77f;
-    // What the plugin writes for a full-pixel jitter at that slider.
-    state.jitter_multiplier = (1.0f - 0.001f) / (0.77f * 0.77f) + 0.001f;
-    state.display_height = 2160;
+    // What the plugin writes for a full-pixel jitter at that slider and height.
+    const float s = 1440.0f / 2160.0f * 0.77f;
+    state.jitter_multiplier = (1.0f - 0.001f) / (s * s) + 0.001f;
+    state.applied_height = 1440;
+    state.screen_height = 2160;
     state.current_height = 1440;
     state.target_height = 2160;
     state.floor_height = 1080;

@@ -17,8 +17,10 @@ GraphicsWrites Enforcer::plan(const GraphicsSnapshot& snap, const ImageQualitySe
         // With the controller stopped the height stays wherever it was. It is pinned
         // inside the controller's own range, and only once that range held for a
         // tick: the render thread rewrites both ends when DLSS's range changes.
-        const auto pin = pinned_height(scale.display_height, scale.floor_height, scale.target_height,
-                                       clamp_render_scale(settings.dlss_render_scale));
+        const auto screen = screen_height(scale.target_height, scale.target_ratio);
+        const auto pin = screen ? pinned_height(*screen, scale.floor_height, scale.target_height,
+                                                clamp_render_scale(settings.dlss_render_scale))
+                                : std::nullopt;
         if (range_settled && pin && scale.current_height != *pin) writes.current_height = *pin;
     } else if (m_game_stepping) {
         // The controller resumes from where the height is and walks it itself.
@@ -26,7 +28,7 @@ GraphicsWrites Enforcer::plan(const GraphicsSnapshot& snap, const ImageQualitySe
         m_game_stepping.reset();
     }
 
-    const auto scale_squared = jitter_scale_squared(scale.display_height, scale.target_height,
+    const auto scale_squared = jitter_scale_squared(scale.applied_height, scale.target_height,
                                                     snap.config.rezo_scale);
     if (active && dlss && settings.override_dlss_jitter) {
         // Without the heights there is no knowing what a multiplier amounts to.
@@ -76,13 +78,14 @@ ipc::ImageQualityStatePayload state_payload(const GraphicsSnapshot& snap, uint8_
     state.anti_aliasing = snap.config.anti_aliasing;
     state.rezo_scale = snap.config.rezo_scale;
     state.jitter_multiplier = snap.config.jitter_multiplier;
-    state.display_height = snap.scale.display_height;
+    state.applied_height = snap.scale.applied_height;
     state.current_height = snap.scale.current_height;
     state.target_height = snap.scale.target_height;
     state.floor_height = snap.scale.floor_height;
     state.gpu_time_ms = snap.scale.gpu_time_ms;
     state.frame_time_ms = snap.scale.frame_time_ms;
     state.enforcing = enforcing;
+    state.screen_height = screen_height(snap.scale.target_height, snap.scale.target_ratio).value_or(0);
     return state;
 }
 
