@@ -10,24 +10,36 @@ namespace {
 using config::field;
 using S = ImageQualitySettings;
 
+/// A float key read through `clamp`.
+template <float S::*Member, float (*Clamp)(float) noexcept>
+constexpr config::ConfigKey<S> clamped_float(const char* name) noexcept {
+    return config::ConfigKey<S>{
+        name,
+        [](const S& s) { return config::JsonValue(static_cast<double>(s.*Member)); },
+        [](const config::JsonValue& v, S& s) {
+            if (v.is_number()) s.*Member = Clamp(v.as_float(s.*Member));
+        },
+    };
+}
+
 /// Every key the plugin persists besides the master switch.
 constexpr config::ConfigKey<S> KEYS[] = {
     field<S, &S::fixed_dlss_resolution>("fixed_dlss_resolution"),
+    clamped_float<&S::dlss_render_scale, clamp_render_scale>("dlss_render_scale"),
     field<S, &S::override_dlss_jitter>("override_dlss_jitter"),
-    config::ConfigKey<S>{
-        "dlss_jitter_multiplier",
-        [](const S& s) { return config::JsonValue(static_cast<double>(s.dlss_jitter_multiplier)); },
-        [](const config::JsonValue& v, S& s) {
-            if (v.is_number()) s.dlss_jitter_multiplier = clamp_jitter_multiplier(v.as_float(s.dlss_jitter_multiplier));
-        },
-    },
+    clamped_float<&S::dlss_jitter_amount, clamp_jitter_amount>("dlss_jitter_amount"),
 };
 
 } // namespace
 
-float clamp_jitter_multiplier(float value) noexcept {
-    if (std::isnan(value)) return constants::DEFAULT_JITTER_MULTIPLIER;
-    return std::clamp(value, constants::MIN_JITTER_MULTIPLIER, constants::MAX_JITTER_MULTIPLIER);
+float clamp_jitter_amount(float value) noexcept {
+    if (std::isnan(value)) return constants::DEFAULT_JITTER_AMOUNT;
+    return std::clamp(value, constants::MIN_JITTER_AMOUNT, constants::MAX_JITTER_AMOUNT);
+}
+
+float clamp_render_scale(float value) noexcept {
+    if (std::isnan(value)) return constants::DEFAULT_DLSS_RENDER_SCALE;
+    return std::clamp(value, constants::MIN_DLSS_RENDER_SCALE, constants::MAX_DLSS_RENDER_SCALE);
 }
 
 void write_settings(const ImageQualitySettings& settings, config::JsonValue& section) {

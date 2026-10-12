@@ -17,8 +17,8 @@ struct HudReading {
 /// are made up.
 HudReading play_raid_night(hub::app::AppState& app);
 
-/// What the payload reports of the game's render settings: DLSS at 67% of a 4K
-/// screen, held at its target with full camera jitter.
+/// What the payload reports of the game's render settings: DLSS on a 4K screen,
+/// held at Quality with a full-pixel camera jitter.
 void report_render_state(hub::app::AppState& app);
 
 /// How far into the live pull the pictures are taken.

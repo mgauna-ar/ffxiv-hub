@@ -722,16 +722,17 @@ TEST_CASE(Payload, ImageQualitySettingsFromTheAppSurviveTheAutosave) {
         cmd.param_float = value_float;
         payload::dispatch_command(targets, cmd);
     };
-    send(CommandId::SetFixedDlssResolution, 0);
-    send(CommandId::SetDlssJitterMultiplier, 1, 1.2f);
+    send(CommandId::SetFixedDlssResolution, 0, 0.58f);
+    send(CommandId::SetDlssJitter, 1, 1.2f);
     send(CommandId::SetPluginEnabled, 0);
 
     TEST_ASSERT_FALSE(plugin.is_plugin_enabled());
     config::JsonValue saved(config::JsonValue::ObjectType{});
     plugin.serialize_config(saved);
     TEST_ASSERT_FALSE(saved["fixed_dlss_resolution"].as_bool(true));
+    TEST_ASSERT_NEAR(saved["dlss_render_scale"].as_double(0.0), 0.58, 1e-6);
     TEST_ASSERT_TRUE(saved["override_dlss_jitter"].as_bool(false));
-    TEST_ASSERT_NEAR(saved["dlss_jitter_multiplier"].as_double(0.0), 1.2, 1e-6);
+    TEST_ASSERT_NEAR(saved["dlss_jitter_amount"].as_double(0.0), 1.2, 1e-6);
     TEST_ASSERT_FALSE(saved["plugin_enabled"].as_bool(true));
 
     // Another plugin's commands never reach it, and a missing target is a no-op.

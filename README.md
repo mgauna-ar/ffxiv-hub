@@ -11,7 +11,7 @@ with in-game overlays.**
 
 See the DPS, healing, deaths and buff uptime of every pull. Weave oGCDs on a 200 ms
 connection the way you would sitting next to the datacenter. Keep DLSS sharp at the
-resolution you chose. It comes as two files with no installer.
+mode you pick. It comes as two files with no installer.
 
 ![The FFXIV Hub desktop app switching between its Latency Mitigator and Combat Meter pages, beside the in-game combat meter and ping HUD](docs/images/hero.png)
 
@@ -53,14 +53,14 @@ high-ping connection.**
   and never touches an action the server rejected.
 - A small in-game badge shows your network ping and action round-trip time.
 
-**🖼️ [Image Quality](plugins/image_quality/README.md) keeps DLSS at the resolution you
-set.**
+**🖼️ [Image Quality](plugins/image_quality/README.md) holds DLSS at the mode you
+pick.**
 
-- Stops the game from lowering the DLSS render resolution under load and taking half a
-  minute to bring it back.
-- Gives DLSS a full-pixel camera jitter instead of the game's 0.6, so edges that stand
-  still get smoothed too.
-- Shows what the game renders at, against its target, live.
+- Under DLSS the game moves its render resolution with GPU load, anywhere from half the
+  screen to all of it. Pick DLAA, Quality, Balanced or Performance, and it stays there.
+- Gives DLSS a full-pixel camera jitter. The game's shrinks with its 3D resolution
+  slider, so edges that stand still stay jagged.
+- Shows what the game renders at, within its range, live.
 - Changes nothing under FSR, and puts the game's own values back when switched off.
 
 **🖥️ The app**
@@ -197,7 +197,7 @@ or its dashboard card.
 |---|---|
 | [**Combat Meter**](plugins/combat_meter/README.md) | DPS and HPS with overheal separated, rDPS/aDPS/nDPS/cDPS from raid buff credit, crit/DH/CDH rates, automatic pet attribution, deaths with killing blow and recap, buff/debuff/DoT uptime, damage taken by ability, casts and GCD uptime, a per-second timeline with raid buff windows, encounter tracking and pull history with the boss's HP left |
 | [**Latency Mitigator**](plugins/latency_mitigator/README.md) | Animation lock compensation for clean double-weaving on high latency, with a live ping and RTT HUD |
-| [**Image Quality**](plugins/image_quality/README.md) | DLSS held at its configured render resolution, with full-pixel camera jitter, and a live view of what the game renders at |
+| [**Image Quality**](plugins/image_quality/README.md) | DLSS held at the mode you pick instead of moving with GPU load, a full-pixel camera jitter, and a live view of what the game renders at |
 
 Each plugin's README covers how it works, its in-game overlay, its desktop view and its
 configuration keys.

@@ -11,7 +11,7 @@
 
 namespace hub::iq {
 
-/// Holds DLSS at its configured render scale and widens its camera jitter, by
+/// Holds DLSS at a chosen render scale and sets its camera jitter, by
 /// writing three fields of the game's render singletons from the orchestration
 /// thread. Everything it changed goes back to the game's value when it is switched
 /// off, the app disconnects, the upscaler is not DLSS, or the payload unloads.
@@ -50,8 +50,8 @@ public:
     void set_plugin_enabled(bool enabled) noexcept { m_plugin_enabled.store(enabled); }
     [[nodiscard]] bool is_plugin_enabled() const noexcept { return m_plugin_enabled.load(); }
 
-    void set_fixed_dlss_resolution(bool enabled) noexcept { m_settings.fixed_dlss_resolution = enabled; }
-    void set_dlss_jitter(bool override_game, float multiplier) noexcept;
+    void set_fixed_dlss_resolution(bool enabled, float render_scale) noexcept;
+    void set_dlss_jitter(bool override_game, float amount) noexcept;
     [[nodiscard]] const ImageQualitySettings& settings() const noexcept { return m_settings; }
 
     /// Hands every field back now. For an unload, which runs no further tick.

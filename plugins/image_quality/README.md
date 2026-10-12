@@ -1,25 +1,26 @@
 # 🖼️ Image Quality
 
-Keeps DLSS rendering at the 3D resolution scale you chose, and gives it the camera jitter
-it needs to smooth edges that are standing still. It changes nothing unless the game's
-upscaler is DLSS, and hands every value back to the game when it is switched off.
+Lets you pick the resolution DLSS renders at and keeps it there, and gives DLSS the camera
+jitter it needs to smooth edges that are standing still. It changes nothing unless the
+game's upscaler is DLSS, and hands every value back to the game when it is switched off.
 
 Part of [FFXIV Hub](../../README.md). Enable or disable it from its page in the desktop
 app, or from its card on the dashboard.
 
-![The Image Quality page: DLSS held at 1447 of 2160 px with full camera jitter](../../docs/images/image-quality-view.png)
+![The Image Quality page: DLSS held at Quality, 1440 of 2160 px, with full camera jitter](../../docs/images/image-quality-view.png)
 
 ## At a glance
 
-- **Fixed render resolution.** With DLSS the game lowers the resolution it renders at
-  whenever the GPU is busy, then raises it again 9 pixels every half second. After a
-  loading screen that can take half a minute. The plugin stops that, so DLSS always
-  works from the resolution you set.
+- **A DLSS mode that holds.** With DLSS the game picks its render resolution by GPU load,
+  anywhere from half the screen to all of it, and moves it 9 pixels every half second.
+  The plugin holds the mode you choose instead: DLAA, Ultra Quality, Quality, Balanced or
+  Performance.
 - **Full camera jitter.** DLSS smooths edges by nudging the camera a fraction of a pixel
-  every frame. The game nudges it by 0.6 of a pixel, so edges that stay still never get
-  sampled across the whole pixel and stay jagged. The plugin uses a full pixel.
-- **Visible.** The desktop view shows the upscaler, the height the game renders at
-  against its target, the jitter in use, and the game's frame and GPU times.
+  every frame. The game nudges it by 0.6 of a pixel times its 3D resolution slider
+  squared: 0.36 at 77%. Edges that stay still never get sampled across the whole pixel
+  and stay jagged. The plugin uses a full pixel.
+- **Visible.** The desktop view shows the upscaler, the height the game renders at within
+  its range, the jitter in use, and the game's frame and GPU times.
 - **Reversible.** Switching it off, closing the Hub, or picking FSR puts the game's own
   values back within 50 ms.
 
@@ -29,18 +30,20 @@ app, or from its card on the dashboard.
 
 ### What the game does with DLSS
 
-The game's *3D resolution scaling* slider sets a target: the screen's height times the
-scale. With DLSS selected, the game does not render at that target. It runs a resolution
-controller, whatever the *Enable dynamic resolution* checkbox says:
+With DLSS selected, the game asks DLSS for the range of render resolutions it accepts,
+which at 4K is 1080 to 2160 lines, and runs a resolution controller inside it, whatever
+the *Enable dynamic resolution* checkbox says:
 
-- It renders anywhere between two thirds of the target and the target.
 - It lowers the height when the GPU takes more than 90% of the frame, and raises it when
   it takes less than 80%.
 - It moves 9 pixels at a time (18 above 1440), once every half second.
 
-At 4K and a 67% scale that is 964 to 1447 pixels: 54 steps, about 27 seconds from the
-bottom to the top. A busy GPU with no frame cap keeps it near the bottom, where DLSS
-reconstructs 4K from 964 lines.
+So DLSS renders at anything between Performance and DLAA, and changes with the scene.
+Going from the bottom of the range to the top takes about half a minute.
+
+The camera jitter has its own catch. The game scales it by its 3D resolution slider
+squared, even under DLSS, where the slider sets nothing else: at 77% the jitter is 0.36
+of a pixel.
 
 ### What gets changed
 
@@ -50,18 +53,18 @@ and only when they differ from what the plugin wants:
 | Setting | Game's value | With the plugin |
 |---|---|---|
 | The resolution controller | On | Off, under DLSS with *Fixed render resolution* |
-| The height a frame renders at | Wherever the controller left it | The target, once the target has held for a tick |
-| The camera jitter | 0.6 px | The *Jitter amount*, 1.0 px by default, under DLSS with *Full camera jitter* |
+| The height a frame renders at | Wherever the controller left it | The chosen mode's share of the screen, kept within the game's range |
+| The camera jitter | 0.6 times the slider squared | The *Jitter amount*, 1.0 by default, under DLSS with *Full camera jitter* |
 
 The plugin remembers the game's values before its first change and writes them back when
-it lets go. The controller then resumes from the target and moves the height as before.
+it lets go. The controller then resumes from where the height is.
 
 ### What is left alone
 
 - **FSR.** Nothing is changed while the upscaler is FSR, including *TSCMAA + camera
   jitter*, which keeps the game's jitter.
-- **The scale itself.** The target is always the game's: changing the slider in game
-  moves it, and the plugin follows.
+- **The range.** The game's own lowest and highest heights are never crossed: a mode
+  outside them is held at the closest end.
 
 ---
 
@@ -71,23 +74,23 @@ it lets go. The controller then resumes from the target and moves the height as 
 
 - **Upscaler**: under DLSS, that the camera jitter is on; under FSR, the edge smoothing
   setting.
-- **Render height**: what the frame renders at, green at the target and amber below it,
-  with the target and the floor.
-- **3D resolution**: the scale, and the screen height it applies to.
-- **Camera jitter**: the amount in use, and whether it is the plugin's or the game's.
+- **Render height**: what the frame renders at, with the game's range.
+- **Render scale**: that height as a share of the screen's.
+- **Camera jitter**: the amount in use, and what the game's own would be.
 - **Frame time**: the game's smoothed frame and GPU times, which its controller acts on.
 
-Below them, *What the game is doing* says whether the controller is running or stopped,
-whether the height is at the target, and whose jitter is in use.
+Below them, *What the game is doing* says whether the height is held by the plugin or
+moving with GPU load, and whose jitter is in use.
 
 **Settings** holds:
 
 | Setting | What it does |
 |---|---|
-| Fixed render resolution | Under DLSS, stop the controller and render at the target. |
-| Full camera jitter | Under DLSS, replace the game's 0.6 px jitter with *Jitter amount*. |
-| Jitter amount | 0.5 to 1.5 px. 1.0 covers the whole pixel. |
-| Reset to defaults | Both switches on, 1.0 px. |
+| Fixed render resolution | Under DLSS, stop the controller and render at the mode below. |
+| Render resolution | DLAA (100%), Ultra Quality (77%), Quality (67%), Balanced (58%) or Performance (50%). |
+| Full camera jitter | Under DLSS, jitter by *Jitter amount* instead of the game's amount. |
+| Jitter amount | 0.5 to 1.5. 1.0 covers the whole pixel. |
+| Reset to defaults | Both switches on, Quality, 1.0. |
 
 ---
 
@@ -100,9 +103,10 @@ format, not the intended interface.
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `plugin_enabled` | bool | `true` | Master switch. Off hands every value back to the game and streams nothing. |
-| `fixed_dlss_resolution` | bool | `true` | Under DLSS, stop the resolution controller and render at the target height. |
-| `override_dlss_jitter` | bool | `true` | Under DLSS, use `dlss_jitter_multiplier` instead of the game's jitter. |
-| `dlss_jitter_multiplier` | float | `1.0` | Jitter amplitude in render pixels, `0.5`–`1.5`. |
+| `fixed_dlss_resolution` | bool | `true` | Under DLSS, stop the resolution controller and render at `dlss_render_scale`. |
+| `dlss_render_scale` | float | `0.667` | Render height as a share of the screen's, `0.5`–`1.0`, kept within the game's range. |
+| `override_dlss_jitter` | bool | `true` | Under DLSS, jitter by `dlss_jitter_amount` instead of the game's amount. |
+| `dlss_jitter_amount` | float | `1.0` | Jitter amplitude, `0.5`–`1.5`. |
 
 ---
 
@@ -111,10 +115,11 @@ format, not the intended interface.
 <details>
 <summary><b>Will my frame rate drop?</b></summary>
 
-It can. If the controller was holding the height near its floor, DLSS now renders at the
-full target instead, which is more work for the GPU. The Live tab shows both heights, so
-you can see how far below the target the game was. Lower the *3D resolution scaling*
-slider in game if you want the frame rate back.
+It depends on where the game had you. If its controller kept DLSS near the bottom of its
+range, a fixed Quality renders more pixels and costs frames; if it kept you near the top,
+Quality is cheaper. The Live tab shows the height and the frame time, so you can compare
+with *Fixed render resolution* on and off, and pick Balanced or Performance for more
+frames.
 
 </details>
 

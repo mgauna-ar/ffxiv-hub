@@ -46,9 +46,10 @@ public:
 private:
     std::optional<uint8_t> m_game_stepping;
     std::optional<float> m_game_jitter;
-    /// The target height seen on the tick before, so the pin follows a settled
-    /// target rather than one the render thread is changing.
+    /// The range seen on the tick before, so the pin follows a settled range
+    /// rather than one the render thread is changing.
     uint16_t m_last_target{0};
+    uint16_t m_last_floor{0};
 };
 
 /// `snap` as it reads once `writes` landed.
