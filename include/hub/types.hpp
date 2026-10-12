@@ -92,12 +92,15 @@ enum class CommandId : uint32_t {
     SetDpsMetric        = 38,
     /// param_float: seconds an overlay shown only in combat stays up after it
     SetHideAfterCombat  = 39,
-    /// param_uint 0/1: hold DLSS at its configured scale instead of the game's
-    /// frame-time controller
+    /// param_uint 0/1: hold DLSS at a render scale instead of the game's frame-time
+    /// controller; param_float: that scale, a share of the screen's height, which a
+    /// v1.3.0 payload ignores
     SetFixedDlssResolution = 40,
-    /// param_uint 0/1: replace the game's jitter multiplier under DLSS;
-    /// param_float: the multiplier
-    SetDlssJitterMultiplier = 41,
+    // 41 was SetDlssJitterMultiplier, whose value was the raw multiplier. Never
+    // reused: an older app may still send it.
+    /// param_uint 0/1: replace the game's camera jitter under DLSS; param_float: the
+    /// amplitude to jitter by
+    SetDlssJitter = 42,
 };
 
 /// 2D Floating-point rectangle coordinates for overlay geometry

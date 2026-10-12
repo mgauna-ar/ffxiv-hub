@@ -208,6 +208,9 @@ loudly, and the plugin would then write the wrong byte. With `tools/inspect_exe.
   `+0x54 == 2` and `+0x2c == 2`, and still reads the multiplier and `RTM+0x700`/`+0x704`.
 - The resolution controller still gates its stepping on `+0x47`, still steps
   `RTM+0x702` between `+0x706` and `+0x704`, and nothing else writes `+0x47`.
+- Under DLSS the range still comes from the callback at `RTM+0x730` (NGX's largest and
+  smallest render sizes), and the jitter still scales by
+  `(+0x700 / +0x704 * GraphicsConfig+0x4c)^2`, which `iq/render_math.hpp` mirrors.
 - The config apply (`0x14025e573` in 7.x) still stores the upscaler option plus one at
   `+0x54`.
 

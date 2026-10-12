@@ -6,6 +6,7 @@
 #include "iq/enforcer.hpp"
 #include "iq/image_quality_plugin.hpp"
 #include "iq/iq_settings.hpp"
+#include "iq/render_math.hpp"
 #include <cstring>
 #include <vector>
 
@@ -17,18 +18,19 @@ namespace {
 constexpr uint8_t kDlss = static_cast<uint8_t>(game::UpscaleType::Dlss);
 constexpr uint8_t kFsr = static_cast<uint8_t>(game::UpscaleType::Fsr);
 
-/// 4K at 67%: the controller has walked the height down to its floor.
+/// 4K under DLSS: the game's range is DLSS's own, 1080 to 2160, the controller has
+/// walked the height to the bottom of it, and the 3D resolution slider reads 77%.
 GraphicsSnapshot dlss_at_floor() {
     GraphicsSnapshot snap;
     snap.config.upscale_type = kDlss;
     snap.config.rezo_downscale = 1;
     snap.config.dynamic_rezo_stepping = 1;
-    snap.config.rezo_scale = 0.67f;
+    snap.config.rezo_scale = 0.77f;
     snap.config.jitter_multiplier = constants::GAME_JITTER_MULTIPLIER;
     snap.scale.display_height = 2160;
-    snap.scale.target_height = 1447;
-    snap.scale.floor_height = 964;
-    snap.scale.current_height = 964;
+    snap.scale.target_height = 2160;
+    snap.scale.floor_height = 1080;
+    snap.scale.current_height = 1080;
     return snap;
 }
 
@@ -90,24 +92,24 @@ std::vector<ipc::ImageQualityStatePayload> drain_states(ipc::PacketRingBuffer& r
 
 } // namespace
 
-TEST_CASE(ImageQuality, FixedResolutionStopsTheControllerAndPinsASettledTarget) {
+TEST_CASE(ImageQuality, FixedResolutionStopsTheControllerAndPinsTheChosenScale) {
     Enforcer enforcer;
     const ImageQualitySettings settings{};
     const auto snap = dlss_at_floor();
 
-    // First sight of the target: stop the controller, but do not pin a height the
-    // render thread may still be changing.
+    // First sight of the range: stop the controller, but do not pin inside a range
+    // the render thread may still be changing.
     auto writes = enforcer.plan(snap, settings, true);
     TEST_ASSERT(writes.stepping.has_value());
     TEST_ASSERT_EQ(*writes.stepping, 0u);
     TEST_ASSERT_FALSE(writes.current_height.has_value());
 
-    // The same target a tick later is pinned.
+    // The same range a tick later: Quality, two thirds of 2160.
     const auto settled = apply(snap, writes);
     writes = enforcer.plan(settled, settings, true);
     TEST_ASSERT_FALSE(writes.stepping.has_value());
     TEST_ASSERT(writes.current_height.has_value());
-    TEST_ASSERT_EQ(*writes.current_height, 1447u);
+    TEST_ASSERT_EQ(*writes.current_height, 1440u);
 
     // Once there, nothing more to write.
     writes = enforcer.plan(apply(settled, writes), settings, true);
@@ -116,13 +118,51 @@ TEST_CASE(ImageQuality, FixedResolutionStopsTheControllerAndPinsASettledTarget) 
     TEST_ASSERT(enforcer.enforcing() & static_cast<uint8_t>(ipc::ImageQualityEnforced::FixedResolution));
 }
 
-TEST_CASE(ImageQuality, NeverPinsATargetAboveTheDisplay) {
+TEST_CASE(ImageQuality, PinStaysInsideTheGameRange) {
+    // DLAA is the top of the range, never above it.
+    TEST_ASSERT_EQ(pinned_height(2160, 1080, 2160, 1.0f).value_or(0), 2160u);
+    TEST_ASSERT_EQ(pinned_height(2160, 1080, 2160, 0.58f).value_or(0), 1253u);
+    // A floor above the scale wins.
+    TEST_ASSERT_EQ(pinned_height(2160, 1200, 2160, 0.5f).value_or(0), 1200u);
+    // A range the controller could not have produced is not pinned into.
+    TEST_ASSERT_FALSE(pinned_height(2160, 1080, 2400, 0.67f).has_value());
+    TEST_ASSERT_FALSE(pinned_height(2160, 0, 2160, 0.67f).has_value());
+    TEST_ASSERT_FALSE(pinned_height(0, 1080, 2160, 0.67f).has_value());
+
     Enforcer enforcer;
     auto snap = dlss_at_floor();
     snap.scale.target_height = 2400;
     (void)enforcer.plan(snap, ImageQualitySettings{}, true);
+    TEST_ASSERT_FALSE(enforcer.plan(snap, ImageQualitySettings{}, true).current_height.has_value());
+}
+
+TEST_CASE(ImageQuality, JitterCompensatesTheResolutionSlider) {
+    // The game's own jitter under DLSS at a 77% slider.
+    const auto scale_squared = jitter_scale_squared(2160, 2160, 0.77f);
+    TEST_ASSERT(scale_squared.has_value());
+    TEST_ASSERT_NEAR(effective_jitter(constants::GAME_JITTER_MULTIPLIER, *scale_squared), 0.356f, 0.001f);
+
+    Enforcer enforcer;
+    const auto writes = enforcer.plan(dlss_at_floor(), ImageQualitySettings{}, true);
+    TEST_ASSERT(writes.jitter_multiplier.has_value());
+    TEST_ASSERT_NEAR(effective_jitter(*writes.jitter_multiplier, *scale_squared), 1.0f, 0.0001f);
+
+    // A tiny slider cannot push the multiplier out of its range.
+    auto tiny = dlss_at_floor();
+    tiny.config.rezo_scale = 0.1f;
+    Enforcer other;
+    const auto clamped = other.plan(tiny, ImageQualitySettings{}, true);
+    TEST_ASSERT(clamped.jitter_multiplier.has_value());
+    TEST_ASSERT_NEAR(*clamped.jitter_multiplier, constants::MAX_WRITTEN_MULTIPLIER, 0.0001f);
+}
+
+TEST_CASE(ImageQuality, NoJitterWriteWithoutTheHeights) {
+    auto snap = dlss_at_floor();
+    snap.scale = game::RenderScaleState{};
+    Enforcer enforcer;
     const auto writes = enforcer.plan(snap, ImageQualitySettings{}, true);
-    TEST_ASSERT_FALSE(writes.current_height.has_value());
+    TEST_ASSERT_FALSE(writes.jitter_multiplier.has_value());
+    TEST_ASSERT_FALSE(enforcer.enforcing() & static_cast<uint8_t>(ipc::ImageQualityEnforced::JitterMultiplier));
 }
 
 TEST_CASE(ImageQuality, FullJitterOnlyUnderDlss) {
@@ -139,16 +179,17 @@ TEST_CASE(ImageQuality, FullJitterOnlyUnderDlss) {
     snap.config.upscale_type = kDlss;
     writes = enforcer.plan(snap, ImageQualitySettings{}, true);
     TEST_ASSERT(writes.jitter_multiplier.has_value());
-    TEST_ASSERT_NEAR(*writes.jitter_multiplier, constants::DEFAULT_JITTER_MULTIPLIER, 0.0001f);
 }
 
-TEST_CASE(ImageQuality, JitterMultiplierIsClamped) {
+TEST_CASE(ImageQuality, JitterAmountIsClamped) {
     Enforcer enforcer;
     ImageQualitySettings settings{};
-    settings.dlss_jitter_multiplier = 9.0f;
+    settings.dlss_jitter_amount = 9.0f;
     const auto writes = enforcer.plan(dlss_at_floor(), settings, true);
     TEST_ASSERT(writes.jitter_multiplier.has_value());
-    TEST_ASSERT_NEAR(*writes.jitter_multiplier, constants::MAX_JITTER_MULTIPLIER, 0.0001f);
+    const auto scale_squared = jitter_scale_squared(2160, 2160, 0.77f);
+    TEST_ASSERT_NEAR(effective_jitter(*writes.jitter_multiplier, *scale_squared), constants::MAX_JITTER_AMOUNT,
+                     0.0001f);
 }
 
 TEST_CASE(ImageQuality, LettingGoRestoresTheGameValues) {
@@ -207,8 +248,8 @@ TEST_CASE(ImageQuality, StateReportsWhatTheControllerGateReads) {
     TEST_ASSERT_EQ(state.found, 1u);
     // DLSS runs the controller whatever the checkbox says.
     TEST_ASSERT_EQ(state.stepping, 1u);
-    TEST_ASSERT_EQ(state.current_height, 964u);
-    TEST_ASSERT_EQ(state.target_height, 1447u);
+    TEST_ASSERT_EQ(state.current_height, 1080u);
+    TEST_ASSERT_EQ(state.target_height, 2160u);
 
     snap.config.rezo_downscale = 0;
     TEST_ASSERT_EQ(state_payload(snap, 0).stepping, 0u);
@@ -231,13 +272,14 @@ TEST_CASE(ImageQuality, PluginHoldsDlssInGameMemoryAndReports) {
 
     plugin.update(0.05);
     TEST_ASSERT_EQ(game.stepping(), 0u);
-    TEST_ASSERT_NEAR(game.jitter(), constants::DEFAULT_JITTER_MULTIPLIER, 0.0001f);
+    const auto scale_squared = jitter_scale_squared(2160, 2160, 0.77f);
+    TEST_ASSERT_NEAR(effective_jitter(game.jitter(), *scale_squared), constants::DEFAULT_JITTER_AMOUNT, 0.0001f);
     plugin.update(0.05);
-    TEST_ASSERT_EQ(game.current_height(), 1447u);
+    TEST_ASSERT_EQ(game.current_height(), 1440u);
 
     const auto states = drain_states(ring);
     TEST_ASSERT_EQ(states.size(), 2u);
-    TEST_ASSERT_EQ(states.back().current_height, 1447u);
+    TEST_ASSERT_EQ(states.back().current_height, 1440u);
     TEST_ASSERT_EQ(states.back().enforcing,
                    static_cast<uint8_t>(ipc::ImageQualityEnforced::FixedResolution) |
                    static_cast<uint8_t>(ipc::ImageQualityEnforced::JitterMultiplier));
@@ -336,27 +378,31 @@ TEST_CASE(ImageQuality, SettingsRoundTripAndClamp) {
     config::JsonValue in{config::JsonValue::ObjectType{}};
     in["plugin_enabled"] = config::JsonValue(false);
     in["fixed_dlss_resolution"] = config::JsonValue(false);
+    in["dlss_render_scale"] = config::JsonValue(0.2);
     in["override_dlss_jitter"] = config::JsonValue(false);
-    in["dlss_jitter_multiplier"] = config::JsonValue(0.1);
+    in["dlss_jitter_amount"] = config::JsonValue(0.1);
     plugin.deserialize_config(in);
     TEST_ASSERT_FALSE(plugin.is_plugin_enabled());
     TEST_ASSERT_FALSE(plugin.settings().fixed_dlss_resolution);
+    TEST_ASSERT_NEAR(plugin.settings().dlss_render_scale, constants::MIN_DLSS_RENDER_SCALE, 0.0001f);
     TEST_ASSERT_FALSE(plugin.settings().override_dlss_jitter);
-    TEST_ASSERT_NEAR(plugin.settings().dlss_jitter_multiplier, constants::MIN_JITTER_MULTIPLIER, 0.0001f);
+    TEST_ASSERT_NEAR(plugin.settings().dlss_jitter_amount, constants::MIN_JITTER_AMOUNT, 0.0001f);
 
     // A command lands where the autosave reads it from.
     plugin.set_dlss_jitter(true, 1.25f);
-    plugin.set_fixed_dlss_resolution(true);
+    plugin.set_fixed_dlss_resolution(true, 0.58f);
     config::JsonValue out;
     plugin.serialize_config(out);
     TEST_ASSERT_FALSE(out["plugin_enabled"].as_bool(true));
     TEST_ASSERT(out["fixed_dlss_resolution"].as_bool(false));
+    TEST_ASSERT_NEAR(out["dlss_render_scale"].as_float(), 0.58f, 0.0001f);
     TEST_ASSERT(out["override_dlss_jitter"].as_bool(false));
-    TEST_ASSERT_NEAR(out["dlss_jitter_multiplier"].as_float(), 1.25f, 0.0001f);
+    TEST_ASSERT_NEAR(out["dlss_jitter_amount"].as_float(), 1.25f, 0.0001f);
 
     // A key absent from the section keeps its value.
     config::JsonValue partial{config::JsonValue::ObjectType{}};
     partial["fixed_dlss_resolution"] = config::JsonValue(false);
     plugin.deserialize_config(partial);
-    TEST_ASSERT_NEAR(plugin.settings().dlss_jitter_multiplier, 1.25f, 0.0001f);
+    TEST_ASSERT_NEAR(plugin.settings().dlss_jitter_amount, 1.25f, 0.0001f);
+    TEST_ASSERT_NEAR(plugin.settings().dlss_render_scale, 0.58f, 0.0001f);
 }

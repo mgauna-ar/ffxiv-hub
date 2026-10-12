@@ -645,14 +645,15 @@ void report_render_state(hub::app::AppState& app) {
     state.found = 1;
     state.upscale_type = static_cast<uint8_t>(hub::game::UpscaleType::Dlss);
     state.anti_aliasing = static_cast<uint32_t>(hub::game::AntiAliasing::Tscmaa);
-    state.rezo_scale = 0.67f;
-    state.jitter_multiplier = 1.0f;
+    state.rezo_scale = 0.77f;
+    // What the plugin writes for a full-pixel jitter at that slider.
+    state.jitter_multiplier = (1.0f - 0.001f) / (0.77f * 0.77f) + 0.001f;
     state.display_height = 2160;
-    state.current_height = 1447;
-    state.target_height = 1447;
-    state.floor_height = 964;
-    state.gpu_time_ms = 6.9f;
-    state.frame_time_ms = 8.3f;
+    state.current_height = 1440;
+    state.target_height = 2160;
+    state.floor_height = 1080;
+    state.gpu_time_ms = 7.4f;
+    state.frame_time_ms = 9.1f;
     state.enforcing = static_cast<uint8_t>(hub::ipc::ImageQualityEnforced::FixedResolution) |
                       static_cast<uint8_t>(hub::ipc::ImageQualityEnforced::JitterMultiplier);
     app.pipe_server().process_raw_packet(hub::ipc::serialize_typed_packet(

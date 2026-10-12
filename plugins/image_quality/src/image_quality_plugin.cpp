@@ -28,9 +28,14 @@ void ImageQualityPlugin::set_render_slots(uintptr_t graphics_config_slot,
     m_render_target_manager_slot = render_target_manager_slot;
 }
 
-void ImageQualityPlugin::set_dlss_jitter(bool override_game, float multiplier) noexcept {
+void ImageQualityPlugin::set_fixed_dlss_resolution(bool enabled, float render_scale) noexcept {
+    m_settings.fixed_dlss_resolution = enabled;
+    m_settings.dlss_render_scale = clamp_render_scale(render_scale);
+}
+
+void ImageQualityPlugin::set_dlss_jitter(bool override_game, float amount) noexcept {
     m_settings.override_dlss_jitter = override_game;
-    m_settings.dlss_jitter_multiplier = clamp_jitter_multiplier(multiplier);
+    m_settings.dlss_jitter_amount = clamp_jitter_amount(amount);
 }
 
 std::optional<GraphicsSnapshot> ImageQualityPlugin::read_snapshot(RenderObjects& objects) const {

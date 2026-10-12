@@ -1,4 +1,5 @@
 #include "iq/enforcer.hpp"
+#include "iq/render_math.hpp"
 
 namespace hub::iq {
 
@@ -6,30 +7,36 @@ GraphicsWrites Enforcer::plan(const GraphicsSnapshot& snap, const ImageQualitySe
     GraphicsWrites writes;
     const bool dlss = snap.config.upscale_type == static_cast<uint8_t>(game::UpscaleType::Dlss);
     const auto& scale = snap.scale;
-    const bool target_settled = scale.target_height == m_last_target;
+    const bool range_settled = scale.target_height == m_last_target && scale.floor_height == m_last_floor;
     m_last_target = scale.target_height;
+    m_last_floor = scale.floor_height;
 
     if (active && dlss && settings.fixed_dlss_resolution) {
         if (!m_game_stepping) m_game_stepping = snap.config.dynamic_rezo_stepping;
         if (snap.config.dynamic_rezo_stepping != 0) writes.stepping = 0;
-        // With the controller stopped the height stays wherever it was, often the
-        // floor. Only a target the controller itself could reach is pinned, and only
-        // once it held for a tick: the render thread rewrites both on a scale change.
-        const bool pinnable = target_settled && scale.target_height != 0 &&
-                              scale.target_height <= scale.display_height;
-        if (pinnable && scale.current_height != scale.target_height) {
-            writes.current_height = scale.target_height;
-        }
+        // With the controller stopped the height stays wherever it was. It is pinned
+        // inside the controller's own range, and only once that range held for a
+        // tick: the render thread rewrites both ends when DLSS's range changes.
+        const auto pin = pinned_height(scale.display_height, scale.floor_height, scale.target_height,
+                                       clamp_render_scale(settings.dlss_render_scale));
+        if (range_settled && pin && scale.current_height != *pin) writes.current_height = *pin;
     } else if (m_game_stepping) {
         // The controller resumes from where the height is and walks it itself.
         if (snap.config.dynamic_rezo_stepping != *m_game_stepping) writes.stepping = *m_game_stepping;
         m_game_stepping.reset();
     }
 
+    const auto scale_squared = jitter_scale_squared(scale.display_height, scale.target_height,
+                                                    snap.config.rezo_scale);
     if (active && dlss && settings.override_dlss_jitter) {
-        if (!m_game_jitter) m_game_jitter = snap.config.jitter_multiplier;
-        const float wanted = clamp_jitter_multiplier(settings.dlss_jitter_multiplier);
-        if (snap.config.jitter_multiplier != wanted) writes.jitter_multiplier = wanted;
+        // Without the heights there is no knowing what a multiplier amounts to.
+        if (scale_squared) {
+            if (!m_game_jitter) m_game_jitter = snap.config.jitter_multiplier;
+            const float wanted = multiplier_for(clamp_jitter_amount(settings.dlss_jitter_amount), *scale_squared,
+                                                constants::MIN_WRITTEN_MULTIPLIER,
+                                                constants::MAX_WRITTEN_MULTIPLIER);
+            if (snap.config.jitter_multiplier != wanted) writes.jitter_multiplier = wanted;
+        }
     } else if (m_game_jitter) {
         if (snap.config.jitter_multiplier != *m_game_jitter) writes.jitter_multiplier = *m_game_jitter;
         m_game_jitter.reset();
