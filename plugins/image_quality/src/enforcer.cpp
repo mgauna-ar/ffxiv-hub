@@ -3,17 +3,6 @@
 
 namespace hub::iq {
 
-namespace {
-
-bool same_table(const game::SamplerBiasTable& a, const game::SamplerBiasTable& b) noexcept {
-    for (size_t i = 0; i < game::SamplerBiasTable::LEVELS; ++i) {
-        if (a.bias[i] != b.bias[i]) return false;
-    }
-    return true;
-}
-
-} // namespace
-
 GraphicsWrites Enforcer::plan(const GraphicsSnapshot& snap, const ImageQualitySettings& settings, bool active) {
     GraphicsWrites writes;
     const bool dlss = snap.config.upscale_type == static_cast<uint8_t>(game::UpscaleType::Dlss);
@@ -66,21 +55,20 @@ void Enforcer::plan_mip_bias(const GraphicsSnapshot& snap, const ImageQualitySet
                              std::optional<uint16_t> held_height, bool range_settled, GraphicsWrites& writes) {
     const auto screen = screen_height(snap.scale.target_height, snap.scale.target_ratio);
     const auto derived = held_height && screen ? mip_bias_for(*held_height, *screen) : std::nullopt;
-    if (wanted && snap.bias_table && derived) {
+    const float in_game = snap.config.texture_lod_bias;
+    if (wanted && derived) {
         // Only the held height counts, never one the controller is moving: every new
         // bias makes the game create samplers it never frees. A range still settling
-        // leaves the table as it is.
+        // leaves the bias as it is.
         if (!range_settled) return;
-        if (!m_game_bias_table) m_game_bias_table = *snap.bias_table;
+        if (!m_game_lod_bias) m_game_lod_bias = in_game;
         const float bias = *derived + clamp_mip_bias_offset(settings.dlss_mip_bias_offset);
-        const game::SamplerBiasTable table = biased_table(*m_game_bias_table, bias);
-        if (!same_table(*snap.bias_table, table)) writes.bias_table = table;
+        const float lod_bias = *m_game_lod_bias + bias;
+        if (in_game != lod_bias) writes.texture_lod_bias = lod_bias;
         m_mip_bias = bias;
-    } else if (m_game_bias_table) {
-        if (!snap.bias_table || !same_table(*snap.bias_table, *m_game_bias_table)) {
-            writes.bias_table = *m_game_bias_table;
-        }
-        m_game_bias_table.reset();
+    } else if (m_game_lod_bias) {
+        if (in_game != *m_game_lod_bias) writes.texture_lod_bias = *m_game_lod_bias;
+        m_game_lod_bias.reset();
         m_mip_bias = 0.0f;
     }
 }
@@ -93,7 +81,7 @@ uint8_t Enforcer::enforcing() const noexcept {
     uint8_t bits = 0;
     if (m_game_stepping) bits |= static_cast<uint8_t>(ipc::ImageQualityEnforced::FixedResolution);
     if (m_game_jitter) bits |= static_cast<uint8_t>(ipc::ImageQualityEnforced::JitterMultiplier);
-    if (m_game_bias_table) bits |= static_cast<uint8_t>(ipc::ImageQualityEnforced::MipBias);
+    if (m_game_lod_bias) bits |= static_cast<uint8_t>(ipc::ImageQualityEnforced::MipBias);
     return bits;
 }
 
@@ -101,7 +89,7 @@ GraphicsSnapshot apply(GraphicsSnapshot snap, const GraphicsWrites& writes) noex
     if (writes.stepping) snap.config.dynamic_rezo_stepping = *writes.stepping;
     if (writes.current_height) snap.scale.current_height = *writes.current_height;
     if (writes.jitter_multiplier) snap.config.jitter_multiplier = *writes.jitter_multiplier;
-    if (writes.bias_table) snap.bias_table = *writes.bias_table;
+    if (writes.texture_lod_bias) snap.config.texture_lod_bias = *writes.texture_lod_bias;
     return snap;
 }
 

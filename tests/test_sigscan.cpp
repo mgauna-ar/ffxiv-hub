@@ -68,16 +68,6 @@ TEST_CASE(SigScan, ResolveRipRelative) {
     TEST_ASSERT_EQ(target, addr + 7 + 0x10);
 }
 
-TEST_CASE(SigScan, ResolveImageRelative) {
-    // MOVSS xmm0, [r8 + r9*4 + disp32] with r8 the image base: the disp32 at offset
-    // 6 is the table's offset from the base, whatever the instruction's address.
-    uint8_t insn[10] = { 0xF3, 0x43, 0x0F, 0x10, 0x84, 0x88, 0x40, 0x34, 0x16, 0x02 };
-    const auto addr = reinterpret_cast<uintptr_t>(insn);
-    const uintptr_t base = 0x140000000;
-    TEST_ASSERT_EQ(resolve_image_relative(addr, 6, base), base + 0x2163440);
-    TEST_ASSERT_EQ(resolve_image_relative(0, 6, base), uintptr_t{0});
-}
-
 TEST_CASE(SigScan, ResolveCallRelative) {
     // Instruction: CALL rel32 (0xE8 [disp32])
     // Length: 5, Disp offset: 1 -> Disp = 0x50

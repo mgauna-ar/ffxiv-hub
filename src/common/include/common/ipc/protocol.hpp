@@ -203,7 +203,7 @@ enum class ImageQualityEnforced : uint8_t {
     FixedResolution = 1u << 0,
     /// The jitter multiplier is the plugin's, not the game's.
     JitterMultiplier = 1u << 1,
-    /// The texture samplers' bias table is the plugin's, not the game's.
+    /// The texture LOD bias is the plugin's, not the game's.
     MipBias = 1u << 2,
 };
 

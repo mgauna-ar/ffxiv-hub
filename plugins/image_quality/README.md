@@ -63,21 +63,20 @@ off.
 
 Textures have one more. The GPU picks a texture's detail level (its mip) from how many
 pixels the surface covers, and with DLSS that is the render height's pixels, not the
-screen's. Nothing in the game makes up for it: its texture bias, the nudge toward a finer
-level, comes from a small table per texture filtering level (0 down to -2), whatever the
-resolution.
+screen's. Nothing in the game makes up for it: it draws every world texture with the same
+bias, one level finer than the GPU would pick (−1.0), whatever resolution DLSS renders at.
 
 ### What gets changed
 
-Three values in the game's own render settings and its texture bias table, from the
-payload, at most every 50 ms and only when they differ from what the plugin wants:
+Four values in the game's own render settings, from the payload, at most every 50 ms
+and only when they differ from what the plugin wants:
 
 | Setting | Game's value | With the plugin |
 |---|---|---|
 | The resolution controller | On | Off, under DLSS with *Fixed render resolution* |
 | The height a frame renders at | Wherever the controller left it | The chosen mode's share of the screen, kept within the game's range |
 | The camera jitter | 0.6 of what DLSS is told, scaled down by the slider and the render height | What DLSS is told, under DLSS with *Full camera jitter* |
-| The texture bias | The game's per filtering level, the same at any resolution | Lowered by log2 of the held height over the screen's (−0.58 at Quality), plus *Texture sharpness*, while the height is held and *Sharper textures* is on |
+| The texture bias | −1.0 for every world texture, at any resolution | Lowered by log2 of the held height over the screen's (to −1.58 at Quality), plus *Texture sharpness*, while the height is held and *Sharper textures* is on |
 
 The plugin remembers the game's values before its first change and writes them back when
 it lets go. The controller then resumes from where the height is.
@@ -175,7 +174,7 @@ sharpness* to trade some detail back.
 <summary><b>Textures shimmer or look too sharp.</b></summary>
 
 Raise *Texture sharpness* a step or two. The bias NVIDIA recommends is a starting point,
-and the game already sharpens textures at its higher filtering levels.
+and the game already draws every world texture a level sharper than the GPU would.
 
 </details>
 

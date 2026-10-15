@@ -219,10 +219,10 @@ FFXIV Hub runs entirely on your PC and stays within what the server already allo
     It never sets the timer below a 25 ms floor, leaves cast locks alone, and skips
     rejected actions and locks over 2.5 s. Turn off *Enable animation lock mitigation*,
     or switch on *Dry-run mode*, and it writes none.
-  - Three of the game's graphics settings and its texture bias table, only while DLSS is
-    the upscaler: whether the render resolution follows GPU load, the resolution itself,
-    the camera jitter, and how detailed a texture it draws. Switch the Image Quality
-    plugin off and they are the game's again.
+  - Four of the game's graphics settings, only while DLSS is the upscaler: whether the
+    render resolution follows GPU load, the resolution itself, the camera jitter, and
+    how detailed a texture it draws. Switch the Image Quality plugin off and they are
+    the game's again.
 
   The Combat Meter only ever reads.
 - **What it never does.** Modify, send or delay network packets. Automate any input.

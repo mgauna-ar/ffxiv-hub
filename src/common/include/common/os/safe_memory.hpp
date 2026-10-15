@@ -21,15 +21,14 @@ namespace hub::os {
 [[nodiscard]] bool safe_copy(void* dst, const void* src, size_t size) noexcept;
 
 /**
- * @brief Writes `size` bytes into game memory that may be read-only, such as a table
- * in `.rdata`.
+ * @brief Sets `bits` in the 32-bit word at `dst`, which the game owns and may be
+ * changing from its own thread, as one atomic OR.
  *
- * On Windows the pages are made writable for the copy and given their old protection
- * back after it; the copy itself is a safe_copy. The mock build is a plain `memcpy`.
- * False when either pointer is null, the protection cannot be changed, or the copy
- * faults.
+ * A read, OR and write of our own would put back a bit the game cleared in between,
+ * or drop one it set. On Windows the OR is an interlocked one inside `__try / __except`;
+ * the mock build ORs through `memcpy`. False when `dst` is null or the write faults.
  */
-[[nodiscard]] bool safe_write_protected(void* dst, const void* src, size_t size) noexcept;
+[[nodiscard]] bool safe_or32(void* dst, uint32_t bits) noexcept;
 
 /// safe_copy of one `T` from `src`, which the game owns.
 template <typename T>

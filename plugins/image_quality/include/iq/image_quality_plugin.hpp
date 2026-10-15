@@ -12,8 +12,8 @@
 namespace hub::iq {
 
 /// Holds DLSS at a chosen render scale, sets its camera jitter and biases its
-/// textures for that scale, by writing three fields of the game's render singletons
-/// and its texture bias table from the orchestration thread. Everything it changed goes back to the game's value when it is switched
+/// textures for that scale, by writing four fields of the game's render singletons
+/// from the orchestration thread. Everything it changed goes back to the game's value when it is switched
 /// off, the app disconnects, the upscaler is not DLSS, or the payload unloads.
 class ImageQualityPlugin : public IPlugin, public IConfigurable {
 public:
@@ -39,10 +39,6 @@ public:
     /// payload::GraphicsLocator resolved them. 0 when a signature found nothing,
     /// which leaves the plugin idle.
     void set_render_slots(uintptr_t graphics_config_slot, uintptr_t render_target_manager_slot) noexcept;
-
-    /// The texture samplers' bias table, as payload::GraphicsLocator resolved it. 0
-    /// when its signature found nothing, which leaves the textures alone.
-    void set_sampler_bias_table(uintptr_t address) noexcept { m_sampler_bias_table = address; }
 
     /// Sets the outbound packet sink used to stream state to the desktop app.
     void set_ring_buffer(ipc::PacketRingBuffer* ring_buffer) noexcept { m_ring_buffer = ring_buffer; }
@@ -70,7 +66,6 @@ private:
     struct RenderObjects {
         uintptr_t graphics_config{0};
         uintptr_t render_target_manager{0};
-        uintptr_t sampler_bias_table{0};
     };
 
     /// Both singletons, or nullopt while either is not there yet.
@@ -83,7 +78,6 @@ private:
     Enforcer m_enforcer;
     uintptr_t m_graphics_config_slot{0};
     uintptr_t m_render_target_manager_slot{0};
-    uintptr_t m_sampler_bias_table{0};
     ipc::PacketRingBuffer* m_ring_buffer{nullptr};
     std::atomic<bool> m_connected{false};
     std::atomic<bool> m_plugin_enabled{true};

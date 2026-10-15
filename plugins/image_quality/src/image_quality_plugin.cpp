@@ -57,11 +57,6 @@ std::optional<GraphicsSnapshot> ImageQualityPlugin::read_snapshot(RenderObjects&
     if (!os::safe_read(objects.render_target_manager + offsets::RENDER_TARGET_MANAGER_RENDER_SCALE, snap.scale)) {
         return std::nullopt;
     }
-    // Without the bias table everything else still works. Its address is kept even
-    // when this read fails, so the game's values can still be written back.
-    objects.sampler_bias_table = m_sampler_bias_table;
-    game::SamplerBiasTable table;
-    if (m_sampler_bias_table != 0 && os::safe_read(m_sampler_bias_table, table)) snap.bias_table = table;
     return snap;
 }
 
@@ -79,10 +74,14 @@ bool ImageQualityPlugin::write(const RenderObjects& objects, const GraphicsWrite
         ok &= write_field(objects.render_target_manager, offsets::RENDER_TARGET_MANAGER_CURRENT_HEIGHT,
                           &*writes.current_height, sizeof(*writes.current_height));
     }
-    if (writes.bias_table && objects.sampler_bias_table != 0) {
-        // The table sits in .rdata.
-        ok &= os::safe_write_protected(reinterpret_cast<void*>(objects.sampler_bias_table), &*writes.bias_table,
-                                       sizeof(*writes.bias_table));
+    if (writes.texture_lod_bias) {
+        // The bias takes only once the game's config update has rebuilt the texture
+        // filter, on its next frame. The game clears the bit from its own thread.
+        const bool written = write_field(objects.graphics_config, offsets::GRAPHICS_CONFIG_TEXTURE_LOD_BIAS,
+                                         &*writes.texture_lod_bias, sizeof(*writes.texture_lod_bias));
+        ok &= written && os::safe_or32(reinterpret_cast<void*>(objects.graphics_config +
+                                                               offsets::GRAPHICS_CONFIG_DIRTY_FLAGS),
+                                       static_cast<uint32_t>(game::GraphicsConfigDirty::TextureFilter));
     }
     return ok;
 }

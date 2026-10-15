@@ -118,13 +118,13 @@ TEST_CASE(OS, SafeCopyReadsAndRejectsNull) {
     TEST_ASSERT_FALSE(safe_copy(&copy, nullptr, sizeof(copy)));
 }
 
-TEST_CASE(OS, SafeWriteProtectedWritesTheBytes) {
-    float table[3] = {0.0f, -0.5f, -1.0f};
-    const float wanted[3] = {-0.5f, -1.0f, -1.5f};
-    TEST_ASSERT_TRUE(safe_write_protected(table, wanted, sizeof(wanted)));
-    TEST_ASSERT_EQ(table[2], -1.5f);
-    TEST_ASSERT_FALSE(safe_write_protected(nullptr, wanted, sizeof(wanted)));
-    TEST_ASSERT_FALSE(safe_write_protected(table, nullptr, sizeof(wanted)));
+TEST_CASE(OS, SafeOr32SetsBitsAndKeepsTheRest) {
+    uint32_t word = 0x11;
+    TEST_ASSERT_TRUE(safe_or32(&word, 0x4));
+    TEST_ASSERT_EQ(word, 0x15u);
+    TEST_ASSERT_TRUE(safe_or32(&word, 0x4));
+    TEST_ASSERT_EQ(word, 0x15u);
+    TEST_ASSERT_FALSE(safe_or32(nullptr, 0x4));
 }
 
 TEST_CASE(OS, PreviousLogPathGoesBeforeTheExtension) {

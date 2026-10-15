@@ -10,9 +10,8 @@ a game patch: it says which signatures broke, though not what to replace them wi
 Every signature must match exactly once in .text. One that resolves a static
 global, which is one with a <NAME>_RIP_DISP_OFFSET / <NAME>_RIP_INSN_END pair in
 the header, must also land in a data section: a target in .text, or in no section
-at all, means the operand is not where the pair says. So must one whose operand is
-an offset from the image base, named by a <NAME>_IMAGE_DISP_OFFSET. Exit status is
-non-zero when any signature fails either check.
+at all, means the operand is not where the pair says. Exit status is non-zero when
+any signature fails either check.
 """
 
 import argparse
@@ -39,8 +38,6 @@ PATTERN_RE = re.compile(
 )
 # constexpr size_t NAME_RIP_DISP_OFFSET = 3;  /  NAME_RIP_INSN_END = 7;
 RIP_RE = re.compile(r"constexpr\s+size_t\s+(\w+)_RIP_(DISP_OFFSET|INSN_END)\s*=\s*(\w+)\s*;")
-# constexpr size_t NAME_IMAGE_DISP_OFFSET = 6;
-IMAGE_RE = re.compile(r"constexpr\s+size_t\s+(\w+)_IMAGE_DISP_OFFSET\s*=\s*(\w+)\s*;")
 
 
 def _namespace_body(source, name):
@@ -69,23 +66,6 @@ def read_rip_operands():
     return operands
 
 
-def read_image_operands():
-    """{signature name: disp offset} for each signature whose operand is an offset
-    from the image base."""
-    source = open(HEADER, encoding="utf-8").read()
-    return {name: int(value, 0) for name, value in IMAGE_RE.findall(source)}
-
-
-def report_target(img, name, match_va, target):
-    """Prints where an operand lands; 1 when that is not a data section."""
-    where = img.section_of(target)
-    print(f"  {'':<36} {match_va:#x} -> {target:#x} in {where or '<outside any section>'}")
-    if where is None or where == ".text":
-        print(f"  {'':<36} NOT DATA: a static global should resolve into a data section")
-        return 1
-    return 0
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -106,10 +86,9 @@ def main():
     if not signatures:
         sys.exit(f"no signatures found in {HEADER}")
     rip_operands = read_rip_operands()
-    image_operands = read_image_operands()
-    unknown = sorted((set(rip_operands) | set(image_operands)) - {name for name, _ in signatures})
+    unknown = sorted(set(rip_operands) - {name for name, _ in signatures})
     if unknown:
-        sys.exit(f"operand offsets with no signature of that name in {HEADER}: {', '.join(unknown)}")
+        sys.exit(f"RIP pairs with no signature of that name in {HEADER}: {', '.join(unknown)}")
 
     img = Image(exe)
     if ".text" not in img.sections:
@@ -146,12 +125,15 @@ def main():
         count = "" if hits < 0 else f"({hits} hit{'' if hits == 1 else 's'})"
         print(f"  {name:<36} {verdict:<10} {count}")
 
-        match_va = text_va + first
         if verdict == "OK" and name in rip_operands:
             disp_offset, insn_end = rip_operands[name]
-            failures += report_target(img, name, match_va, img.rip_target(match_va, disp_offset, insn_end))
-        elif verdict == "OK" and name in image_operands:
-            failures += report_target(img, name, match_va, img.image_target(match_va, image_operands[name]))
+            match_va = text_va + first
+            target = img.rip_target(match_va, disp_offset, insn_end)
+            where = img.section_of(target)
+            print(f"  {'':<36} {match_va:#x} -> {target:#x} in {where or '<outside any section>'}")
+            if where is None or where == ".text":
+                print(f"  {'':<36} NOT DATA: a static global should resolve into a data section")
+                failures += 1
 
     print(f"\n{'all signatures resolve uniquely' if failures == 0 else 'SOME SIGNATURES NEED ATTENTION'}")
     return 0 if failures == 0 else 1

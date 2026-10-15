@@ -37,11 +37,6 @@ bool GraphicsLocator::initialize() {
     m_render_target_manager_slot = resolve_slot(h_game, sig::RENDER_TARGET_MANAGER_INSTANCE,
                                                 def::RENDER_TARGET_MANAGER_INSTANCE_RIP_DISP_OFFSET,
                                                 def::RENDER_TARGET_MANAGER_INSTANCE_RIP_INSN_END);
-    const uintptr_t bias_insn = common::pe::scan_module_section(h_game, ".text", sig::SAMPLER_BIAS_TABLE);
-    m_sampler_bias_table = bias_insn != 0
-        ? hub::memory::resolve_image_relative(bias_insn, def::SAMPLER_BIAS_TABLE_IMAGE_DISP_OFFSET,
-                                              reinterpret_cast<uintptr_t>(h_game))
-        : 0;
     if (m_graphics_config_slot == 0) {
         m_last_error = "Signature not found: GraphicsConfig (image quality is inactive)";
         return false;

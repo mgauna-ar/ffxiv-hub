@@ -75,31 +75,38 @@ struct FakeRenderObjects {
     void set_upscaler(uint8_t type) {
         graphics_config[game::offsets::GRAPHICS_CONFIG_UPSCALE_TYPE] = type;
     }
+    [[nodiscard]] float lod_bias() const {
+        float value = 0.0f;
+        std::memcpy(&value, graphics_config.data() + game::offsets::GRAPHICS_CONFIG_TEXTURE_LOD_BIAS, sizeof(value));
+        return value;
+    }
+    [[nodiscard]] uint32_t dirty_flags() const {
+        uint32_t value = 0;
+        std::memcpy(&value, graphics_config.data() + game::offsets::GRAPHICS_CONFIG_DIRTY_FLAGS, sizeof(value));
+        return value;
+    }
+    /// What the game's config update does once it has applied the dirty bits.
+    void clear_dirty_flags() {
+        const uint32_t none = 0;
+        std::memcpy(graphics_config.data() + game::offsets::GRAPHICS_CONFIG_DIRTY_FLAGS, &none, sizeof(none));
+    }
 };
 
-/// The game's own texture bias per filter level, as the client ships it.
-game::SamplerBiasTable game_bias_table() {
-    return game::SamplerBiasTable{{0.0f, -0.5f, -1.0f, -1.5f, -2.0f, 0.0f}};
-}
+constexpr uint32_t kTextureFilterDirty = static_cast<uint32_t>(game::GraphicsConfigDirty::TextureFilter);
 
-/// dlss_at_floor() with the bias table read too.
-GraphicsSnapshot dlss_with_bias_table() {
+/// The game's own texture bias, which GraphicsConfig's constructor seeds.
+constexpr float kGameLodBias = -1.0f;
+
+/// dlss_at_floor() with the game's texture bias in the config.
+GraphicsSnapshot dlss_with_lod_bias() {
     auto snap = dlss_at_floor();
-    snap.bias_table = game_bias_table();
+    snap.config.texture_lod_bias = kGameLodBias;
     return snap;
-}
-
-/// Asserts that each level of `table` is the game's plus `bias`.
-void assert_biased_by(const game::SamplerBiasTable& table, float bias) {
-    const auto game = game_bias_table();
-    for (size_t i = 0; i < game::SamplerBiasTable::LEVELS; ++i) {
-        TEST_ASSERT_NEAR(table.bias[i], game.bias[i] + bias, 0.0001f);
-    }
 }
 
 /// The plugin's ticks until the range settled and the bias landed, as a state after them.
 GraphicsSnapshot held_with_bias(Enforcer& enforcer, const ImageQualitySettings& settings) {
-    auto snap = dlss_with_bias_table();
+    auto snap = dlss_with_lod_bias();
     snap = apply(snap, enforcer.plan(snap, settings, true));
     return apply(snap, enforcer.plan(snap, settings, true));
 }
@@ -339,7 +346,8 @@ TEST_CASE(ImageQuality, PluginHoldsDlssInGameMemoryAndReports) {
     TEST_ASSERT_EQ(states.back().screen_height, 2160u);
     TEST_ASSERT_EQ(states.back().enforcing,
                    static_cast<uint8_t>(ipc::ImageQualityEnforced::FixedResolution) |
-                   static_cast<uint8_t>(ipc::ImageQualityEnforced::JitterMultiplier));
+                   static_cast<uint8_t>(ipc::ImageQualityEnforced::JitterMultiplier) |
+                   static_cast<uint8_t>(ipc::ImageQualityEnforced::MipBias));
 
     // Nothing changed: the next report waits for the keepalive.
     plugin.update(0.05);
@@ -436,34 +444,31 @@ TEST_CASE(ImageQuality, MipBiasIsTheLog2OfTheRenderShare) {
     TEST_ASSERT_NEAR(*mip_bias_for(2160, 2160), 0.0f, 0.0001f);
     TEST_ASSERT_FALSE(mip_bias_for(0, 2160).has_value());
     TEST_ASSERT_FALSE(mip_bias_for(1440, 0).has_value());
-
-    const auto table = biased_table(game_bias_table(), -0.5f);
-    assert_biased_by(table, -0.5f);
 }
 
 TEST_CASE(ImageQuality, MipBiasFollowsTheHeldHeight) {
     Enforcer enforcer;
     const ImageQualitySettings settings{};
-    auto snap = dlss_with_bias_table();
+    auto snap = dlss_with_lod_bias();
 
     // The first tick sees a range the render thread may still be changing.
     auto writes = enforcer.plan(snap, settings, true);
-    TEST_ASSERT_FALSE(writes.bias_table.has_value());
+    TEST_ASSERT_FALSE(writes.texture_lod_bias.has_value());
     TEST_ASSERT_EQ(enforcer.mip_bias(), 0.0f);
 
-    // Settled: held at Quality, so every level gets log2(1440 / 2160), though frames
-    // still render at 1080 until the height lands.
+    // Settled: held at Quality, so the game's -1.0 moves by log2(1440 / 2160), though
+    // frames still render at 1080 until the height lands.
     snap = apply(snap, writes);
     writes = enforcer.plan(snap, settings, true);
-    TEST_ASSERT(writes.bias_table.has_value());
-    assert_biased_by(*writes.bias_table, kQualityBias);
+    TEST_ASSERT(writes.texture_lod_bias.has_value());
+    TEST_ASSERT_NEAR(*writes.texture_lod_bias, kGameLodBias + kQualityBias, 0.0001f);
     TEST_ASSERT_NEAR(enforcer.mip_bias(), kQualityBias, 0.0001f);
     TEST_ASSERT(enforcer.enforcing() & static_cast<uint8_t>(ipc::ImageQualityEnforced::MipBias));
 
     // Once there, nothing more to write, and the moving height changes nothing.
     snap = apply(snap, writes);
     snap.scale.applied_height = 1440;
-    TEST_ASSERT_FALSE(enforcer.plan(snap, settings, true).bias_table.has_value());
+    TEST_ASSERT_FALSE(enforcer.plan(snap, settings, true).texture_lod_bias.has_value());
 
     const auto state = state_payload(snap, enforcer.enforcing(), enforcer.mip_bias());
     TEST_ASSERT_NEAR(state.mip_bias, kQualityBias, 0.0001f);
@@ -476,13 +481,14 @@ TEST_CASE(ImageQuality, MipBiasAddsTheOffset) {
 
     settings.dlss_mip_bias_offset = 0.25f;
     const auto writes = enforcer.plan(snap, settings, true);
-    TEST_ASSERT(writes.bias_table.has_value());
-    assert_biased_by(*writes.bias_table, kQualityBias + 0.25f);
+    TEST_ASSERT(writes.texture_lod_bias.has_value());
+    TEST_ASSERT_NEAR(*writes.texture_lod_bias, kGameLodBias + kQualityBias + 0.25f, 0.0001f);
 
-    // Added to the game's own values, never to the plugin's last ones.
+    // Added to the game's own value, never to the plugin's last one.
     snap = apply(snap, writes);
     settings.dlss_mip_bias_offset = -0.5f;
-    assert_biased_by(*enforcer.plan(snap, settings, true).bias_table, kQualityBias - 0.5f);
+    TEST_ASSERT_NEAR(*enforcer.plan(snap, settings, true).texture_lod_bias, kGameLodBias + kQualityBias - 0.5f,
+                     0.0001f);
 }
 
 TEST_CASE(ImageQuality, MipBiasNeedsAHeldHeightUnderDlss) {
@@ -491,31 +497,28 @@ TEST_CASE(ImageQuality, MipBiasNeedsAHeldHeightUnderDlss) {
         Enforcer enforcer;
         auto snap = apply(start, enforcer.plan(start, settings, active));
         const auto writes = enforcer.plan(snap, settings, active);
-        TEST_ASSERT_FALSE(writes.bias_table.has_value());
+        TEST_ASSERT_FALSE(writes.texture_lod_bias.has_value());
         TEST_ASSERT_FALSE(enforcer.enforcing() & static_cast<uint8_t>(ipc::ImageQualityEnforced::MipBias));
     };
 
     ImageQualitySettings no_fixed{};
     no_fixed.fixed_dlss_resolution = false;
-    none_written(dlss_with_bias_table(), no_fixed, true);
+    none_written(dlss_with_lod_bias(), no_fixed, true);
 
     ImageQualitySettings no_bias{};
     no_bias.dlss_mip_bias = false;
-    none_written(dlss_with_bias_table(), no_bias, true);
+    none_written(dlss_with_lod_bias(), no_bias, true);
 
-    none_written(dlss_with_bias_table(), ImageQualitySettings{}, false);
+    none_written(dlss_with_lod_bias(), ImageQualitySettings{}, false);
 
-    auto fsr = dlss_with_bias_table();
+    auto fsr = dlss_with_lod_bias();
     fsr.config.upscale_type = kFsr;
     none_written(fsr, ImageQualitySettings{}, true);
 
     // No screen height, so no pin and no bias.
-    auto unknown_screen = dlss_with_bias_table();
+    auto unknown_screen = dlss_with_lod_bias();
     unknown_screen.scale.target_ratio = 0.0f;
     none_written(unknown_screen, ImageQualitySettings{}, true);
-
-    // No table: the signature found nothing.
-    none_written(dlss_at_floor(), ImageQualitySettings{}, true);
 }
 
 TEST_CASE(ImageQuality, MipBiasIsHandedBack) {
@@ -524,12 +527,12 @@ TEST_CASE(ImageQuality, MipBiasIsHandedBack) {
         auto snap = held_with_bias(enforcer, ImageQualitySettings{});
         if (fsr) snap.config.upscale_type = kFsr;
         const auto writes = enforcer.plan(snap, off, active);
-        TEST_ASSERT(writes.bias_table.has_value());
-        assert_biased_by(*writes.bias_table, 0.0f);
+        TEST_ASSERT(writes.texture_lod_bias.has_value());
+        TEST_ASSERT_NEAR(*writes.texture_lod_bias, kGameLodBias, 0.0001f);
         TEST_ASSERT_EQ(enforcer.mip_bias(), 0.0f);
         TEST_ASSERT_FALSE(enforcer.enforcing() & static_cast<uint8_t>(ipc::ImageQualityEnforced::MipBias));
         // Handed back once, then left alone.
-        TEST_ASSERT_FALSE(enforcer.plan(apply(snap, writes), off, active).bias_table.has_value());
+        TEST_ASSERT_FALSE(enforcer.plan(apply(snap, writes), off, active).texture_lod_bias.has_value());
     };
 
     ImageQualitySettings no_bias{};
@@ -546,8 +549,8 @@ TEST_CASE(ImageQuality, MipBiasIsHandedBack) {
     Enforcer enforcer;
     const auto snap = held_with_bias(enforcer, ImageQualitySettings{});
     const auto writes = enforcer.release(snap);
-    TEST_ASSERT(writes.bias_table.has_value());
-    assert_biased_by(*writes.bias_table, 0.0f);
+    TEST_ASSERT(writes.texture_lod_bias.has_value());
+    TEST_ASSERT_NEAR(*writes.texture_lod_bias, kGameLodBias, 0.0001f);
 }
 
 TEST_CASE(ImageQuality, MipBiasWaitsForASettledRange) {
@@ -559,48 +562,59 @@ TEST_CASE(ImageQuality, MipBiasWaitsForASettledRange) {
     // moves to 2138, but not before the range held for a tick.
     snap.scale.floor_height = 2138;
     auto writes = enforcer.plan(snap, settings, true);
-    TEST_ASSERT_FALSE(writes.bias_table.has_value());
+    TEST_ASSERT_FALSE(writes.texture_lod_bias.has_value());
     TEST_ASSERT_NEAR(enforcer.mip_bias(), kQualityBias, 0.0001f);
 
     writes = enforcer.plan(apply(snap, writes), settings, true);
-    TEST_ASSERT(writes.bias_table.has_value());
-    assert_biased_by(*writes.bias_table, static_cast<float>(std::log2(2138.0 / 2160.0)));
+    TEST_ASSERT(writes.texture_lod_bias.has_value());
+    TEST_ASSERT_NEAR(*writes.texture_lod_bias, kGameLodBias + static_cast<float>(std::log2(2138.0 / 2160.0)),
+                     0.0001f);
 }
 
 TEST_CASE(ImageQuality, PluginBiasesTexturesAndHandsThemBack) {
-    FakeRenderObjects game(dlss_at_floor());
-    game::SamplerBiasTable table = game_bias_table();
+    FakeRenderObjects game(dlss_with_lod_bias());
     ImageQualityPlugin plugin;
     plugin.initialize();
     game.attach(plugin);
-    plugin.set_sampler_bias_table(reinterpret_cast<uintptr_t>(&table));
     ipc::PacketRingBuffer ring;
     plugin.set_ring_buffer(&ring);
     plugin.set_connected(true);
 
+    // The game applies a bias only once its texture filter bit says so.
     plugin.update(0.05);
     plugin.update(0.05);
-    assert_biased_by(table, kQualityBias);
+    TEST_ASSERT_NEAR(game.lod_bias(), kGameLodBias + kQualityBias, 0.0001f);
+    TEST_ASSERT(game.dirty_flags() & kTextureFilterDirty);
     const auto states = drain_states(ring);
     TEST_ASSERT_FALSE(states.empty());
     TEST_ASSERT_NEAR(states.back().mip_bias, kQualityBias, 0.0001f);
     TEST_ASSERT(states.back().enforcing & static_cast<uint8_t>(ipc::ImageQualityEnforced::MipBias));
 
+    // Applied and unchanged: the bit is not set again.
+    game.clear_dirty_flags();
+    plugin.update(0.05);
+    TEST_ASSERT_EQ(game.dirty_flags(), 0u);
+
     // The offset arrives by command, rounded to its step.
     plugin.set_mip_bias(true, -0.3f);
     plugin.update(0.05);
-    assert_biased_by(table, kQualityBias - 0.25f);
+    TEST_ASSERT_NEAR(game.lod_bias(), kGameLodBias + kQualityBias - 0.25f, 0.0001f);
+    TEST_ASSERT(game.dirty_flags() & kTextureFilterDirty);
 
+    game.clear_dirty_flags();
     plugin.set_mip_bias(false, 0.0f);
     plugin.update(0.05);
-    assert_biased_by(table, 0.0f);
+    TEST_ASSERT_NEAR(game.lod_bias(), kGameLodBias, 0.0001f);
+    TEST_ASSERT(game.dirty_flags() & kTextureFilterDirty);
 
     // An unload, which runs no further tick.
     plugin.set_mip_bias(true, 0.0f);
     plugin.update(0.05);
-    assert_biased_by(table, kQualityBias);
+    TEST_ASSERT_NEAR(game.lod_bias(), kGameLodBias + kQualityBias, 0.0001f);
+    game.clear_dirty_flags();
     plugin.release();
-    assert_biased_by(table, 0.0f);
+    TEST_ASSERT_NEAR(game.lod_bias(), kGameLodBias, 0.0001f);
+    TEST_ASSERT(game.dirty_flags() & kTextureFilterDirty);
 }
 
 TEST_CASE(ImageQuality, MipBiasOffsetClampsToItsSteps) {

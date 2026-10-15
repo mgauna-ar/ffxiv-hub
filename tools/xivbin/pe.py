@@ -112,12 +112,6 @@ class Image:
         disp = struct.unpack_from("<i", self.data, self.va_to_off(ins_va) + disp_off)[0]
         return ins_va + ins_len + disp
 
-    def image_target(self, ins_va, disp_off):
-        """Target of a disp32 that is an offset from the image base, e.g.
-        (ins, 6) for F3 43 0F 10 84 88 disp32 with r8 holding the base."""
-        disp = struct.unpack_from("<i", self.data, self.va_to_off(ins_va) + disp_off)[0]
-        return self.base + disp
-
     def jump_table(self, targets_va, count, index_va=None, first_case=0):
         """Case values per target of an MSVC switch, as {target_va: [case, ...]}.
 

@@ -1,6 +1,5 @@
 #pragma once
 
-#include "hub/game_definitions.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -61,12 +60,6 @@ namespace hub::iq {
 [[nodiscard]] inline std::optional<float> mip_bias_for(uint16_t render_height, uint16_t screen_height) noexcept {
     if (render_height == 0 || screen_height == 0) return std::nullopt;
     return static_cast<float>(std::log2(static_cast<double>(render_height) / static_cast<double>(screen_height)));
-}
-
-/// `table` with `bias` added to each filter level.
-[[nodiscard]] inline game::SamplerBiasTable biased_table(game::SamplerBiasTable table, float bias) noexcept {
-    for (float& level : table.bias) level += bias;
-    return table;
 }
 
 } // namespace hub::iq
