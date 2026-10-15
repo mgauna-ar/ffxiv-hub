@@ -278,6 +278,29 @@ TEST_CASE(PipeServer, ImageQualityStateFromAPayloadBeforeTheScreenHeight) {
     TEST_ASSERT_EQ(received.screen_height, uint16_t{2160});
 }
 
+TEST_CASE(PipeServer, ImageQualityStateFromAPayloadBeforeTheMipBias) {
+    // A payload loaded before mip_bias sends the 38-byte report: no texture bias.
+    ipc::PipeServer server;
+    ipc::ImageQualityStatePayload received{};
+    received.mip_bias = 9.0f;
+    server.set_image_quality_state_callback([&](const ipc::ImageQualityStatePayload& s) { received = s; });
+
+    ipc::ImageQualityStatePayload state{};
+    state.found = 1;
+    state.screen_height = 2160;
+    state.mip_bias = -0.585f;
+    const auto* bytes = reinterpret_cast<const uint8_t*>(&state);
+    TEST_ASSERT(server.process_raw_packet(ipc::serialize_packet(
+        PluginId::ImageQuality, MessageType::ImageQualityState, 1,
+        std::span<const uint8_t>(bytes, ipc::IMAGE_QUALITY_STATE_V2_SIZE))));
+    TEST_ASSERT_EQ(received.screen_height, uint16_t{2160});
+    TEST_ASSERT_EQ(received.mip_bias, 0.0f);
+
+    TEST_ASSERT(server.process_raw_packet(ipc::serialize_typed_packet(
+        PluginId::ImageQuality, MessageType::ImageQualityState, 2, state)));
+    TEST_ASSERT_NEAR(received.mip_bias, -0.585f, 1e-6f);
+}
+
 TEST_CASE(PipeServer, StatusFromAnOlderPayload) {
     // A payload loaded before the status flags sends the 76-byte status. It must
     // still arrive, flags 0, and the hooks badge falls back to the message text.

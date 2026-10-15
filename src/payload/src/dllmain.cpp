@@ -215,6 +215,10 @@ private:
             (graphics_ok ? "ok" : std::string("FAILED (") + m_graphics_locator.last_error() + ")"));
         m_image_quality_plugin->set_render_slots(m_graphics_locator.graphics_config_slot(),
                                                  m_graphics_locator.render_target_manager_slot());
+        if (m_graphics_locator.sampler_bias_table() == 0) {
+            hub::os::Logger::warn("Signature not found: sampler bias table (no texture mip bias)");
+        }
+        m_image_quality_plugin->set_sampler_bias_table(m_graphics_locator.sampler_bias_table());
 
         m_combat_plugin->set_actor_resolver(
             [reader = m_object_reader.get(), plugin = m_combat_plugin.get()](uint32_t entity_id) {

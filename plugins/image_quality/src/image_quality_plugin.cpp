@@ -37,6 +37,11 @@ void ImageQualityPlugin::set_dlss_jitter(bool override_game) noexcept {
     m_settings.override_dlss_jitter = override_game;
 }
 
+void ImageQualityPlugin::set_mip_bias(bool enabled, float offset) noexcept {
+    m_settings.dlss_mip_bias = enabled;
+    m_settings.dlss_mip_bias_offset = clamp_mip_bias_offset(offset);
+}
+
 std::optional<GraphicsSnapshot> ImageQualityPlugin::read_snapshot(RenderObjects& objects) const {
     if (m_graphics_config_slot == 0 || m_render_target_manager_slot == 0) return std::nullopt;
     // Each global holds a pointer, null until the device setup has run.
@@ -52,6 +57,11 @@ std::optional<GraphicsSnapshot> ImageQualityPlugin::read_snapshot(RenderObjects&
     if (!os::safe_read(objects.render_target_manager + offsets::RENDER_TARGET_MANAGER_RENDER_SCALE, snap.scale)) {
         return std::nullopt;
     }
+    // Without the bias table everything else still works. Its address is kept even
+    // when this read fails, so the game's values can still be written back.
+    objects.sampler_bias_table = m_sampler_bias_table;
+    game::SamplerBiasTable table;
+    if (m_sampler_bias_table != 0 && os::safe_read(m_sampler_bias_table, table)) snap.bias_table = table;
     return snap;
 }
 
@@ -68,6 +78,11 @@ bool ImageQualityPlugin::write(const RenderObjects& objects, const GraphicsWrite
     if (writes.current_height) {
         ok &= write_field(objects.render_target_manager, offsets::RENDER_TARGET_MANAGER_CURRENT_HEIGHT,
                           &*writes.current_height, sizeof(*writes.current_height));
+    }
+    if (writes.bias_table && objects.sampler_bias_table != 0) {
+        // The table sits in .rdata.
+        ok &= os::safe_write_protected(reinterpret_cast<void*>(objects.sampler_bias_table), &*writes.bias_table,
+                                       sizeof(*writes.bias_table));
     }
     return ok;
 }
@@ -87,7 +102,7 @@ void ImageQualityPlugin::update(double delta_seconds) {
     // One that did not land is planned again on the next tick.
     (void)write(objects, writes);
 
-    m_last_state = state_payload(apply(*snap, writes), m_enforcer.enforcing());
+    m_last_state = state_payload(apply(*snap, writes), m_enforcer.enforcing(), m_enforcer.mip_bias());
     publish(*m_last_state, delta_seconds);
 }
 

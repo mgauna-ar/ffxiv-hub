@@ -48,6 +48,14 @@ uintptr_t resolve_rip_relative(
     size_t instruction_size = 7
 );
 
+/// Resolves a displacement that is an offset from the image base, as in
+/// MOVSS xmm0, [r8 + r9*4 + disp32] with r8 holding the base; 0 for a null instruction
+uintptr_t resolve_image_relative(
+    uintptr_t instruction_addr,
+    size_t disp_offset,
+    uintptr_t image_base
+);
+
 /// Resolves an x86-64 CALL rel32 displacement (E8 [disp32]) to its absolute target
 uintptr_t resolve_call_relative(uintptr_t call_addr);
 

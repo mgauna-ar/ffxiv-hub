@@ -1,5 +1,6 @@
 #pragma once
 
+#include "hub/game_definitions.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -52,6 +53,20 @@ namespace hub::iq {
     }
     const long wanted = std::lround(static_cast<double>(screen_height) * static_cast<double>(render_scale));
     return static_cast<uint16_t>(std::clamp<long>(wanted, floor_height, target_height));
+}
+
+/// The texture mip bias, in mip levels, that matches rendering `render_height` lines
+/// for a `screen_height` screen: log2 of the one over the other, negative below
+/// native. Nullopt while either is unknown.
+[[nodiscard]] inline std::optional<float> mip_bias_for(uint16_t render_height, uint16_t screen_height) noexcept {
+    if (render_height == 0 || screen_height == 0) return std::nullopt;
+    return static_cast<float>(std::log2(static_cast<double>(render_height) / static_cast<double>(screen_height)));
+}
+
+/// `table` with `bias` added to each filter level.
+[[nodiscard]] inline game::SamplerBiasTable biased_table(game::SamplerBiasTable table, float bias) noexcept {
+    for (float& level : table.bias) level += bias;
+    return table;
 }
 
 } // namespace hub::iq

@@ -203,6 +203,8 @@ enum class ImageQualityEnforced : uint8_t {
     FixedResolution = 1u << 0,
     /// The jitter multiplier is the plugin's, not the game's.
     JitterMultiplier = 1u << 1,
+    /// The texture samplers' bias table is the plugin's, not the game's.
+    MipBias = 1u << 2,
 };
 
 /// 0x0301: What the game's render settings read now, sent when they change and
@@ -224,11 +226,16 @@ struct ImageQualityStatePayload {
     uint8_t  enforcing{0};            // ImageQualityEnforced bits
     uint8_t  pad[3]{0};
     uint16_t screen_height{0};        // 0 when unknown
+    uint8_t  pad2[2]{0};
+    float    mip_bias{0.0f};          // Mip levels the plugin adds to the game's texture bias, 0 when none
 };
-static_assert(sizeof(ImageQualityStatePayload) == 38, "ImageQualityStatePayload must be 38 bytes");
+static_assert(sizeof(ImageQualityStatePayload) == 44, "ImageQualityStatePayload must be 44 bytes");
 /// What a payload from before `screen_height` sends: no render scale to show.
 constexpr size_t IMAGE_QUALITY_STATE_V1_SIZE = 36;
 static_assert(offsetof(ImageQualityStatePayload, screen_height) == IMAGE_QUALITY_STATE_V1_SIZE, "screen_height must follow the old layout");
+/// What a payload from before `mip_bias` sends: no texture bias.
+constexpr size_t IMAGE_QUALITY_STATE_V2_SIZE = 38;
+static_assert(offsetof(ImageQualityStatePayload, pad2) == IMAGE_QUALITY_STATE_V2_SIZE, "mip_bias must follow the old layout");
 
 /// Damage one player's buffs added to a hit, owed to that player.
 struct CombatBuffCredit {
