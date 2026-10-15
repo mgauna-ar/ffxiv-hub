@@ -10,7 +10,9 @@
     python3 tools/inspect_exe.py jumptable 0x1409010a8 77 --index 0x140901134 --first 1
 
 `sig` takes a name from include/hub/game_definitions.hpp or a literal pattern. A
-name with a <NAME>_RIP_* pair in the header resolves its RIP operand without --rip.
+name with a <NAME>_RIP_* pair in the header resolves its RIP operand without --rip,
+and one with a <NAME>_IMAGE_DISP_OFFSET its image-relative operand without
+--image-disp.
 Addresses are VAs at the image base the exe declares (0x140000000).
 """
 
@@ -21,7 +23,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-from check_signatures import read_rip_operands, read_signatures
+from check_signatures import read_image_operands, read_rip_operands, read_signatures
 from xivbin.pe import Image
 
 
@@ -36,13 +38,18 @@ def label(img, func):
 def cmd_sig(img, args):
     pattern = dict(read_signatures()).get(args.pattern, args.pattern)
     rip = args.rip or read_rip_operands().get(args.pattern)
+    image_disp = args.image_disp if args.image_disp is not None else read_image_operands().get(args.pattern)
     hits = img.find_pattern(pattern)
     print(f"{len(hits)} match(es) for {pattern}")
     for hit in hits:
         line = f"  {hit:#x}"
+        ins = hit + args.at
+        target = None
         if rip:
-            ins = hit + args.at
             target = img.rip_target(ins, rip[0], rip[1])
+        elif image_disp is not None:
+            target = img.image_target(ins, image_disp)
+        if target is not None:
             line += f"  -> {target:#x} ({img.section_of(target)})"
         print(line)
 
@@ -98,6 +105,9 @@ def main():
     p.add_argument("--rip", type=num, nargs=2, metavar=("DISP_OFF", "INS_END"),
                    help="displacement offset and instruction end, from the match (or --at); "
                         "defaults to the signature's _RIP_* pair in the header")
+    p.add_argument("--image-disp", type=num, metavar="DISP_OFF",
+                   help="offset of a disp32 relative to the image base, from the match (or --at); "
+                        "defaults to the signature's _IMAGE_DISP_OFFSET in the header")
     p.set_defaults(fn=cmd_sig)
 
     p = sub.add_parser("func", help="disassemble the function containing an address")

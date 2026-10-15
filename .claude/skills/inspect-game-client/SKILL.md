@@ -14,7 +14,7 @@ combat meter treating party slot 0 as the local player. The install is at `~/ffx
 
 | Question | Command |
 |---|---|
-| Does a signature still match, and where does it point? | `python3 tools/inspect_exe.py sig GROUP_MANAGER_INSTANCE` (a literal pattern takes `--rip <disp offset> <insn end>`) |
+| Does a signature still match, and where does it point? | `python3 tools/inspect_exe.py sig GROUP_MANAGER_INSTANCE` (a literal pattern takes `--rip <disp offset> <insn end>`, or `--image-disp <disp offset>` for a disp32 that is an offset from the image base) |
 | Check all signatures after a patch | `python3 tools/check_signatures.py`: every signature matches once, and each static-global one lands in a data section, following the `<SIGNATURE>_RIP_*` pair in `game_definitions.hpp`. See `after-game-patch` |
 | Show a function | `python3 tools/inspect_exe.py func 0x140b4a4b0` |
 | Show a range (leaf functions have no `.pdata` entry) | `python3 tools/inspect_exe.py disasm 0x140b26dd0 0x140b26df0` |
@@ -39,7 +39,10 @@ reaches the client through a signature in `include/hub/game_definitions.hpp`, an
 **Find a manager's instance.** Resolve its signature with `sig NAME`. It follows the
 signature's `<NAME>_RIP_DISP_OFFSET` and `<NAME>_RIP_INSN_END` in `game_definitions.hpp`,
 counted from the match start, the pair the payload passes to `resolve_rip_relative`; a
-re-cut pattern not in the header yet takes them as `--rip <disp offset> <insn end>`. The
+re-cut pattern not in the header yet takes them as `--rip <disp offset> <insn end>`.
+An operand addressed as `[base + index*4 + disp32]` with the image base in a register
+is not RIP-relative: its `<NAME>_IMAGE_DISP_OFFSET` (or `--image-disp`) resolves it, and
+`xrefs` does not find its readers, so search `.text` for the displacement's bytes. The
 target lands in `.data`.
 
 **Find what fills a field.** `field <offset> --writes` lists the stores. A field set
@@ -69,6 +72,7 @@ example "entry i goes to slot i", which is exactly the kind of fact premises dep
   and status applications in "How the client reads an effect entry", "How the client
   reports DoT and HoT ticks" and "How the client applies statuses", and GCD/button flags
   in "How the Action sheet marks a button". In the image quality plugin's `AGENTS.md`:
-  "How the client jitters and scales with DLSS". In the root `AGENTS.md`: "How the client
+  "How the client jitters and scales with DLSS" and "How the client biases its texture
+  samplers". In the root `AGENTS.md`: "How the client
   keeps a character's worlds", "How the client builds an aetheryte", "How the client
   marks the lobby", and "How the client keeps its window and swap chain".

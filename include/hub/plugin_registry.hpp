@@ -40,7 +40,7 @@ inline constexpr PluginDescriptor IMAGE_QUALITY{
     PluginId::ImageQuality,
     "Image Quality",
     HUB_VERSION_STRING,
-    "DLSS held at its chosen resolution, with full-pixel camera jitter",
+    "DLSS held at its chosen resolution, with full-pixel camera jitter and sharper textures",
     "image_quality",
 };
 

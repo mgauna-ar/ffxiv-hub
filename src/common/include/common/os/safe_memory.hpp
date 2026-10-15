@@ -20,6 +20,17 @@ namespace hub::os {
  */
 [[nodiscard]] bool safe_copy(void* dst, const void* src, size_t size) noexcept;
 
+/**
+ * @brief Writes `size` bytes into game memory that may be read-only, such as a table
+ * in `.rdata`.
+ *
+ * On Windows the pages are made writable for the copy and given their old protection
+ * back after it; the copy itself is a safe_copy. The mock build is a plain `memcpy`.
+ * False when either pointer is null, the protection cannot be changed, or the copy
+ * faults.
+ */
+[[nodiscard]] bool safe_write_protected(void* dst, const void* src, size_t size) noexcept;
+
 /// safe_copy of one `T` from `src`, which the game owns.
 template <typename T>
 [[nodiscard]] bool safe_read(const void* src, T& out) noexcept {

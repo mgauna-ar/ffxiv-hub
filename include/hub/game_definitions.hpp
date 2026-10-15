@@ -203,6 +203,12 @@ namespace signatures {
     // and matches twice. The global holds a pointer.
     constexpr std::string_view RENDER_TARGET_MANAGER_INSTANCE =
         "48 8B 05 ? ? ? ? 44 8B 86 ? ? ? ? 41 B9";
+
+    // 11. The texture samplers' bias table: movss xmm0, [r8 + r9*4 + disp32] in a
+    // sampler key builder. disp32 is the table's offset from the image base, not
+    // RIP-relative.
+    constexpr std::string_view SAMPLER_BIAS_TABLE =
+        "F3 43 0F 10 84 88 ? ? ? ? F3 0F 59 05 ? ? ? ? C1 E0 06";
 } // namespace signatures
 
 /// Where the RIP-relative operand sits in each signature that resolves a static
@@ -242,6 +248,11 @@ namespace definitions {
     constexpr size_t GRAPHICS_CONFIG_INSTANCE_RIP_INSN_END = 7;
     constexpr size_t RENDER_TARGET_MANAGER_INSTANCE_RIP_DISP_OFFSET = 3;
     constexpr size_t RENDER_TARGET_MANAGER_INSTANCE_RIP_INSN_END = 7;
+
+    // A signature whose disp32 is an offset from the image base names it
+    // <SIGNATURE>_IMAGE_DISP_OFFSET, for resolve_image_relative(match, offset, base).
+    // F3 43 0F 10 84 88 [disp32]: movss xmm0, [r8 + r9*4 + disp32], r8 the image base
+    constexpr size_t SAMPLER_BIAS_TABLE_IMAGE_DISP_OFFSET = 6;
 } // namespace definitions
 
 /// GraphicsConfig::upscale_type: the in-game upscaler option plus one.
@@ -452,6 +463,14 @@ static_assert(offsetof(RenderScaleState, floor_height) == offsets::RENDER_TARGET
 static_assert(offsetof(RenderScaleState, gpu_time_ms) == offsets::RENDER_TARGET_MANAGER_GPU_TIME - offsets::RENDER_TARGET_MANAGER_RENDER_SCALE, "RenderScaleState::gpu_time_ms offset mismatch");
 static_assert(offsetof(RenderScaleState, cpu_time_ms) == offsets::RENDER_TARGET_MANAGER_CPU_TIME - offsets::RENDER_TARGET_MANAGER_RENDER_SCALE, "RenderScaleState::cpu_time_ms offset mismatch");
 static_assert(offsetof(RenderScaleState, target_ratio) == offsets::RENDER_TARGET_MANAGER_TARGET_RATIO - offsets::RENDER_TARGET_MANAGER_RENDER_SCALE, "RenderScaleState::target_ratio offset mismatch");
+
+/// The mip bias, in mip levels, that the sampler key builders give each texture
+/// filter level, in .rdata. How the client uses it: plugins/image_quality/AGENTS.md.
+struct SamplerBiasTable {
+    static constexpr size_t LEVELS = 6;
+    float bias[LEVELS]{};
+};
+static_assert(sizeof(SamplerBiasTable) == 0x18, "SamplerBiasTable must be 6 floats");
 
 #pragma pack(pop)
 

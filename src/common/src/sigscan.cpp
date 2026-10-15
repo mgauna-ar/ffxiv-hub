@@ -100,6 +100,17 @@ uintptr_t resolve_rip_relative(
     return rip + static_cast<intptr_t>(disp);
 }
 
+uintptr_t resolve_image_relative(
+    uintptr_t instruction_addr,
+    size_t disp_offset,
+    uintptr_t image_base
+) {
+    if (instruction_addr == 0) return 0;
+    int32_t disp = 0;
+    std::memcpy(&disp, reinterpret_cast<const void*>(instruction_addr + disp_offset), sizeof(int32_t));
+    return image_base + static_cast<intptr_t>(disp);
+}
+
 namespace {
     // x86-64 CALL rel32 instruction layout: opcode (0xE8) + displacement (4 bytes int32)
     constexpr size_t CALL_REL32_DISP_OFFSET = 1;

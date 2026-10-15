@@ -83,6 +83,12 @@ void send_jitter(AppState& app_state) {
                            iq::constants::DLSS_JITTER_AMOUNT);
 }
 
+void send_mip_bias(AppState& app_state) {
+    const bool enabled = cfg_get(IQ, "dlss_mip_bias", true);
+    const float offset = iq::clamp_mip_bias_offset(cfg_get(IQ, "dlss_mip_bias_offset", 0.0f));
+    app_state.send_command(PluginId::ImageQuality, CommandId::SetDlssMipBias, enabled ? 1u : 0u, offset);
+}
+
 // ---------------------------------------------------------------------------
 // Live tab
 // ---------------------------------------------------------------------------
@@ -210,6 +216,22 @@ void render_status_card(const State& state) {
     status_row("Camera jitter", "1.00 moves the camera by as much as the game tells DLSS it moved.", jitter,
                colors::TextBody);
 
+    char bias[48];
+    uint32_t bias_color = colors::TextBody;
+    if (enforcing(state, ipc::ImageQualityEnforced::MipBias)) {
+        std::snprintf(bias, sizeof(bias), "%+.2f (plugin)", static_cast<double>(state.mip_bias));
+        bias_color = colors::SuccessLight;
+    } else if (is_dlss(state) && !enforcing(state, ipc::ImageQualityEnforced::FixedResolution)) {
+        std::snprintf(bias, sizeof(bias), "Off: needs a held resolution");
+        bias_color = colors::TextDim;
+    } else {
+        std::snprintf(bias, sizeof(bias), "Game's");
+    }
+    status_row("Texture mip bias",
+               "Mip levels added to the game's own texture bias, so textures keep the detail of the "
+               "screen's resolution rather than the lower one DLSS renders at. Negative is sharper.",
+               bias, bias_color);
+
     end_card();
 }
 
@@ -281,6 +303,35 @@ void render_plugin_section(AppState& app_state) {
         send_jitter(app_state);
     }
 
+    // The bias follows the held height, so it needs one.
+    ImGui::BeginDisabled(!fixed);
+    bool mip_bias = cfg_get(IQ, "dlss_mip_bias", true);
+    if (setting_toggle("Sharper textures",
+                       "Pick texture detail for the screen's resolution instead of the lower one DLSS "
+                       "renders at, as NVIDIA recommends for DLSS. Needs Fixed render resolution.",
+                       &mip_bias)) {
+        cfg_store(IQ, "dlss_mip_bias", mip_bias);
+        send_mip_bias(app_state);
+    }
+
+    // Sent on release only: every distinct bias makes the game create samplers it
+    // never frees, so a drag must not send one per frame.
+    ImGui::BeginDisabled(!mip_bias);
+    float offset = iq::clamp_mip_bias_offset(cfg_get(IQ, "dlss_mip_bias_offset", 0.0f));
+    begin_setting_row("Texture sharpness", "Added to the bias, in mip levels. Lower is sharper and can "
+                                           "shimmer; higher is softer.");
+    if (ImGui::SliderFloat("##iq_mip_bias_offset", &offset, iq::constants::MIN_MIP_BIAS_OFFSET,
+                           iq::constants::MAX_MIP_BIAS_OFFSET, "%+.3f")) {
+        cfg_set(IQ, "dlss_mip_bias_offset", iq::clamp_mip_bias_offset(offset));
+    }
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        cfg_save();
+        send_mip_bias(app_state);
+    }
+    end_setting_row();
+    ImGui::EndDisabled();
+    ImGui::EndDisabled();
+
     end_settings_card();
 }
 
@@ -293,9 +344,12 @@ void render_maintenance_section(AppState& app_state) {
         const iq::ImageQualitySettings defaults{};
         cfg_set(IQ, "fixed_dlss_resolution", defaults.fixed_dlss_resolution);
         cfg_set(IQ, "dlss_render_scale", defaults.dlss_render_scale);
-        cfg_store(IQ, "override_dlss_jitter", defaults.override_dlss_jitter);
+        cfg_set(IQ, "override_dlss_jitter", defaults.override_dlss_jitter);
+        cfg_set(IQ, "dlss_mip_bias", defaults.dlss_mip_bias);
+        cfg_store(IQ, "dlss_mip_bias_offset", defaults.dlss_mip_bias_offset);
         send_resolution(app_state);
         send_jitter(app_state);
+        send_mip_bias(app_state);
     }
 
     end_settings_card();
@@ -321,7 +375,7 @@ void render_view_image_quality(AppState& app_state) {
     }
 
     render_plugin_header(app_state, PluginId::ImageQuality, ICON_MONITOR, "Image Quality",
-                         "DLSS render resolution and camera jitter", status);
+                         "DLSS render resolution, camera jitter and texture detail", status);
     if (render_plugin_disabled_gate(app_state, PluginId::ImageQuality, "Image Quality")) {
         return;
     }

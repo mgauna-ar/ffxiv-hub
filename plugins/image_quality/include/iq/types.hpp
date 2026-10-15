@@ -21,6 +21,14 @@ namespace constants {
     constexpr float MIN_DLSS_RENDER_SCALE = 0.5f;
     constexpr float MAX_DLSS_RENDER_SCALE = 1.0f;
 
+    /// The user's offset to the texture mip bias, in mip levels, on top of the
+    /// log2 of the held render height over the screen's. Negative is sharper. It
+    /// moves in steps so a slider makes few distinct biases: each one makes the game
+    /// create samplers it never frees.
+    constexpr float MIN_MIP_BIAS_OFFSET = -1.0f;
+    constexpr float MAX_MIP_BIAS_OFFSET = 1.0f;
+    constexpr float MIP_BIAS_OFFSET_STEP = 0.125f;
+
     /// Seconds between two state reports when nothing changed, so the app's GPU and
     /// frame times stay current and a late-connecting app is not left empty.
     constexpr double STATE_KEEPALIVE_SECONDS = 1.0;

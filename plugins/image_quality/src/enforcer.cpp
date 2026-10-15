@@ -3,6 +3,17 @@
 
 namespace hub::iq {
 
+namespace {
+
+bool same_table(const game::SamplerBiasTable& a, const game::SamplerBiasTable& b) noexcept {
+    for (size_t i = 0; i < game::SamplerBiasTable::LEVELS; ++i) {
+        if (a.bias[i] != b.bias[i]) return false;
+    }
+    return true;
+}
+
+} // namespace
+
 GraphicsWrites Enforcer::plan(const GraphicsSnapshot& snap, const ImageQualitySettings& settings, bool active) {
     GraphicsWrites writes;
     const bool dlss = snap.config.upscale_type == static_cast<uint8_t>(game::UpscaleType::Dlss);
@@ -11,7 +22,9 @@ GraphicsWrites Enforcer::plan(const GraphicsSnapshot& snap, const ImageQualitySe
     m_last_target = scale.target_height;
     m_last_floor = scale.floor_height;
 
-    if (active && dlss && settings.fixed_dlss_resolution) {
+    const bool fixed = active && dlss && settings.fixed_dlss_resolution;
+    std::optional<uint16_t> held_height;
+    if (fixed) {
         if (!m_game_stepping) m_game_stepping = snap.config.dynamic_rezo_stepping;
         if (snap.config.dynamic_rezo_stepping != 0) writes.stepping = 0;
         // With the controller stopped the height stays wherever it was. It is pinned
@@ -22,6 +35,7 @@ GraphicsWrites Enforcer::plan(const GraphicsSnapshot& snap, const ImageQualitySe
                                                 clamp_render_scale(settings.dlss_render_scale))
                                 : std::nullopt;
         if (range_settled && pin && scale.current_height != *pin) writes.current_height = *pin;
+        held_height = pin;
     } else if (m_game_stepping) {
         // The controller resumes from where the height is and walks it itself.
         if (snap.config.dynamic_rezo_stepping != *m_game_stepping) writes.stepping = *m_game_stepping;
@@ -44,7 +58,31 @@ GraphicsWrites Enforcer::plan(const GraphicsSnapshot& snap, const ImageQualitySe
         m_game_jitter.reset();
     }
 
+    plan_mip_bias(snap, settings, fixed && settings.dlss_mip_bias, held_height, range_settled, writes);
     return writes;
+}
+
+void Enforcer::plan_mip_bias(const GraphicsSnapshot& snap, const ImageQualitySettings& settings, bool wanted,
+                             std::optional<uint16_t> held_height, bool range_settled, GraphicsWrites& writes) {
+    const auto screen = screen_height(snap.scale.target_height, snap.scale.target_ratio);
+    const auto derived = held_height && screen ? mip_bias_for(*held_height, *screen) : std::nullopt;
+    if (wanted && snap.bias_table && derived) {
+        // Only the held height counts, never one the controller is moving: every new
+        // bias makes the game create samplers it never frees. A range still settling
+        // leaves the table as it is.
+        if (!range_settled) return;
+        if (!m_game_bias_table) m_game_bias_table = *snap.bias_table;
+        const float bias = *derived + clamp_mip_bias_offset(settings.dlss_mip_bias_offset);
+        const game::SamplerBiasTable table = biased_table(*m_game_bias_table, bias);
+        if (!same_table(*snap.bias_table, table)) writes.bias_table = table;
+        m_mip_bias = bias;
+    } else if (m_game_bias_table) {
+        if (!snap.bias_table || !same_table(*snap.bias_table, *m_game_bias_table)) {
+            writes.bias_table = *m_game_bias_table;
+        }
+        m_game_bias_table.reset();
+        m_mip_bias = 0.0f;
+    }
 }
 
 GraphicsWrites Enforcer::release(const GraphicsSnapshot& snap) {
@@ -55,6 +93,7 @@ uint8_t Enforcer::enforcing() const noexcept {
     uint8_t bits = 0;
     if (m_game_stepping) bits |= static_cast<uint8_t>(ipc::ImageQualityEnforced::FixedResolution);
     if (m_game_jitter) bits |= static_cast<uint8_t>(ipc::ImageQualityEnforced::JitterMultiplier);
+    if (m_game_bias_table) bits |= static_cast<uint8_t>(ipc::ImageQualityEnforced::MipBias);
     return bits;
 }
 
@@ -62,10 +101,12 @@ GraphicsSnapshot apply(GraphicsSnapshot snap, const GraphicsWrites& writes) noex
     if (writes.stepping) snap.config.dynamic_rezo_stepping = *writes.stepping;
     if (writes.current_height) snap.scale.current_height = *writes.current_height;
     if (writes.jitter_multiplier) snap.config.jitter_multiplier = *writes.jitter_multiplier;
+    if (writes.bias_table) snap.bias_table = *writes.bias_table;
     return snap;
 }
 
-ipc::ImageQualityStatePayload state_payload(const GraphicsSnapshot& snap, uint8_t enforcing) noexcept {
+ipc::ImageQualityStatePayload state_payload(const GraphicsSnapshot& snap, uint8_t enforcing,
+                                            float added_bias) noexcept {
     ipc::ImageQualityStatePayload state{};
     state.found = 1;
     state.upscale_type = snap.config.upscale_type;
@@ -86,6 +127,7 @@ ipc::ImageQualityStatePayload state_payload(const GraphicsSnapshot& snap, uint8_
     state.cpu_time_ms = snap.scale.cpu_time_ms;
     state.enforcing = enforcing;
     state.screen_height = screen_height(snap.scale.target_height, snap.scale.target_ratio).value_or(0);
+    state.mip_bias = added_bias;
     return state;
 }
 

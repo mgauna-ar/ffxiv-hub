@@ -7,20 +7,22 @@ and teardown, the master switch, config ownership - live in the root
 ## Rules
 
 Rules about what the game does rest on
-[How the client jitters and scales with DLSS](#how-the-client-jitters-and-scales-with-dlss),
-which was verified against the binary. Check a change against that section, not against
+[How the client jitters and scales with DLSS](#how-the-client-jitters-and-scales-with-dlss)
+and [How the client biases its texture samplers](#how-the-client-biases-its-texture-samplers),
+which were verified against the binary. Check a change against those sections, not against
 a guess about the game.
 
-- **Three Fields, Nothing Else**: The plugin writes `GraphicsConfig::dynamic_rezo_stepping` (`+0x47`), `GraphicsConfig::jitter_multiplier` (`+0x78`) and `RenderTargetManager`'s current render height (`+0x702`), and only through `hub::os::safe_copy`. A new write needs its own verified model in the section below first.
+- **Four Places, Nothing Else**: The plugin writes `GraphicsConfig::dynamic_rezo_stepping` (`+0x47`), `GraphicsConfig::jitter_multiplier` (`+0x78`) and `RenderTargetManager`'s current render height (`+0x702`), only through `hub::os::safe_copy`, and the six floats of the samplers' bias table (`game::SamplerBiasTable`, in `.rdata`), only through `hub::os::safe_write_protected`. A new write needs its own verified model in the sections below first.
 - **Only Under DLSS**: Every write is gated on `upscale_type == UpscaleType::Dlss`. FSR, including TSCMAA + camera jitter, keeps every game value. Never key a write on `dynamic_rezo_enable`: the client skips that checkbox under DLSS, so it says nothing about what the controller does.
 - **The Target Is Not The Mode**: Under DLSS, `RTM+0x704` is the top of DLSS's own range (the screen height at 4K), not a quality mode, so pinning to it is DLAA. The pinned height is `pinned_height()` in `iq/render_math.hpp`: the screen height times `dlss_render_scale`, clamped to `[floor, target]`, the range the controller itself moves in.
 - **The Screen Height Is Derived**: `RTM+0x700` is the height frames render at, not the screen's; taking it for the screen's pinned nothing once the controller had lowered the height. The screen height is `screen_height()`: the target over `RTM+0x71c`, the target's share of the screen. With that share unknown (0, or above 1) nothing is pinned.
 - **Pin Only A Settled Range**: The render thread rewrites the range and the current height together when DLSS's range changes (`0x1402db890`). The plugin pins only inside a range that read the same on the tick before, and only one whose target does not pass the screen height, so a race costs at most one tick at a height the controller could also have chosen.
 - **The Camera Moves By What DLSS Is Told**: DLSS is handed the raw sample, and the camera moves by the amplitude times it (see below), so only an amplitude of 1.0 (`DLSS_JITTER_AMOUNT`) agrees with DLSS. It is not a quality setting and has no slider: any other value tells DLSS the wrong offset every frame. The client scales the multiplier by `s^2`, so the plugin writes `multiplier_for(DLSS_JITTER_AMOUNT, s^2)`, kept within `MIN_WRITTEN_MULTIPLIER`-`MAX_WRITTEN_MULTIPLIER`, and the view shows `effective_jitter()`; both live in `iq/render_math.hpp`. `s` follows the height frames render at, so the multiplier is rewritten on the tick after the height moves. With the heights unknown nothing is written.
-- **Hand Back What Was Taken**: `Enforcer` records each field's game value before the plugin's first write to it and writes it back when the plugin lets go: master switch off, app disconnected, upscaler no longer DLSS, the field's own setting off, or `release()` on an unload. Teardown calls `release()` because no tick runs after it; the game's exit needs nothing. The current render height is never restored: the controller, once running again, moves it itself.
-- **The Orchestration Thread Owns It**: `update()`, the commands and the autosave all run on the payload's orchestration thread, and nothing else touches the plugin. It consumes no hook and pushes from no new thread. Each write is one aligned 1, 2 or 4 byte store, which the render thread reads whole.
-- **Its Keys Live In `iq_settings.cpp`**: the table there is the only list of the `image_quality` section's keys and their defaults (`ImageQualitySettings{}`). `dlss_render_scale` is clamped on read and on every command. `SetDlssJitter`'s amount, which apps up to v1.3.2 send, is ignored, and their `dlss_jitter_amount` key is no longer read. See the root AGENTS.md, *Every Plugin Key Has A Default On File*.
-- **The App Hears The Game, Not The Settings**: `ImageQualityStatePayload` reports what the two singletons read after the tick's writes, sent on a change and every `STATE_KEEPALIVE_SECONDS`, nothing while switched off or disconnected. The view takes a report older than `AppState::kImageQualityStateTtl` as none. `found == 0` means a signature or a singleton is missing, and the plugin writes nothing then.
+- **The Bias Follows The Held Height Only**: The texture bias is `log2(held / screen)` (`mip_bias_for()` in `iq/render_math.hpp`) plus `dlss_mip_bias_offset`, added to the game's own value for every filter level. It is written only while the height is held (*Fixed render resolution* on, the pin known), from the pinned height and never from the one the controller or the pin is moving, and only once the range has settled. Every distinct bias makes the game create a new sampler for each key that uses it, and its cache never frees one, while D3D11 allows 4096 distinct sampler states per device. So the bias may change only when the held height or the offset does: the offset moves in steps of `MIP_BIAS_OFFSET_STEP` and the app sends it when the slider is released, never while it is dragged.
+- **Hand Back What Was Taken**: `Enforcer` records each field's game value, and the whole bias table, before the plugin's first write to it and writes it back when the plugin lets go: master switch off, app disconnected, upscaler no longer DLSS, the field's own setting off (*Fixed render resolution* too, for the table), or `release()` on an unload. Teardown calls `release()` because no tick runs after it; the game's exit needs nothing. The current render height is never restored: the controller, once running again, moves it itself.
+- **The Orchestration Thread Owns It**: `update()`, the commands and the autosave all run on the payload's orchestration thread, and nothing else touches the plugin. It consumes no hook and pushes from no new thread. Each field write is one aligned 1, 2 or 4 byte store, which the render thread reads whole. The table is six aligned floats, each read whole; a draw that builds its keys mid-write mixes old and new levels for that one draw.
+- **Its Keys Live In `iq_settings.cpp`**: the table there is the only list of the `image_quality` section's keys and their defaults (`ImageQualitySettings{}`). `dlss_render_scale` and `dlss_mip_bias_offset` are clamped on read and on every command, the offset also to its step. `SetDlssJitter`'s amount, which apps up to v1.3.2 send, is ignored, and their `dlss_jitter_amount` key is no longer read. See the root AGENTS.md, *Every Plugin Key Has A Default On File*.
+- **The App Hears The Game, Not The Settings**: `ImageQualityStatePayload` reports what the two singletons read after the tick's writes, and the bias the plugin added to the texture table, sent on a change and every `STATE_KEEPALIVE_SECONDS`, nothing while switched off or disconnected. The view takes a report older than `AppState::kImageQualityStateTtl` as none. `found == 0` means a signature or a singleton is missing, and the plugin writes nothing then.
 
 ## How the client jitters and scales with DLSS
 
@@ -119,3 +121,45 @@ Addresses are for that build only; re-check after a patch.
 - **`RenderTargetManager`** is the global `0x1428f6490`, holding a pointer.
   `RENDER_TARGET_MANAGER_INSTANCE` is FFXIVClientStructs' pattern extended by one
   instruction, which it needs to match once.
+- **What the game hands DLSS, which the plugin leaves alone.** The feature is created
+  (`0x140375600`, queued by `0x140374e29`) with `DLSS.Feature.Create.Flags` = `0xA`,
+  `MVLowRes | DepthInverted`: the colour is LDR, so DLSS takes no exposure, and none is
+  passed (no exposure texture, pre-exposure and scale left at their defaults). The
+  evaluate call (`0x140375790`) passes sharpness 0 and no transparency or bias mask.
+  Every mode gets the render preset hint C (`DLSS+0xc4` = 3), which the NVIDIA App's
+  model override replaces. When the camera skips its jitter (`0x14025faba`), DLSS is
+  told the global zero sample, so the two still agree. DLSS's own optimal render size
+  for the mode (`DLSS+0xd4`, the DLSS object at `[0x1428f6498]+0x4220`) is handed to
+  the range setter and dropped: the controller only uses the mode's min and max.
+
+## How the client biases its texture samplers
+
+Read from `ffxiv_dx11.exe` on 2026-10-15 with `tools/inspect_exe.py`. Addresses are for
+that build only; re-check after a patch.
+
+- **One factory makes every sampler.** `0x140238a30` is the only call of the device's
+  `CreateSamplerState` (vtable `+0xb8` of the `ID3D11Device` at `Device+0xe0aa8`). It
+  takes a 32-bit key, builds the description from it and keeps the sampler in a map
+  under that key, which is never pruned. The key: bits 0-5 the three address modes,
+  bits 6-9 the filter (min, anisotropic, mip, mag linear; all four set is
+  `D3D11_FILTER_ANISOTROPIC`), **bits 10-19 `MipLODBias`, signed, in 1/32 of a level**,
+  bits 20-23 `MinLOD`, bits 24-26 the anisotropy as an index into
+  {1, 2, 4, 6, 8, 10, 12, 16}, bits 28-31 the comparison function. Nothing between the
+  key and the description adds a term for the render resolution.
+- **A material's texture slots take their bias from one table.** Two key builders,
+  `0x14037eda0` (called from the per-draw material setup `0x14037f070` and five
+  siblings) and `0x140387f30`, read each slot's filter level (byte `+0xb` of its record)
+  and index three six-entry tables at the image-relative `0x2163410`: the filter
+  `{0x4, 0xD, 0xF, 0xF, 0xF, 0x0}`, the anisotropy `{1x, 1x, 4x, 8x, 16x, 1x}`, and the
+  bias `{0, -0.5, -1.0, -1.5, -2.0, 0}` at `0x142163440`. The builder stores
+  `(int)(bias * 32)` clamped to the key's ten bits. No other code reads these tables
+  (they are reached as `base + disp32`, so a RIP xref scan does not find them; search
+  for the displacement). Post effects and the UI pass constant keys and never reach the
+  table. So adding to the table biases the scene's material textures and nothing else,
+  and since the builders run per draw, the next frame's keys carry it.
+- **`SAMPLER_BIAS_TABLE`** matches the second builder's `movss xmm0, [r8 + r9*4 +
+  disp32]`, with `r8` the image base: its disp32 is the table's offset from the base,
+  resolved by `resolve_image_relative`, not RIP-relative.
+- **Not traced:** which graphics setting picks a slot's filter level, and whether any
+  material shader adds a bias of its own (`sample_b` in a shader package). Neither
+  changes what the table write does; a live A/B at a held Quality is the check.

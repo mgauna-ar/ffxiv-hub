@@ -26,4 +26,19 @@ bool safe_copy(void* dst, const void* src, size_t size) noexcept {
 #endif
 }
 
+bool safe_write_protected(void* dst, const void* src, size_t size) noexcept {
+    if (dst == nullptr || src == nullptr) return false;
+#ifdef _WIN32
+    DWORD old_protect = 0;
+    if (!VirtualProtect(dst, size, PAGE_READWRITE, &old_protect)) return false;
+    const bool copied = safe_copy(dst, src, size);
+    DWORD ignored = 0;
+    const bool restored = VirtualProtect(dst, size, old_protect, &ignored) != 0;
+    return copied && restored;
+#else
+    std::memcpy(dst, src, size);
+    return true;
+#endif
+}
+
 } // namespace hub::os

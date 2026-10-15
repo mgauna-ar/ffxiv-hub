@@ -61,6 +61,9 @@ pick.**
 - Moves the camera by the jitter the game tells DLSS about. The game moves it by less,
   shrinking with its 3D resolution slider and the render height, so DLSS misplaces
   pixels and edges that stand still stay jagged.
+- Keeps textures as detailed as at the screen's resolution. The game picks texture
+  detail from the lower height it renders at; the plugin moves its texture bias by the
+  difference, as NVIDIA recommends, with a sharpness offset to taste.
 - Shows what the game renders at, within its range, live.
 - Changes nothing under FSR, and puts the game's own values back when switched off.
 
@@ -198,7 +201,7 @@ or its dashboard card.
 |---|---|
 | [**Combat Meter**](plugins/combat_meter/README.md) | DPS and HPS with overheal separated, rDPS/aDPS/nDPS/cDPS from raid buff credit, crit/DH/CDH rates, automatic pet attribution, deaths with killing blow and recap, buff/debuff/DoT uptime, damage taken by ability, casts and GCD uptime, a per-second timeline with raid buff windows, encounter tracking and pull history with the boss's HP left |
 | [**Latency Mitigator**](plugins/latency_mitigator/README.md) | Animation lock compensation for clean double-weaving on high latency, with a live ping and RTT HUD |
-| [**Image Quality**](plugins/image_quality/README.md) | DLSS held at the mode you pick instead of moving with GPU load, the camera jitter DLSS is told about, and a live view of what the game renders at |
+| [**Image Quality**](plugins/image_quality/README.md) | DLSS held at the mode you pick instead of moving with GPU load, the camera jitter DLSS is told about, textures as detailed as at the screen's resolution, and a live view of what the game renders at |
 
 Each plugin's README covers how it works, its in-game overlay, its desktop view and its
 configuration keys.
@@ -216,9 +219,10 @@ FFXIV Hub runs entirely on your PC and stays within what the server already allo
     It never sets the timer below a 25 ms floor, leaves cast locks alone, and skips
     rejected actions and locks over 2.5 s. Turn off *Enable animation lock mitigation*,
     or switch on *Dry-run mode*, and it writes none.
-  - Three of the game's graphics settings, only while DLSS is the upscaler: whether the
-    render resolution follows GPU load, the resolution itself, and the camera jitter.
-    Switch the Image Quality plugin off and they are the game's again.
+  - Three of the game's graphics settings and its texture bias table, only while DLSS is
+    the upscaler: whether the render resolution follows GPU load, the resolution itself,
+    the camera jitter, and how detailed a texture it draws. Switch the Image Quality
+    plugin off and they are the game's again.
 
   The Combat Meter only ever reads.
 - **What it never does.** Modify, send or delay network packets. Automate any input.
