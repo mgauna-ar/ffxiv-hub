@@ -6,9 +6,9 @@
 // executable's version resource, so everything above the RC_INVOKED guard must stay
 // plain preprocessor that rc.exe understands: no #pragma once, no C++.
 #define HUB_VERSION_MAJOR 1
-#define HUB_VERSION_MINOR 3
-#define HUB_VERSION_PATCH 3
-#define HUB_VERSION_STRING "1.3.3"
+#define HUB_VERSION_MINOR 4
+#define HUB_VERSION_PATCH 0
+#define HUB_VERSION_STRING "1.4.0"
 
 #ifndef RC_INVOKED
 
