@@ -119,12 +119,14 @@ namespace offsets {
     constexpr size_t PARTY_MEMBER_CLASS_JOB = 0x469;
 
     // GraphicsConfig, the render settings singleton (0xD8 bytes). How the client
-    // jitters and scales with these: plugins/image_quality/AGENTS.md.
+    // jitters, scales and biases textures with these: plugins/image_quality/AGENTS.md.
+    constexpr size_t GRAPHICS_CONFIG_DIRTY_FLAGS = 0x08;            // Bit i reruns handler i on the next frame
     constexpr size_t GRAPHICS_CONFIG_ANTI_ALIASING = 0x2C;          // 2: TSCMAA + camera jitter
     constexpr size_t GRAPHICS_CONFIG_DYNAMIC_REZO_ENABLE = 0x44;    // The in-game checkbox; DLSS ignores it
     constexpr size_t GRAPHICS_CONFIG_REZO_DOWNSCALE = 0x45;         // 0 renders at native whatever the scale
     constexpr size_t GRAPHICS_CONFIG_DYNAMIC_REZO_STEPPING = 0x47;  // Read only by the frame-time controller
     constexpr size_t GRAPHICS_CONFIG_REZO_SCALE = 0x4C;
+    constexpr size_t GRAPHICS_CONFIG_TEXTURE_LOD_BIAS = 0x50;       // Mip levels; -1.0 from the constructor
     constexpr size_t GRAPHICS_CONFIG_UPSCALE_TYPE = 0x54;           // The upscaler option + 1
     constexpr size_t GRAPHICS_CONFIG_JITTER_MULTIPLIER = 0x78;      // 0.6 from the constructor
 
@@ -203,12 +205,6 @@ namespace signatures {
     // and matches twice. The global holds a pointer.
     constexpr std::string_view RENDER_TARGET_MANAGER_INSTANCE =
         "48 8B 05 ? ? ? ? 44 8B 86 ? ? ? ? 41 B9";
-
-    // 11. The texture samplers' bias table: movss xmm0, [r8 + r9*4 + disp32] in a
-    // sampler key builder. disp32 is the table's offset from the image base, not
-    // RIP-relative.
-    constexpr std::string_view SAMPLER_BIAS_TABLE =
-        "F3 43 0F 10 84 88 ? ? ? ? F3 0F 59 05 ? ? ? ? C1 E0 06";
 } // namespace signatures
 
 /// Where the RIP-relative operand sits in each signature that resolves a static
@@ -248,17 +244,20 @@ namespace definitions {
     constexpr size_t GRAPHICS_CONFIG_INSTANCE_RIP_INSN_END = 7;
     constexpr size_t RENDER_TARGET_MANAGER_INSTANCE_RIP_DISP_OFFSET = 3;
     constexpr size_t RENDER_TARGET_MANAGER_INSTANCE_RIP_INSN_END = 7;
-
-    // A signature whose disp32 is an offset from the image base names it
-    // <SIGNATURE>_IMAGE_DISP_OFFSET, for resolve_image_relative(match, offset, base).
-    // F3 43 0F 10 84 88 [disp32]: movss xmm0, [r8 + r9*4 + disp32], r8 the image base
-    constexpr size_t SAMPLER_BIAS_TABLE_IMAGE_DISP_OFFSET = 6;
 } // namespace definitions
 
 /// GraphicsConfig::upscale_type: the in-game upscaler option plus one.
 enum class UpscaleType : uint8_t {
     Fsr = 1,
     Dlss = 2,
+};
+
+/// GraphicsConfig::dirty_flags: a set bit makes the game's per-frame config update
+/// rerun that setting's handler, which clears the bit once it has applied it.
+enum class GraphicsConfigDirty : uint32_t {
+    /// Rebuilds the texture filter every world material uses, from the anisotropy
+    /// option and texture_lod_bias, into each render context.
+    TextureFilter = 1u << 2,
 };
 
 /// GraphicsConfig::anti_aliasing, the in-game edge smoothing option. Only
@@ -420,7 +419,8 @@ static_assert(offsetof(PartyMemberObject, class_job) == offsets::PARTY_MEMBER_CL
 /// reads and writes. The object is 0xD8 bytes; its other fields are untouched.
 struct GraphicsConfigObject {
     void* vtable{nullptr};                   // 0x00
-    uint8_t pad_08[0x24]{0};                 // 0x08 - 0x2C
+    uint32_t dirty_flags{0};                 // 0x08: GraphicsConfigDirty bits, cleared once applied
+    uint8_t pad_0c[0x20]{0};                 // 0x0C - 0x2C
     uint32_t anti_aliasing{0};               // 0x2C: AntiAliasing
     uint8_t pad_30[0x14]{0};                 // 0x30 - 0x44
     uint8_t dynamic_rezo_enable{0};          // 0x44: The checkbox; with DLSS the client skips it
@@ -429,17 +429,19 @@ struct GraphicsConfigObject {
     uint8_t dynamic_rezo_stepping{0};        // 0x47: 1 from the constructor; 0 stops the controller
     uint8_t pad_48[0x04]{0};                 // 0x48 - 0x4C
     float rezo_scale{0.0f};                  // 0x4C: 3D resolution scale, 0.5 - 1.0
-    uint8_t pad_50[0x04]{0};                 // 0x50 - 0x54
+    float texture_lod_bias{0.0f};            // 0x50: Mip levels added to every world texture
     uint8_t upscale_type{0};                 // 0x54: UpscaleType
     uint8_t pad_55[0x23]{0};                 // 0x55 - 0x78
     float jitter_multiplier{0.0f};           // 0x78: Jitter amplitude in render pixels
 };
 static_assert(sizeof(GraphicsConfigObject) == 0x7C, "GraphicsConfigObject must end after the jitter multiplier");
+static_assert(offsetof(GraphicsConfigObject, dirty_flags) == offsets::GRAPHICS_CONFIG_DIRTY_FLAGS, "GraphicsConfigObject::dirty_flags offset mismatch");
 static_assert(offsetof(GraphicsConfigObject, anti_aliasing) == offsets::GRAPHICS_CONFIG_ANTI_ALIASING, "GraphicsConfigObject::anti_aliasing offset mismatch");
 static_assert(offsetof(GraphicsConfigObject, dynamic_rezo_enable) == offsets::GRAPHICS_CONFIG_DYNAMIC_REZO_ENABLE, "GraphicsConfigObject::dynamic_rezo_enable offset mismatch");
 static_assert(offsetof(GraphicsConfigObject, rezo_downscale) == offsets::GRAPHICS_CONFIG_REZO_DOWNSCALE, "GraphicsConfigObject::rezo_downscale offset mismatch");
 static_assert(offsetof(GraphicsConfigObject, dynamic_rezo_stepping) == offsets::GRAPHICS_CONFIG_DYNAMIC_REZO_STEPPING, "GraphicsConfigObject::dynamic_rezo_stepping offset mismatch");
 static_assert(offsetof(GraphicsConfigObject, rezo_scale) == offsets::GRAPHICS_CONFIG_REZO_SCALE, "GraphicsConfigObject::rezo_scale offset mismatch");
+static_assert(offsetof(GraphicsConfigObject, texture_lod_bias) == offsets::GRAPHICS_CONFIG_TEXTURE_LOD_BIAS, "GraphicsConfigObject::texture_lod_bias offset mismatch");
 static_assert(offsetof(GraphicsConfigObject, upscale_type) == offsets::GRAPHICS_CONFIG_UPSCALE_TYPE, "GraphicsConfigObject::upscale_type offset mismatch");
 static_assert(offsetof(GraphicsConfigObject, jitter_multiplier) == offsets::GRAPHICS_CONFIG_JITTER_MULTIPLIER, "GraphicsConfigObject::jitter_multiplier offset mismatch");
 
@@ -463,14 +465,6 @@ static_assert(offsetof(RenderScaleState, floor_height) == offsets::RENDER_TARGET
 static_assert(offsetof(RenderScaleState, gpu_time_ms) == offsets::RENDER_TARGET_MANAGER_GPU_TIME - offsets::RENDER_TARGET_MANAGER_RENDER_SCALE, "RenderScaleState::gpu_time_ms offset mismatch");
 static_assert(offsetof(RenderScaleState, cpu_time_ms) == offsets::RENDER_TARGET_MANAGER_CPU_TIME - offsets::RENDER_TARGET_MANAGER_RENDER_SCALE, "RenderScaleState::cpu_time_ms offset mismatch");
 static_assert(offsetof(RenderScaleState, target_ratio) == offsets::RENDER_TARGET_MANAGER_TARGET_RATIO - offsets::RENDER_TARGET_MANAGER_RENDER_SCALE, "RenderScaleState::target_ratio offset mismatch");
-
-/// The mip bias, in mip levels, that the sampler key builders give each texture
-/// filter level, in .rdata. How the client uses it: plugins/image_quality/AGENTS.md.
-struct SamplerBiasTable {
-    static constexpr size_t LEVELS = 6;
-    float bias[LEVELS]{};
-};
-static_assert(sizeof(SamplerBiasTable) == 0x18, "SamplerBiasTable must be 6 floats");
 
 #pragma pack(pop)
 

@@ -115,9 +115,7 @@ matching, because `pe_scanner` only works on a module the OS has loaded.
 Every signature that resolves a static global is also followed to its target: the tool
 reads that signature's `<SIGNATURE>_RIP_DISP_OFFSET` / `<SIGNATURE>_RIP_INSN_END` pair
 from the header, decodes the displacement and confirms the target lands in a data
-section rather than `.text` (`NOT DATA` otherwise). A signature whose displacement is an
-offset from the image base rather than RIP-relative, such as `SAMPLER_BIAS_TABLE`, has a
-`<SIGNATURE>_IMAGE_DISP_OFFSET` instead and is followed the same way, to `.rdata`. A pattern can match exactly once and
+section rather than `.text` (`NOT DATA` otherwise). A pattern can match exactly once and
 still be the wrong instruction, or the pair can point at the wrong bytes; this catches
 both. Non-zero exit if any signature fails either check.
 
@@ -147,11 +145,11 @@ the function in the copied executable, then re-cut the broken pattern from the b
 that address. Nothing external is needed. A call-site broken by compiler reordering gets a
 verified-unique prologue as its replacement, and vice versa.
 
-### Seven signatures have no fallback
+### Six signatures have no fallback
 
 `PROCESS_HOT_DOT_PRIMARY`, `GAME_OBJECT_MANAGER_INSTANCE`, `GROUP_MANAGER_INSTANCE`,
-`CONDITIONS_INSTANCE`, `GRAPHICS_CONFIG_INSTANCE`, `RENDER_TARGET_MANAGER_INSTANCE` and
-`SAMPLER_BIAS_TABLE` are single-pattern. If one of those breaks there is nothing to
+`CONDITIONS_INSTANCE`, `GRAPHICS_CONFIG_INSTANCE` and `RENDER_TARGET_MANAGER_INSTANCE` are
+single-pattern. If one of those breaks there is nothing to
 recover from, and locating the function is ordinary disassembly of the copied exe. The
 `inspect-game-client` skill covers it: find a unique instruction that references the
 same global (`tools/inspect_exe.py xrefs`) and re-cut the pattern from its bytes.
@@ -171,8 +169,7 @@ rather than replacing it wholesale.
   resolves a static global has this pair, named after it and counted from the start of
   the match, so a re-cut pattern that starts earlier or later shifts both. A new such
   signature gets its pair too; `tools/check_signatures.py` finds it by name, so a
-  missing pair means its target is never checked. An image-relative operand has
-  `<SIGNATURE>_IMAGE_DISP_OFFSET` alone, the disp32's position in the match.
+  missing pair means its target is never checked.
 - `SUPPORTED_GAME_VERSION` - bump it; nothing else records which patch the definitions
   target.
 - The struct padding, so every `static_assert(offsetof(...))` still passes. Those asserts
@@ -199,7 +196,8 @@ mitigator's timing math.
 
 ## 4a. Re-check the render settings
 
-The image quality plugin writes three fields of the game's render singletons, recorded in
+The image quality plugin writes four fields of the game's render singletons, three of
+them recorded in
 [How the client jitters and scales with DLSS](../../../plugins/image_quality/AGENTS.md#how-the-client-jitters-and-scales-with-dlss).
 The two signatures only find the globals; a patch that moves a field breaks nothing
 loudly, and the plugin would then write the wrong byte. With `tools/inspect_exe.py`:
@@ -227,18 +225,19 @@ loudly, and the plugin would then write the wrong byte. With `tools/inspect_exe.
 Update the offsets and the `GraphicsConfigObject` / `RenderScaleState` padding together;
 their `static_assert`s pin each field.
 
-The plugin also writes the texture samplers' bias table, recorded in
+The plugin also writes the game's texture bias, recorded in
 [How the client biases its texture samplers](../../../plugins/image_quality/AGENTS.md#how-the-client-biases-its-texture-samplers).
-`SAMPLER_BIAS_TABLE` finds it through one of its two readers; check that:
+Nothing fails loudly if it moves, so check:
 
-- `python3 tools/inspect_exe.py sig SAMPLER_BIAS_TABLE` lands in `.rdata` on six floats
-  reading `{0, -0.5, -1.0, -1.5, -2.0, 0}`, or whatever the patch changed them to, and
-  the filter and anisotropy tables still sit `0x30` and `0x18` bytes before it.
-- Both key builders still read it (search `.text` for its image-relative displacement;
-  a RIP xref scan does not find it), still store `(int)(bias * 32)` into bits 10-19 of
-  the key, and nothing else reads it.
-- The sampler factory, the only `CreateSamplerState` call, still takes `MipLODBias`
-  from bits 10-19 of the key at 1/32 of a level.
+- The `GraphicsConfig` constructor still seeds the float at `+0x50` from the preset
+  key's bias (-1.0 in 7.x) and marks bit 2 of `+0x8`, and nothing else writes `+0x50`.
+- The config's per-frame update still runs handler `i` for each set bit `i` of `+0x8`
+  and clears it, and handler 2 (the third entry of its table, `0x14289f7b0` in 7.x)
+  still builds the global texture filter key from `+0x31` and `+0x50 * 32` and copies
+  it into every render context.
+- The draw's texture bind still swaps that context key into the keys whose filter bits
+  read `0x7`, and the sampler factory still takes `MipLODBias` from bits 10-19 of the key
+  at 1/32 of a level.
 
 ## 4b. Re-check the status list layout
 
