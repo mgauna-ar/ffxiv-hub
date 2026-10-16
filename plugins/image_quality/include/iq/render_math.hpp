@@ -54,12 +54,4 @@ namespace hub::iq {
     return static_cast<uint16_t>(std::clamp<long>(wanted, floor_height, target_height));
 }
 
-/// The texture mip bias, in mip levels, that matches rendering `render_height` lines
-/// for a `screen_height` screen: log2 of the one over the other, negative below
-/// native. Nullopt while either is unknown.
-[[nodiscard]] inline std::optional<float> mip_bias_for(uint16_t render_height, uint16_t screen_height) noexcept {
-    if (render_height == 0 || screen_height == 0) return std::nullopt;
-    return static_cast<float>(std::log2(static_cast<double>(render_height) / static_cast<double>(screen_height)));
-}
-
 } // namespace hub::iq

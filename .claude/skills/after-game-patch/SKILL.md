@@ -196,8 +196,7 @@ mitigator's timing math.
 
 ## 4a. Re-check the render settings
 
-The image quality plugin writes four fields of the game's render singletons, three of
-them recorded in
+The image quality plugin writes three fields of the game's render singletons, recorded in
 [How the client jitters and scales with DLSS](../../../plugins/image_quality/AGENTS.md#how-the-client-jitters-and-scales-with-dlss).
 The two signatures only find the globals; a patch that moves a field breaks nothing
 loudly, and the plugin would then write the wrong byte. With `tools/inspect_exe.py`:
@@ -221,23 +220,13 @@ loudly, and the plugin would then write the wrong byte. With `tools/inspect_exe.
   `(+0x700 / +0x704 * GraphicsConfig+0x4c)^2`, which `iq/render_math.hpp` mirrors.
 - The config apply (`0x14025e573` in 7.x) still stores the upscaler option plus one at
   `+0x54`.
+- The resolution controller's tail still stores the texture bias at `+0x50` (under
+  DLSS, `log2(render height / screen height) - 1.0`, at `0x1402dae04` in 7.x). The
+  plugin only reads it, for the Live tab, so a moved field shows a wrong number there
+  and breaks nothing else.
 
 Update the offsets and the `GraphicsConfigObject` / `RenderScaleState` padding together;
 their `static_assert`s pin each field.
-
-The plugin also writes the game's texture bias, recorded in
-[How the client biases its texture samplers](../../../plugins/image_quality/AGENTS.md#how-the-client-biases-its-texture-samplers).
-Nothing fails loudly if it moves, so check:
-
-- The `GraphicsConfig` constructor still seeds the float at `+0x50` from the preset
-  key's bias (-1.0 in 7.x) and marks bit 2 of `+0x8`, and nothing else writes `+0x50`.
-- The config's per-frame update still runs handler `i` for each set bit `i` of `+0x8`
-  and clears it, and handler 2 (the third entry of its table, `0x14289f7b0` in 7.x)
-  still builds the global texture filter key from `+0x31` and `+0x50 * 32` and copies
-  it into every render context.
-- The draw's texture bind still swaps that context key into the keys whose filter bits
-  read `0x7`, and the sampler factory still takes `MipLODBias` from bits 10-19 of the key
-  at 1/32 of a level.
 
 ## 4b. Re-check the status list layout
 

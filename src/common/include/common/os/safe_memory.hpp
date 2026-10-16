@@ -20,16 +20,6 @@ namespace hub::os {
  */
 [[nodiscard]] bool safe_copy(void* dst, const void* src, size_t size) noexcept;
 
-/**
- * @brief Sets `bits` in the 32-bit word at `dst`, which the game owns and may be
- * changing from its own thread, as one atomic OR.
- *
- * A read, OR and write of our own would put back a bit the game cleared in between,
- * or drop one it set. On Windows the OR is an interlocked one inside `__try / __except`;
- * the mock build ORs through `memcpy`. False when `dst` is null or the write faults.
- */
-[[nodiscard]] bool safe_or32(void* dst, uint32_t bits) noexcept;
-
 /// safe_copy of one `T` from `src`, which the game owns.
 template <typename T>
 [[nodiscard]] bool safe_read(const void* src, T& out) noexcept {

@@ -118,15 +118,6 @@ TEST_CASE(OS, SafeCopyReadsAndRejectsNull) {
     TEST_ASSERT_FALSE(safe_copy(&copy, nullptr, sizeof(copy)));
 }
 
-TEST_CASE(OS, SafeOr32SetsBitsAndKeepsTheRest) {
-    uint32_t word = 0x11;
-    TEST_ASSERT_TRUE(safe_or32(&word, 0x4));
-    TEST_ASSERT_EQ(word, 0x15u);
-    TEST_ASSERT_TRUE(safe_or32(&word, 0x4));
-    TEST_ASSERT_EQ(word, 0x15u);
-    TEST_ASSERT_FALSE(safe_or32(nullptr, 0x4));
-}
-
 TEST_CASE(OS, PreviousLogPathGoesBeforeTheExtension) {
     const std::filesystem::path dir = std::filesystem::path("logs");
     TEST_ASSERT_EQ(Logger::previous_log_path(dir / "hub.log"), dir / "hub.prev.log");

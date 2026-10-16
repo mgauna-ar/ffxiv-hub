@@ -1,14 +1,13 @@
 # 🖼️ Image Quality
 
-Lets you pick the resolution DLSS renders at and keeps it there, makes the camera
-jitter match what DLSS is told, so it can smooth edges that are standing still, and keeps
-textures as detailed as at the screen's resolution. It changes nothing unless the game's
-upscaler is DLSS, and hands every value back to the game when it is switched off.
+Lets you pick the resolution DLSS renders at and keeps it there, and makes the camera
+jitter match what DLSS is told, so it can smooth edges that are standing still. It changes nothing unless the
+game's upscaler is DLSS, and hands every value back to the game when it is switched off.
 
 Part of [FFXIV Hub](../../README.md). Enable or disable it from its page in the desktop
 app, or from its card on the dashboard.
 
-![The Image Quality page: DLSS held at Quality, 1440 of 2160 px, with full camera jitter and a −0.58 texture bias](../../docs/images/image-quality-view.png)
+![The Image Quality page: DLSS held at Quality, 1440 of 2160 px, with full camera jitter and the game's −1.59 texture bias](../../docs/images/image-quality-view.png)
 
 ## At a glance
 
@@ -23,13 +22,8 @@ app, or from its card on the dashboard.
   to 0.16 of what it told DLSS at 77% and 4K Quality. DLSS lays every frame's pixels a
   little off, and edges that stay still stay jagged. The plugin moves the camera by what
   DLSS is told.
-- **Sharper textures.** The game picks how detailed a texture to draw from the height it
-  renders at, so under DLSS textures come out as blurry as at that lower resolution,
-  however sharp DLSS makes the edges. The plugin moves the game's texture detail bias by
-  how far the render height is below the screen's, as NVIDIA recommends for DLSS, with an
-  offset for taste.
 - **Visible.** The desktop view shows the upscaler, the height the game renders at within
-  its range, the jitter in use, the texture bias, and the game's GPU and CPU times.
+  its range, the jitter in use, the game's texture bias, and its GPU and CPU times.
 - **Reversible.** Switching it off, closing the Hub, or picking FSR puts the game's own
   values back within 50 ms.
 
@@ -61,14 +55,15 @@ range's top. At 77% and 4K the camera moves 0.36 of what DLSS is told at native,
 Quality and 0.09 at the bottom of the range, so DLSS lays each frame's pixels slightly
 off.
 
-Textures have one more. The GPU picks a texture's detail level (its mip) from how many
-pixels the surface covers, and with DLSS that is the render height's pixels, not the
-screen's. Nothing in the game makes up for it: it draws every world texture with the same
-bias, one level finer than the GPU would pick (−1.0), whatever resolution DLSS renders at.
+Textures it already gets right. The GPU picks a texture's detail level from how many
+pixels a surface covers, which under DLSS are the render height's, not the screen's. Every
+frame the game nudges that pick finer by the difference, the bias NVIDIA recommends for
+DLSS, on top of its own one level: −1.58 at 4K Quality. Since the bias follows the render
+height, holding the height holds it too. The plugin leaves it alone; the Live tab shows it.
 
 ### What gets changed
 
-Four values in the game's own render settings, from the payload, at most every 50 ms
+Three values in the game's own render settings, from the payload, at most every 50 ms
 and only when they differ from what the plugin wants:
 
 | Setting | Game's value | With the plugin |
@@ -76,7 +71,6 @@ and only when they differ from what the plugin wants:
 | The resolution controller | On | Off, under DLSS with *Fixed render resolution* |
 | The height a frame renders at | Wherever the controller left it | The chosen mode's share of the screen, kept within the game's range |
 | The camera jitter | 0.6 of what DLSS is told, scaled down by the slider and the render height | What DLSS is told, under DLSS with *Full camera jitter* |
-| The texture bias | −1.0 for every world texture, at any resolution | Lowered by log2 of the held height over the screen's (to −1.58 at Quality), plus *Texture sharpness*, while the height is held and *Sharper textures* is on |
 
 The plugin remembers the game's values before its first change and writes them back when
 it lets go. The controller then resumes from where the height is.
@@ -105,8 +99,7 @@ it lets go. The controller then resumes from where the height is.
   without the wait to present. The controller acts on both.
 
 Below them, *What the game is doing* says whether the height is held by the plugin or
-moving with GPU load, whose jitter is in use, and how much the plugin adds to the texture
-bias.
+moving with GPU load, whose jitter is in use, and the game's texture bias.
 
 **Settings** holds:
 
@@ -115,9 +108,7 @@ bias.
 | Fixed render resolution | Under DLSS, stop the controller and render at the mode below. |
 | Render resolution | DLAA (100%), Ultra Quality (77%), Quality (67%), Balanced (58%) or Performance (50%). |
 | Full camera jitter | Under DLSS, move the camera by what DLSS is told instead of the game's smaller amount. |
-| Sharper textures | While the render resolution is held, draw textures as detailed as at the screen's resolution. |
-| Texture sharpness | Added to that bias, −1 to +1 in steps of 1/8. Lower is sharper and can shimmer; higher is softer and a little cheaper. |
-| Reset to defaults | Every switch on, Quality, texture sharpness 0. |
+| Reset to defaults | Both switches on, Quality. |
 
 ---
 
@@ -133,8 +124,6 @@ format, not the intended interface.
 | `fixed_dlss_resolution` | bool | `true` | Under DLSS, stop the resolution controller and render at `dlss_render_scale`. |
 | `dlss_render_scale` | float | `0.667` | Render height as a share of the screen's, `0.5`–`1.0`, kept within the game's range. |
 | `override_dlss_jitter` | bool | `true` | Under DLSS, move the camera by what DLSS is told instead of the game's smaller amount. |
-| `dlss_mip_bias` | bool | `true` | While the DLSS render height is held, add log2 of it over the screen's height to the game's texture bias. |
-| `dlss_mip_bias_offset` | float | `0.0` | Mip levels added on top, `-1.0`–`1.0` in steps of `0.125`. Negative is sharper. |
 
 ---
 
@@ -161,29 +150,13 @@ misplacing pixels again. The switch either matches it or leaves the game's own a
 </details>
 
 <details>
-<summary><b>Will sharper textures cost frames?</b></summary>
+<summary><b>Can it make textures sharper?</b></summary>
 
-A little GPU time: finer texture levels mean more memory for the GPU to read, most at 4K
-and in texture-heavy scenes. The plugin itself does nothing per frame. Compare the Live
-tab's GPU time with *Sharper textures* on and off in the same spot, or raise *Texture
-sharpness* to trade some detail back.
-
-</details>
-
-<details>
-<summary><b>Textures shimmer or look too sharp.</b></summary>
-
-Raise *Texture sharpness* a step or two. The bias NVIDIA recommends is a starting point,
-and the game already draws every world texture a level sharper than the GPU would.
-
-</details>
-
-<details>
-<summary><b>Why does Sharper textures need Fixed render resolution?</b></summary>
-
-The right bias depends on the render height. A height that moves with GPU load would
-need a new bias at every step, and each one makes the game create texture samplers it
-never frees.
+Not beyond what the game does. Under DLSS it already sharpens textures by how far the
+render height is below the screen's, every frame, and puts its own value back on the
+next one if anything else changes it. Versions 1.4.0 and 1.4.1 tried; it had no lasting
+effect. For a crisper picture, pick a higher mode, or set the DLSS model and sharpening in
+the NVIDIA App.
 
 </details>
 
