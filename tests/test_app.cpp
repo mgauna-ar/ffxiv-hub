@@ -278,27 +278,30 @@ TEST_CASE(PipeServer, ImageQualityStateFromAPayloadBeforeTheScreenHeight) {
     TEST_ASSERT_EQ(received.screen_height, uint16_t{2160});
 }
 
-TEST_CASE(PipeServer, ImageQualityStateFromAPayloadBeforeTheMipBias) {
-    // A payload loaded before mip_bias sends the 38-byte report: no texture bias.
+TEST_CASE(PipeServer, ImageQualityStateFromAPayloadBeforeTheTextureBias) {
+    // A v1.4.0 or v1.4.1 payload sends the 44-byte report: the game's texture bias
+    // reads as 0, which the view shows as unknown.
     ipc::PipeServer server;
     ipc::ImageQualityStatePayload received{};
-    received.mip_bias = 9.0f;
+    received.texture_lod_bias = 9.0f;
     server.set_image_quality_state_callback([&](const ipc::ImageQualityStatePayload& s) { received = s; });
 
     ipc::ImageQualityStatePayload state{};
     state.found = 1;
     state.screen_height = 2160;
-    state.mip_bias = -0.585f;
+    state.retired_mip_bias = -0.585f;
+    state.texture_lod_bias = -1.585f;
     const auto* bytes = reinterpret_cast<const uint8_t*>(&state);
     TEST_ASSERT(server.process_raw_packet(ipc::serialize_packet(
         PluginId::ImageQuality, MessageType::ImageQualityState, 1,
-        std::span<const uint8_t>(bytes, ipc::IMAGE_QUALITY_STATE_V2_SIZE))));
+        std::span<const uint8_t>(bytes, ipc::IMAGE_QUALITY_STATE_V3_SIZE))));
     TEST_ASSERT_EQ(received.screen_height, uint16_t{2160});
-    TEST_ASSERT_EQ(received.mip_bias, 0.0f);
+    TEST_ASSERT_NEAR(received.retired_mip_bias, -0.585f, 1e-6f);
+    TEST_ASSERT_EQ(received.texture_lod_bias, 0.0f);
 
     TEST_ASSERT(server.process_raw_packet(ipc::serialize_typed_packet(
         PluginId::ImageQuality, MessageType::ImageQualityState, 2, state)));
-    TEST_ASSERT_NEAR(received.mip_bias, -0.585f, 1e-6f);
+    TEST_ASSERT_NEAR(received.texture_lod_bias, -1.585f, 1e-6f);
 }
 
 TEST_CASE(PipeServer, StatusFromAnOlderPayload) {

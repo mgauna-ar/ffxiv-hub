@@ -27,8 +27,6 @@ constexpr config::ConfigKey<S> KEYS[] = {
     field<S, &S::fixed_dlss_resolution>("fixed_dlss_resolution"),
     clamped_float<&S::dlss_render_scale, clamp_render_scale>("dlss_render_scale"),
     field<S, &S::override_dlss_jitter>("override_dlss_jitter"),
-    field<S, &S::dlss_mip_bias>("dlss_mip_bias"),
-    clamped_float<&S::dlss_mip_bias_offset, clamp_mip_bias_offset>("dlss_mip_bias_offset"),
 };
 
 } // namespace
@@ -36,12 +34,6 @@ constexpr config::ConfigKey<S> KEYS[] = {
 float clamp_render_scale(float value) noexcept {
     if (std::isnan(value)) return constants::DEFAULT_DLSS_RENDER_SCALE;
     return std::clamp(value, constants::MIN_DLSS_RENDER_SCALE, constants::MAX_DLSS_RENDER_SCALE);
-}
-
-float clamp_mip_bias_offset(float value) noexcept {
-    if (std::isnan(value)) return 0.0f;
-    const float clamped = std::clamp(value, constants::MIN_MIP_BIAS_OFFSET, constants::MAX_MIP_BIAS_OFFSET);
-    return std::round(clamped / constants::MIP_BIAS_OFFSET_STEP) * constants::MIP_BIAS_OFFSET_STEP;
 }
 
 void write_settings(const ImageQualitySettings& settings, config::JsonValue& section) {

@@ -37,11 +37,6 @@ void ImageQualityPlugin::set_dlss_jitter(bool override_game) noexcept {
     m_settings.override_dlss_jitter = override_game;
 }
 
-void ImageQualityPlugin::set_mip_bias(bool enabled, float offset) noexcept {
-    m_settings.dlss_mip_bias = enabled;
-    m_settings.dlss_mip_bias_offset = clamp_mip_bias_offset(offset);
-}
-
 std::optional<GraphicsSnapshot> ImageQualityPlugin::read_snapshot(RenderObjects& objects) const {
     if (m_graphics_config_slot == 0 || m_render_target_manager_slot == 0) return std::nullopt;
     // Each global holds a pointer, null until the device setup has run.
@@ -74,15 +69,6 @@ bool ImageQualityPlugin::write(const RenderObjects& objects, const GraphicsWrite
         ok &= write_field(objects.render_target_manager, offsets::RENDER_TARGET_MANAGER_CURRENT_HEIGHT,
                           &*writes.current_height, sizeof(*writes.current_height));
     }
-    if (writes.texture_lod_bias) {
-        // The bias takes only once the game's config update has rebuilt the texture
-        // filter, on its next frame. The game clears the bit from its own thread.
-        const bool written = write_field(objects.graphics_config, offsets::GRAPHICS_CONFIG_TEXTURE_LOD_BIAS,
-                                         &*writes.texture_lod_bias, sizeof(*writes.texture_lod_bias));
-        ok &= written && os::safe_or32(reinterpret_cast<void*>(objects.graphics_config +
-                                                               offsets::GRAPHICS_CONFIG_DIRTY_FLAGS),
-                                       static_cast<uint32_t>(game::GraphicsConfigDirty::TextureFilter));
-    }
     return ok;
 }
 
@@ -101,7 +87,7 @@ void ImageQualityPlugin::update(double delta_seconds) {
     // One that did not land is planned again on the next tick.
     (void)write(objects, writes);
 
-    m_last_state = state_payload(apply(*snap, writes), m_enforcer.enforcing(), m_enforcer.mip_bias());
+    m_last_state = state_payload(apply(*snap, writes), m_enforcer.enforcing());
     publish(*m_last_state, delta_seconds);
 }
 

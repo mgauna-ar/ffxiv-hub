@@ -66,6 +66,11 @@ struct FakeRenderObjects {
         std::memcpy(&value, graphics_config.data() + game::offsets::GRAPHICS_CONFIG_JITTER_MULTIPLIER, sizeof(value));
         return value;
     }
+    [[nodiscard]] float lod_bias() const {
+        float value = 0.0f;
+        std::memcpy(&value, graphics_config.data() + game::offsets::GRAPHICS_CONFIG_TEXTURE_LOD_BIAS, sizeof(value));
+        return value;
+    }
     [[nodiscard]] uint16_t current_height() const {
         uint16_t value = 0;
         std::memcpy(&value, render_target_manager.data() + game::offsets::RENDER_TARGET_MANAGER_CURRENT_HEIGHT,
@@ -75,43 +80,7 @@ struct FakeRenderObjects {
     void set_upscaler(uint8_t type) {
         graphics_config[game::offsets::GRAPHICS_CONFIG_UPSCALE_TYPE] = type;
     }
-    [[nodiscard]] float lod_bias() const {
-        float value = 0.0f;
-        std::memcpy(&value, graphics_config.data() + game::offsets::GRAPHICS_CONFIG_TEXTURE_LOD_BIAS, sizeof(value));
-        return value;
-    }
-    [[nodiscard]] uint32_t dirty_flags() const {
-        uint32_t value = 0;
-        std::memcpy(&value, graphics_config.data() + game::offsets::GRAPHICS_CONFIG_DIRTY_FLAGS, sizeof(value));
-        return value;
-    }
-    /// What the game's config update does once it has applied the dirty bits.
-    void clear_dirty_flags() {
-        const uint32_t none = 0;
-        std::memcpy(graphics_config.data() + game::offsets::GRAPHICS_CONFIG_DIRTY_FLAGS, &none, sizeof(none));
-    }
 };
-
-constexpr uint32_t kTextureFilterDirty = static_cast<uint32_t>(game::GraphicsConfigDirty::TextureFilter);
-
-/// The game's own texture bias, which GraphicsConfig's constructor seeds.
-constexpr float kGameLodBias = -1.0f;
-
-/// dlss_at_floor() with the game's texture bias in the config.
-GraphicsSnapshot dlss_with_lod_bias() {
-    auto snap = dlss_at_floor();
-    snap.config.texture_lod_bias = kGameLodBias;
-    return snap;
-}
-
-/// The plugin's ticks until the range settled and the bias landed, as a state after them.
-GraphicsSnapshot held_with_bias(Enforcer& enforcer, const ImageQualitySettings& settings) {
-    auto snap = dlss_with_lod_bias();
-    snap = apply(snap, enforcer.plan(snap, settings, true));
-    return apply(snap, enforcer.plan(snap, settings, true));
-}
-
-const float kQualityBias = static_cast<float>(std::log2(1440.0 / 2160.0));
 
 /// Every state report sitting in a ring buffer, decoded.
 std::vector<ipc::ImageQualityStatePayload> drain_states(ipc::PacketRingBuffer& ring) {
@@ -306,7 +275,7 @@ TEST_CASE(ImageQuality, LeavingDlssRestoresEverything) {
 TEST_CASE(ImageQuality, StateReportsWhatTheControllerGateReads) {
     auto snap = dlss_at_floor();
     snap.config.dynamic_rezo_enable = 0;
-    auto state = state_payload(snap, 0, 0.0f);
+    auto state = state_payload(snap, 0);
     TEST_ASSERT_EQ(state.found, 1u);
     // DLSS runs the controller whatever the checkbox says.
     TEST_ASSERT_EQ(state.stepping, 1u);
@@ -314,13 +283,13 @@ TEST_CASE(ImageQuality, StateReportsWhatTheControllerGateReads) {
     TEST_ASSERT_EQ(state.target_height, 2160u);
 
     snap.config.rezo_downscale = 0;
-    TEST_ASSERT_EQ(state_payload(snap, 0, 0.0f).stepping, 0u);
+    TEST_ASSERT_EQ(state_payload(snap, 0).stepping, 0u);
 
     snap = dlss_at_floor();
     snap.config.upscale_type = kFsr;
-    TEST_ASSERT_EQ(state_payload(snap, 0, 0.0f).stepping, 0u);
+    TEST_ASSERT_EQ(state_payload(snap, 0).stepping, 0u);
     snap.config.dynamic_rezo_enable = 1;
-    TEST_ASSERT_EQ(state_payload(snap, 0, 0.0f).stepping, 1u);
+    TEST_ASSERT_EQ(state_payload(snap, 0).stepping, 1u);
 }
 
 TEST_CASE(ImageQuality, PluginHoldsDlssInGameMemoryAndReports) {
@@ -346,8 +315,7 @@ TEST_CASE(ImageQuality, PluginHoldsDlssInGameMemoryAndReports) {
     TEST_ASSERT_EQ(states.back().screen_height, 2160u);
     TEST_ASSERT_EQ(states.back().enforcing,
                    static_cast<uint8_t>(ipc::ImageQualityEnforced::FixedResolution) |
-                   static_cast<uint8_t>(ipc::ImageQualityEnforced::JitterMultiplier) |
-                   static_cast<uint8_t>(ipc::ImageQualityEnforced::MipBias));
+                   static_cast<uint8_t>(ipc::ImageQualityEnforced::JitterMultiplier));
 
     // Nothing changed: the next report waits for the keepalive.
     plugin.update(0.05);
@@ -438,141 +406,19 @@ TEST_CASE(ImageQuality, PluginReportsMissingSingletons) {
     TEST_ASSERT_EQ(states[0].found, 0u);
 }
 
-TEST_CASE(ImageQuality, MipBiasIsTheLog2OfTheRenderShare) {
-    TEST_ASSERT_NEAR(*mip_bias_for(1440, 2160), -0.585f, 0.001f);
-    TEST_ASSERT_NEAR(*mip_bias_for(1080, 2160), -1.0f, 0.0001f);
-    TEST_ASSERT_NEAR(*mip_bias_for(2160, 2160), 0.0f, 0.0001f);
-    TEST_ASSERT_FALSE(mip_bias_for(0, 2160).has_value());
-    TEST_ASSERT_FALSE(mip_bias_for(1440, 0).has_value());
+TEST_CASE(ImageQuality, StateReportsTheGamesTextureBias) {
+    // The resolution controller sets it every frame: log2(1440 / 2160) - 1.
+    auto snap = dlss_at_floor();
+    snap.config.texture_lod_bias = -1.585f;
+    TEST_ASSERT_NEAR(state_payload(snap, 0).texture_lod_bias, -1.585f, 1e-6f);
 }
 
-TEST_CASE(ImageQuality, MipBiasFollowsTheHeldHeight) {
-    Enforcer enforcer;
-    const ImageQualitySettings settings{};
-    auto snap = dlss_with_lod_bias();
-
-    // The first tick sees a range the render thread may still be changing.
-    auto writes = enforcer.plan(snap, settings, true);
-    TEST_ASSERT_FALSE(writes.texture_lod_bias.has_value());
-    TEST_ASSERT_EQ(enforcer.mip_bias(), 0.0f);
-
-    // Settled: held at Quality, so the game's -1.0 moves by log2(1440 / 2160), though
-    // frames still render at 1080 until the height lands.
-    snap = apply(snap, writes);
-    writes = enforcer.plan(snap, settings, true);
-    TEST_ASSERT(writes.texture_lod_bias.has_value());
-    TEST_ASSERT_NEAR(*writes.texture_lod_bias, kGameLodBias + kQualityBias, 0.0001f);
-    TEST_ASSERT_NEAR(enforcer.mip_bias(), kQualityBias, 0.0001f);
-    TEST_ASSERT(enforcer.enforcing() & static_cast<uint8_t>(ipc::ImageQualityEnforced::MipBias));
-
-    // Once there, nothing more to write, and the moving height changes nothing.
-    snap = apply(snap, writes);
-    snap.scale.applied_height = 1440;
-    TEST_ASSERT_FALSE(enforcer.plan(snap, settings, true).texture_lod_bias.has_value());
-
-    const auto state = state_payload(snap, enforcer.enforcing(), enforcer.mip_bias());
-    TEST_ASSERT_NEAR(state.mip_bias, kQualityBias, 0.0001f);
-}
-
-TEST_CASE(ImageQuality, MipBiasAddsTheOffset) {
-    Enforcer enforcer;
-    ImageQualitySettings settings{};
-    auto snap = held_with_bias(enforcer, settings);
-
-    settings.dlss_mip_bias_offset = 0.25f;
-    const auto writes = enforcer.plan(snap, settings, true);
-    TEST_ASSERT(writes.texture_lod_bias.has_value());
-    TEST_ASSERT_NEAR(*writes.texture_lod_bias, kGameLodBias + kQualityBias + 0.25f, 0.0001f);
-
-    // Added to the game's own value, never to the plugin's last one.
-    snap = apply(snap, writes);
-    settings.dlss_mip_bias_offset = -0.5f;
-    TEST_ASSERT_NEAR(*enforcer.plan(snap, settings, true).texture_lod_bias, kGameLodBias + kQualityBias - 0.5f,
-                     0.0001f);
-}
-
-TEST_CASE(ImageQuality, MipBiasNeedsAHeldHeightUnderDlss) {
-    const auto none_written = [](const GraphicsSnapshot& start, const ImageQualitySettings& settings,
-                                 bool active) {
-        Enforcer enforcer;
-        auto snap = apply(start, enforcer.plan(start, settings, active));
-        const auto writes = enforcer.plan(snap, settings, active);
-        TEST_ASSERT_FALSE(writes.texture_lod_bias.has_value());
-        TEST_ASSERT_FALSE(enforcer.enforcing() & static_cast<uint8_t>(ipc::ImageQualityEnforced::MipBias));
-    };
-
-    ImageQualitySettings no_fixed{};
-    no_fixed.fixed_dlss_resolution = false;
-    none_written(dlss_with_lod_bias(), no_fixed, true);
-
-    ImageQualitySettings no_bias{};
-    no_bias.dlss_mip_bias = false;
-    none_written(dlss_with_lod_bias(), no_bias, true);
-
-    none_written(dlss_with_lod_bias(), ImageQualitySettings{}, false);
-
-    auto fsr = dlss_with_lod_bias();
-    fsr.config.upscale_type = kFsr;
-    none_written(fsr, ImageQualitySettings{}, true);
-
-    // No screen height, so no pin and no bias.
-    auto unknown_screen = dlss_with_lod_bias();
-    unknown_screen.scale.target_ratio = 0.0f;
-    none_written(unknown_screen, ImageQualitySettings{}, true);
-}
-
-TEST_CASE(ImageQuality, MipBiasIsHandedBack) {
-    const auto hands_back = [](const ImageQualitySettings& off, bool active, bool fsr) {
-        Enforcer enforcer;
-        auto snap = held_with_bias(enforcer, ImageQualitySettings{});
-        if (fsr) snap.config.upscale_type = kFsr;
-        const auto writes = enforcer.plan(snap, off, active);
-        TEST_ASSERT(writes.texture_lod_bias.has_value());
-        TEST_ASSERT_NEAR(*writes.texture_lod_bias, kGameLodBias, 0.0001f);
-        TEST_ASSERT_EQ(enforcer.mip_bias(), 0.0f);
-        TEST_ASSERT_FALSE(enforcer.enforcing() & static_cast<uint8_t>(ipc::ImageQualityEnforced::MipBias));
-        // Handed back once, then left alone.
-        TEST_ASSERT_FALSE(enforcer.plan(apply(snap, writes), off, active).texture_lod_bias.has_value());
-    };
-
-    ImageQualitySettings no_bias{};
-    no_bias.dlss_mip_bias = false;
-    hands_back(no_bias, true, false);
-
-    ImageQualitySettings no_fixed{};
-    no_fixed.fixed_dlss_resolution = false;
-    hands_back(no_fixed, true, false);
-
-    hands_back(ImageQualitySettings{}, false, false);
-    hands_back(ImageQualitySettings{}, true, true);
-
-    Enforcer enforcer;
-    const auto snap = held_with_bias(enforcer, ImageQualitySettings{});
-    const auto writes = enforcer.release(snap);
-    TEST_ASSERT(writes.texture_lod_bias.has_value());
-    TEST_ASSERT_NEAR(*writes.texture_lod_bias, kGameLodBias, 0.0001f);
-}
-
-TEST_CASE(ImageQuality, MipBiasWaitsForASettledRange) {
-    Enforcer enforcer;
-    const ImageQualitySettings settings{};
-    auto snap = held_with_bias(enforcer, settings);
-
-    // The NVIDIA driver's DLAA override narrows the range to 2138-2160: the pin
-    // moves to 2138, but not before the range held for a tick.
-    snap.scale.floor_height = 2138;
-    auto writes = enforcer.plan(snap, settings, true);
-    TEST_ASSERT_FALSE(writes.texture_lod_bias.has_value());
-    TEST_ASSERT_NEAR(enforcer.mip_bias(), kQualityBias, 0.0001f);
-
-    writes = enforcer.plan(apply(snap, writes), settings, true);
-    TEST_ASSERT(writes.texture_lod_bias.has_value());
-    TEST_ASSERT_NEAR(*writes.texture_lod_bias, kGameLodBias + static_cast<float>(std::log2(2138.0 / 2160.0)),
-                     0.0001f);
-}
-
-TEST_CASE(ImageQuality, PluginBiasesTexturesAndHandsThemBack) {
-    FakeRenderObjects game(dlss_with_lod_bias());
+TEST_CASE(ImageQuality, PluginNeverWritesTheTextureBias) {
+    // The game rewrites it every frame from the render height, so a write could not
+    // hold: holding the height is what holds the bias.
+    auto start = dlss_at_floor();
+    start.config.texture_lod_bias = -2.0f;
+    FakeRenderObjects game(start);
     ImageQualityPlugin plugin;
     plugin.initialize();
     game.attach(plugin);
@@ -580,49 +426,18 @@ TEST_CASE(ImageQuality, PluginBiasesTexturesAndHandsThemBack) {
     plugin.set_ring_buffer(&ring);
     plugin.set_connected(true);
 
-    // The game applies a bias only once its texture filter bit says so.
     plugin.update(0.05);
     plugin.update(0.05);
-    TEST_ASSERT_NEAR(game.lod_bias(), kGameLodBias + kQualityBias, 0.0001f);
-    TEST_ASSERT(game.dirty_flags() & kTextureFilterDirty);
+    TEST_ASSERT_EQ(game.current_height(), 1440u);
+    TEST_ASSERT_EQ(game.lod_bias(), -2.0f);
     const auto states = drain_states(ring);
     TEST_ASSERT_FALSE(states.empty());
-    TEST_ASSERT_NEAR(states.back().mip_bias, kQualityBias, 0.0001f);
-    TEST_ASSERT(states.back().enforcing & static_cast<uint8_t>(ipc::ImageQualityEnforced::MipBias));
+    TEST_ASSERT_EQ(states.back().texture_lod_bias, -2.0f);
 
-    // Applied and unchanged: the bit is not set again.
-    game.clear_dirty_flags();
+    plugin.set_plugin_enabled(false);
     plugin.update(0.05);
-    TEST_ASSERT_EQ(game.dirty_flags(), 0u);
-
-    // The offset arrives by command, rounded to its step.
-    plugin.set_mip_bias(true, -0.3f);
-    plugin.update(0.05);
-    TEST_ASSERT_NEAR(game.lod_bias(), kGameLodBias + kQualityBias - 0.25f, 0.0001f);
-    TEST_ASSERT(game.dirty_flags() & kTextureFilterDirty);
-
-    game.clear_dirty_flags();
-    plugin.set_mip_bias(false, 0.0f);
-    plugin.update(0.05);
-    TEST_ASSERT_NEAR(game.lod_bias(), kGameLodBias, 0.0001f);
-    TEST_ASSERT(game.dirty_flags() & kTextureFilterDirty);
-
-    // An unload, which runs no further tick.
-    plugin.set_mip_bias(true, 0.0f);
-    plugin.update(0.05);
-    TEST_ASSERT_NEAR(game.lod_bias(), kGameLodBias + kQualityBias, 0.0001f);
-    game.clear_dirty_flags();
     plugin.release();
-    TEST_ASSERT_NEAR(game.lod_bias(), kGameLodBias, 0.0001f);
-    TEST_ASSERT(game.dirty_flags() & kTextureFilterDirty);
-}
-
-TEST_CASE(ImageQuality, MipBiasOffsetClampsToItsSteps) {
-    TEST_ASSERT_NEAR(clamp_mip_bias_offset(0.3f), 0.25f, 0.0001f);
-    TEST_ASSERT_NEAR(clamp_mip_bias_offset(-0.07f), -0.125f, 0.0001f);
-    TEST_ASSERT_NEAR(clamp_mip_bias_offset(-5.0f), constants::MIN_MIP_BIAS_OFFSET, 0.0001f);
-    TEST_ASSERT_NEAR(clamp_mip_bias_offset(5.0f), constants::MAX_MIP_BIAS_OFFSET, 0.0001f);
-    TEST_ASSERT_NEAR(clamp_mip_bias_offset(std::nanf("")), 0.0f, 0.0001f);
+    TEST_ASSERT_EQ(game.lod_bias(), -2.0f);
 }
 
 TEST_CASE(ImageQuality, SettingsRoundTripAndClamp) {
@@ -632,11 +447,10 @@ TEST_CASE(ImageQuality, SettingsRoundTripAndClamp) {
     in["fixed_dlss_resolution"] = config::JsonValue(false);
     in["dlss_render_scale"] = config::JsonValue(0.2);
     in["override_dlss_jitter"] = config::JsonValue(false);
-    in["dlss_mip_bias"] = config::JsonValue(false);
-    in["dlss_mip_bias_offset"] = config::JsonValue(-3.0);
+    // Written by v1.4.0 and v1.4.1, whose texture bias the game overwrote.
+    in["dlss_mip_bias"] = config::JsonValue(true);
+    in["dlss_mip_bias_offset"] = config::JsonValue(-0.5);
     plugin.deserialize_config(in);
-    TEST_ASSERT_FALSE(plugin.settings().dlss_mip_bias);
-    TEST_ASSERT_NEAR(plugin.settings().dlss_mip_bias_offset, constants::MIN_MIP_BIAS_OFFSET, 0.0001f);
     TEST_ASSERT_FALSE(plugin.is_plugin_enabled());
     TEST_ASSERT_FALSE(plugin.settings().fixed_dlss_resolution);
     TEST_ASSERT_NEAR(plugin.settings().dlss_render_scale, constants::MIN_DLSS_RENDER_SCALE, 0.0001f);
@@ -645,15 +459,14 @@ TEST_CASE(ImageQuality, SettingsRoundTripAndClamp) {
     // A command lands where the autosave reads it from.
     plugin.set_dlss_jitter(true);
     plugin.set_fixed_dlss_resolution(true, 0.58f);
-    plugin.set_mip_bias(true, 0.375f);
     config::JsonValue out;
     plugin.serialize_config(out);
-    TEST_ASSERT(out["dlss_mip_bias"].as_bool(false));
-    TEST_ASSERT_NEAR(out["dlss_mip_bias_offset"].as_float(), 0.375f, 0.0001f);
     TEST_ASSERT_FALSE(out["plugin_enabled"].as_bool(true));
     TEST_ASSERT(out["fixed_dlss_resolution"].as_bool(false));
     TEST_ASSERT_NEAR(out["dlss_render_scale"].as_float(), 0.58f, 0.0001f);
     TEST_ASSERT(out["override_dlss_jitter"].as_bool(false));
+    TEST_ASSERT_FALSE(out.contains("dlss_mip_bias"));
+    TEST_ASSERT_FALSE(out.contains("dlss_mip_bias_offset"));
 
     // A key absent from the section keeps its value.
     config::JsonValue partial{config::JsonValue::ObjectType{}};

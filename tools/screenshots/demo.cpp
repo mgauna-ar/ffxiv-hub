@@ -657,10 +657,9 @@ void report_render_state(hub::app::AppState& app) {
     state.gpu_time_ms = 7.4f;
     state.cpu_time_ms = 4.1f;
     state.enforcing = static_cast<uint8_t>(hub::ipc::ImageQualityEnforced::FixedResolution) |
-                      static_cast<uint8_t>(hub::ipc::ImageQualityEnforced::JitterMultiplier) |
-                      static_cast<uint8_t>(hub::ipc::ImageQualityEnforced::MipBias);
-    // log2(1440 / 2160): textures keep the detail of the screen's resolution.
-    state.mip_bias = -0.585f;
+                      static_cast<uint8_t>(hub::ipc::ImageQualityEnforced::JitterMultiplier);
+    // The game's own: log2(1440 / 2160) - 1.
+    state.texture_lod_bias = -1.585f;
     app.pipe_server().process_raw_packet(hub::ipc::serialize_typed_packet(
         hub::PluginId::ImageQuality, hub::MessageType::ImageQualityState, 1, state));
 }

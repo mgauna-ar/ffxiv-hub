@@ -74,17 +74,59 @@ class Image:
                 return name
         return None
 
+    def _unwind_parent(self, unwind_rva):
+        """The begin RVA of the entry an unwind record chains to, or None for a
+        primary entry. MSVC splits a function into several .pdata entries, each
+        after the first naming its parent: through UNW_FLAG_CHAININFO, with the
+        parent's RUNTIME_FUNCTION after the unwind codes, or through an indirect
+        entry, whose unwind RVA has its low bit set and points at the parent."""
+        if unwind_rva & 1:
+            off = self.va_to_off(self.base + (unwind_rva & ~1))
+            return struct.unpack_from("<I", self.data, off)[0] if off is not None else None
+        off = self.va_to_off(self.base + unwind_rva)
+        if off is None:
+            return None
+        flags = self.data[off] >> 3
+        if not flags & 0x4:  # UNW_FLAG_CHAININFO
+            return None
+        codes = self.data[off + 2]
+        parent = off + 4 + 2 * ((codes + 1) & ~1)
+        return struct.unpack_from("<I", self.data, parent)[0]
+
     @property
     def funcs(self):
+        """Function ranges from .pdata, with each function's chained fragments
+        merged into one range where they follow each other."""
         if self._funcs is None:
             pdata, _ = self.section(".pdata")
-            funcs = []
+            entries = []
+            parent_of = {}
             for i in range(0, len(pdata) - 11, 12):
-                begin, end, _ = struct.unpack_from("<III", pdata, i)
+                begin, end, unwind = struct.unpack_from("<III", pdata, i)
                 if begin == 0:
                     break
-                funcs.append((self.base + begin, self.base + end))
-            funcs.sort()
+                entries.append((begin, end))
+                parent = self._unwind_parent(unwind)
+                if parent is not None and parent != begin:
+                    parent_of[begin] = parent
+
+            def root(begin):
+                seen = set()
+                while begin in parent_of and begin not in seen:
+                    seen.add(begin)
+                    begin = parent_of[begin]
+                return begin
+
+            entries.sort()
+            funcs = []
+            last_root = None
+            for begin, end in entries:
+                r = root(begin)
+                if funcs and r == last_root and begin == funcs[-1][1] - self.base:
+                    funcs[-1] = (funcs[-1][0], self.base + end)
+                else:
+                    funcs.append((self.base + begin, self.base + end))
+                    last_root = r
             self._funcs = (funcs, [f[0] for f in funcs])
         return self._funcs[0]
 
@@ -191,27 +233,57 @@ class Image:
                     results.append((func[0] if func else None, l))
         return sorted(set(results), key=lambda r: r[1])
 
+    def _stream_disasm(self, start, stop):
+        """Instruction lines for [start, stop), streamed from one objdump run."""
+        if self._objdump is None:
+            self._objdump = find_objdump()
+        proc = subprocess.Popen(
+            [self._objdump, "-d", "--no-show-raw-insn", "--x86-asm-syntax=intel",
+             f"--start-address={start:#x}", f"--stop-address={stop:#x}", self.path],
+            stdout=subprocess.PIPE, text=True)
+        try:
+            for l in proc.stdout:
+                if re.match(r"\s*[0-9a-f]+:", l):
+                    yield l.strip()
+        finally:
+            proc.stdout.close()
+            proc.wait()
+
     def field_accesses(self, offset, writes_only=False):
-        """Instructions addressing [reg + offset] for a disp32 offset (>= 0x80),
-        e.g. every read or write of GroupManager.Group.MemberCount at 0x7FDC."""
+        """Instructions addressing [reg + offset], stack slots ([rsp + offset]) left
+        out, e.g. every read or write of GroupManager.Group.MemberCount at 0x7FDC.
+
+        An offset of 0x80 or more is a disp32, so its bytes find the functions to
+        disassemble. A smaller one is a one-byte disp8, too common a byte to search
+        for, so the whole of .text is disassembled once (about ten seconds)."""
+        operand = f"+ {offset:#x}]"
+        store = re.compile(r"^(mov\w*|and|or|xor|add|sub|inc|dec|not|neg|set\w+)\s+[^,]*\[")
+
+        def wanted(l):
+            if operand not in l or f"[rsp {operand}" in l:
+                return False
+            if writes_only:
+                ins = l.split(":", 1)[1].strip()
+                dest = ins.split(",")[0]
+                return bool(store.match(ins)) and operand in dest
+            return True
+
         text, va = self.section(".text")
+        results = []
+        if offset < 0x80:
+            for l in self._stream_disasm(va, va + len(text)):
+                if wanted(l):
+                    f = self.func_containing(int(l.split(":", 1)[0], 16))
+                    results.append((f[0] if f else None, l))
+            return results
         needle = struct.pack("<I", offset)
         funcs = set()
         for m in re.finditer(re.escape(needle), text):
             f = self.func_containing(va + m.start())
             if f:
                 funcs.add(f)
-        operand = f"+ {offset:#x}]"
-        store = re.compile(r"^(mov\w*|and|or|xor|add|sub|inc|dec|not|neg|set\w+)\s+[^,]*\[")
-        results = []
         for f in sorted(funcs):
             for l in self.disasm(*f):
-                if operand not in l:
-                    continue
-                if writes_only:
-                    ins = l.split(":", 1)[1].strip()
-                    dest = ins.split(",")[0]
-                    if not (store.match(ins) and operand in dest):
-                        continue
-                results.append((f[0], l))
+                if wanted(l):
+                    results.append((f[0], l))
         return results

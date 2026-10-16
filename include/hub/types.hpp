@@ -102,10 +102,8 @@ enum class CommandId : uint32_t {
     /// about. param_float: 1.0, the amplitude a payload up to v1.3.2 reads there;
     /// newer ones ignore it
     SetDlssJitter = 42,
-    /// param_uint 0/1: under DLSS, while the render height is held, add its log2 share
-    /// of the screen to the game's texture mip bias. param_float: the user's offset
-    /// on top, in mip levels
-    SetDlssMipBias = 43,
+    // 43 was SetDlssMipBias, whose texture bias the game overwrites every frame.
+    // Never reused: a v1.4.0 or v1.4.1 app may still send it.
 };
 
 /// 2D Floating-point rectangle coordinates for overlay geometry
