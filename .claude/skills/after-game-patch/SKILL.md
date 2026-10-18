@@ -94,9 +94,14 @@ Litany (786, a buff) and Vulnerability Up (638, a debuff); check both in the dif
 
 The generator reads the archives through `tools/xivdata/sqpack.py` (SqPack `.index`
 lookup and `datN` extraction) and `tools/xivdata/excel.py` (`.exh` header and `.exd` row
-pages). Both were verified against patch 7.56. String cells are SeStrings: inline macros
-are stripped except Hyphen (`0x1F`), which the sheet uses mid-name ("Tam-Tara") and is
-decoded to `-`.
+pages). Both were verified against patch 7.56. String cells are SeStrings, read by
+`tools/xivdata/sestring.py`: each inline macro is skipped by its length, Hyphen (`0x1F`),
+which the sheet uses mid-name ("Tam-Tara"), is decoded to `-`, and NewLine to a line
+break. Conditional text (`If` macros) is dropped with the rest, so a sentence a trait adds
+is not in `row[col]`. The generator's regexes find none there on 7.56; after a patch,
+check with `row.raw(col)` that a guaranteed-hit sentence did not move into one. A macro
+whose length does not end on `0x03` raises, so a changed format fails the run rather than
+leaking bytes into the tables.
 
 ## 3. Check the signatures
 
@@ -327,10 +332,16 @@ to find it) and confirm both still reach the handler that prints "gains the effe
 `include/hub/game/tick_statuses.hpp` is hand-maintained the same way: the Status sheet
 names each DoT and HoT but carries no potency. `make` runs
 `MeterGameData.TickStatusTableMatchesTheStatusSheet`. Render each DoT and HoT action's
-ActionTransient text at level 100 and compare its per-tick potency with the table; the
-text keeps level-dependent values inside `If` macros, which `tools/xivdata` strips, so
-read the raw string and take the branch for the job at level 100. A new DoT or HoT needs
-an entry, sorted by status id, and a line in that test. A ground effect stays out.
+ActionTransient text at level 100 and compare its per-tick potency with the table. The
+text keeps level-dependent values inside `If` macros, so read it with
+`sestring.render(row.raw(0), {sestring.CLASS_JOB: job, sestring.LEVEL: 100})`, for the
+action's job (a base class's action branches on its job's id). Some statuses are named
+apart from their action and appear in its text only as "Regen" or a granted effect:
+Opposition (Celestial Opposition), Kerakeia (Kerachole), Undying Flame (Rekindle), Wheel
+of Fortune (Collective Unconscious), Knight's Benediction (Holy Sheltron), Primeval
+Impulse (Damnation), Divine Aura (Divine Caress). All 52 matched on 7.56. A new DoT or
+HoT needs an entry, sorted by status id, and a line in that test. A ground effect stays
+out.
 
 ## 4g. Re-check the combat condition byte
 

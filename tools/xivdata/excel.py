@@ -6,6 +6,8 @@ Verified against ClassJob on patch 7.56.
 
 import struct
 
+from . import sestring
+
 EXH_MAGIC = b"EXHF"
 EXD_MAGIC = b"EXDF"
 
@@ -28,26 +30,6 @@ _INT_FORMATS = {
     0x0A: "q",   # int64
     0x0B: "Q",   # uint64
 }
-
-
-def decode_sestring(raw: bytes) -> str:
-    """Game strings carry inline macro payloads; keep only the literal text (and hyphens)."""
-    out = bytearray()
-    i = 0
-    while i < len(raw):
-        byte = raw[i]
-        if byte == 0x02:  # macro start: skip to its 0x03 terminator
-            end = raw.find(b"\x03", i)
-            if end == -1:
-                break
-            # Hyphen is text, not formatting: "Tam-Tara" is stored as Tam<0x1F>Tara.
-            if i + 1 < end and raw[i + 1] == 0x1F:
-                out += b"-"
-            i = end + 1
-            continue
-        out.append(byte)
-        i += 1
-    return out.decode("utf-8", "replace")
 
 
 class Sheet:
@@ -110,15 +92,23 @@ class _Row:
         self._base = base
 
     def __getitem__(self, column: int):
+        """The cell; a string comes back as its literal text (sestring.decode)."""
         kind, offset = self._sheet.columns[column]
         at = self._base + offset
         if kind == _STRING:
-            heap = self._base + self._sheet.row_size
-            start, = struct.unpack_from(">I", self._data, at)
-            end = self._data.index(b"\0", heap + start)
-            return decode_sestring(self._data[heap + start:end])
+            return sestring.decode(self.raw(column))
         if kind in _INT_FORMATS:
             return struct.unpack_from(">" + _INT_FORMATS[kind], self._data, at)[0]
         if _PACKED_BOOL_FIRST <= kind <= _PACKED_BOOL_LAST:
             return bool((self._data[at] >> (kind - _PACKED_BOOL_FIRST)) & 1)
         raise ValueError(f"unsupported column kind 0x{kind:02x} in {self._sheet.name}")
+
+    def raw(self, column: int) -> bytes:
+        """A string cell's SeString bytes, macros included, for sestring.render."""
+        kind, offset = self._sheet.columns[column]
+        if kind != _STRING:
+            raise ValueError(f"column {column} of {self._sheet.name} is not a string")
+        heap = self._base + self._sheet.row_size
+        start, = struct.unpack_from(">I", self._data, self._base + offset)
+        end = self._data.index(b"\0", heap + start)
+        return self._data[heap + start:end]
