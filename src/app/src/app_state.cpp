@@ -218,6 +218,11 @@ void AppState::register_ipc_callbacks() {
         m_engine.process_targetability(targetability);
     });
 
+    m_pipe_server.set_combat_overkill_callback([this](const ipc::CombatOverkillPayload& overkill) {
+        std::lock_guard<std::mutex> lock(m_combat_mutex);
+        m_engine.process_overkill(overkill);
+    });
+
     m_pipe_server.set_status_callback([this](const ipc::StatusPayload& status) {
         m_hooks_installed.store(ipc::reports_hooks_installed(status));
         std::lock_guard<std::mutex> lock(m_status_mutex);

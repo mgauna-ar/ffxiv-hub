@@ -201,6 +201,15 @@ void EncounterEngine::process_targetability(const ipc::TargetabilityPacket& pack
     m_dirty = true;
 }
 
+void EncounterEngine::process_overkill(const ipc::OverkillPacket& packet) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (m_state != EncounterState::InCombat || packet.timestamp_us < m_start_time_us) {
+        return;
+    }
+    m_accumulator.record_overkill(packet, m_registry);
+    m_dirty = true;
+}
+
 ipc::LifeEventPacket EncounterEngine::build_life_event(EntityId entity, LifeEventKind kind, uint64_t timestamp_us) const {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
     return DeathLog::build_event(entity, kind, timestamp_us, m_accumulator);

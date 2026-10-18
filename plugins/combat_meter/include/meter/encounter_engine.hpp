@@ -89,6 +89,11 @@ public:
     /// on the other lane, still counts.
     void process_targetability(const ipc::TargetabilityPacket& packet);
 
+    /// The overkill of a hit the live pull booked, taken back off it now that its
+    /// effect result applied. Never starts a pull and is not activity. One for a hit
+    /// stamped before the pull, or arriving after it was archived, is dropped.
+    void process_overkill(const ipc::OverkillPacket& packet);
+
     /// Death recap for `entity` from what the live pull saw land on it.
     [[nodiscard]] ipc::LifeEventPacket build_life_event(EntityId entity, LifeEventKind kind, uint64_t timestamp_us) const;
 

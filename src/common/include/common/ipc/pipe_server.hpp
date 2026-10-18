@@ -24,6 +24,7 @@ using CombatLifeEventCallback = std::function<void(const CombatLifeEventPayload&
 using CombatEnemyHpCallback = std::function<void(const CombatEnemyHpPayload&)>;
 using CombatCastCallback = std::function<void(const CombatCastPayload&)>;
 using CombatTargetabilityCallback = std::function<void(const CombatTargetabilityPayload&)>;
+using CombatOverkillCallback = std::function<void(const CombatOverkillPayload&)>;
 
 using MitigatorTelemetryCallback = std::function<void(const MitigatorTelemetryPayload&)>;
 using ImageQualityStateCallback = std::function<void(const ImageQualityStatePayload&)>;
@@ -88,6 +89,7 @@ public:
     void set_combat_enemy_hp_callback(CombatEnemyHpCallback cb) { m_on_enemy_hp = std::move(cb); }
     void set_combat_cast_callback(CombatCastCallback cb) { m_on_cast = std::move(cb); }
     void set_combat_targetability_callback(CombatTargetabilityCallback cb) { m_on_targetability = std::move(cb); }
+    void set_combat_overkill_callback(CombatOverkillCallback cb) { m_on_overkill = std::move(cb); }
 
     void set_mitigator_telemetry_callback(MitigatorTelemetryCallback cb) { m_on_mitigator_telemetry = std::move(cb); }
 
@@ -152,6 +154,7 @@ private:
     CombatEnemyHpCallback m_on_enemy_hp;
     CombatCastCallback m_on_cast;
     CombatTargetabilityCallback m_on_targetability;
+    CombatOverkillCallback m_on_overkill;
 
     MitigatorTelemetryCallback m_on_mitigator_telemetry;
 

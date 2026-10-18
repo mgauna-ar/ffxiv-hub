@@ -2,7 +2,6 @@
 #include "meter/combat_plugin.hpp"
 #include "meter/encounter_engine.hpp"
 #include "meter/metrics_accumulator.hpp"
-#include "meter/overkill.hpp"
 #include "meter/types.hpp"
 #include "hub/game/limit_break.hpp"
 #include "common/ipc/ring_buffer.hpp"
@@ -17,9 +16,7 @@ namespace {
 constexpr EntityId kTank = 0x10000001;
 constexpr EntityId kHealer = 0x10000002;
 constexpr EntityId kBoss = 0x40000001;
-constexpr uint32_t kMeteor = 205;  // A caster Limit Break 3
-
-constexpr uint64_t ms(uint64_t m) { return m * 1000; }
+constexpr uint32_t kTheEnd = 24858;  // Reaper's Limit Break 3
 
 void sync_party(EncounterEngine& engine) {
     hub::ipc::PartySyncPacket sync{};
@@ -31,42 +28,48 @@ void sync_party(EncounterEngine& engine) {
     engine.process_party_sync(sync);
 }
 
-hub::ipc::CombatActionPacket hit(EntityId source, EntityId target, uint32_t damage, uint32_t overkill) {
-    hub::ipc::CombatActionPacket packet{};
-    packet.source_id = source;
-    packet.target_id = target;
-    packet.action_id = 31;
-    packet.damage = damage;
-    packet.overkill = overkill;
-    packet.effect_type = static_cast<uint16_t>(EffectType::Damage);
-    packet.timestamp_us = ms(1000);
-    return packet;
-}
-
-/// One effect of `amount` from `source` on `target`.
-void effect(CombatPlugin& plugin, EntityId source, EntityId target, uint32_t action_id, uint32_t amount,
-            uint8_t effect_type = 0x03) {
+/// One effect `sequence` from `source` on `target`, one entry per amount.
+void effect(CombatPlugin& plugin, EntityId source, EntityId target, uint32_t action_id, uint32_t sequence,
+            std::initializer_list<uint16_t> amounts) {
     hub::game::ActionEffectHeader header{};
     header.animation_target_id = target;
     header.action_id = action_id;
+    header.global_sequence = sequence;
     header.num_targets = 1;
     std::array<hub::game::ActionEffectEntry, 8> entries{};
-    entries[0].effect_type = effect_type;
-    entries[0].value = static_cast<uint16_t>(amount);
+    size_t i = 0;
+    for (const uint16_t amount : amounts) {
+        entries[i].effect_type = 0x03;
+        entries[i].value = amount;
+        ++i;
+    }
     plugin.on_receive_action_effect(source, nullptr, &header, entries.data(), nullptr);
 }
 
-std::vector<hub::ipc::CombatActionPacket> drain_actions(hub::ipc::PacketRingBuffer& ring) {
-    std::vector<hub::ipc::CombatActionPacket> sent;
+/// Every CombatAction and CombatOverkill sent, fed in order to the app's engine.
+void feed(hub::ipc::PacketRingBuffer& ring, EncounterEngine& app, std::vector<hub::ipc::OverkillPacket>* overkills = nullptr) {
     std::vector<uint8_t> frame;
     while (ring.pop(frame)) {
         const auto header = hub::ipc::deserialize_header(frame);
-        if (!header || static_cast<hub::MessageType>(header->message_type) != hub::MessageType::CombatAction) continue;
-        hub::ipc::CombatActionPacket packet{};
-        std::memcpy(&packet, frame.data() + sizeof(hub::ipc::PacketHeader), sizeof(packet));
-        sent.push_back(packet);
+        if (!header) continue;
+        const uint8_t* body = frame.data() + sizeof(hub::ipc::PacketHeader);
+        switch (static_cast<hub::MessageType>(header->message_type)) {
+            case hub::MessageType::CombatAction: {
+                hub::ipc::CombatActionPacket packet{};
+                std::memcpy(&packet, body, sizeof(packet));
+                app.process_action(packet);
+                break;
+            }
+            case hub::MessageType::CombatOverkill: {
+                hub::ipc::OverkillPacket packet{};
+                std::memcpy(&packet, body, sizeof(packet));
+                app.process_overkill(packet);
+                if (overkills) overkills->push_back(packet);
+                break;
+            }
+            default: break;
+        }
     }
-    return sent;
 }
 
 const CombatantStats* row(const EncounterSummary& summary, EntityId id) {
@@ -76,41 +79,18 @@ const CombatantStats* row(const EncounterSummary& summary, EntityId id) {
     return nullptr;
 }
 
+hub::ipc::CombatActionPacket hit(EntityId source, EntityId target, uint32_t damage) {
+    hub::ipc::CombatActionPacket packet{};
+    packet.source_id = source;
+    packet.target_id = target;
+    packet.action_id = 31;
+    packet.damage = damage;
+    packet.effect_type = static_cast<uint16_t>(EffectType::Damage);
+    packet.timestamp_us = 1'000'000;
+    return packet;
+}
+
 } // namespace
-
-TEST_CASE(MeterOverkill, LedgerTakesHitsStillOnTheirWayOffTheHp) {
-    OverkillLedger ledger;
-    TEST_ASSERT_EQ(ledger.book(kBoss, 300, 1000, ms(0)), 0u);
-    // The first hit has not applied yet: 700 is left, not 1000.
-    TEST_ASSERT_EQ(ledger.book(kBoss, 900, 1000, ms(100)), 200u);
-    // The first hit applied (HP 1000 -> 700); the second, 700 of it, has not.
-    TEST_ASSERT_EQ(ledger.book(kBoss, 500, 700, ms(600)), 500u);
-    // Both applied: the boss reads 0 and every hit on it now is overkill.
-    TEST_ASSERT_EQ(ledger.book(kBoss, 400, 0, ms(1200)), 400u);
-}
-
-TEST_CASE(MeterOverkill, LedgerForgetsWhatTheHpWouldHaveShownBy) {
-    OverkillLedger ledger;
-    TEST_ASSERT_EQ(ledger.book(kBoss, 800, 1000, ms(0)), 0u);
-    // Healed back up meanwhile: the HP read says nothing about the pending hit.
-    TEST_ASSERT_EQ(ledger.book(kBoss, 300, 1000, ms(100)), 100u);
-    // Long enough for any effect result to have arrived.
-    TEST_ASSERT_EQ(ledger.book(kBoss, 300, 1000, ms(100) + OverkillLedger::kPendingTtlUs + 1), 0u);
-}
-
-TEST_CASE(MeterOverkill, LedgerTakesADropPastThePendingAsNone) {
-    // A DoT tick's HP is never booked, so the drop can be more than what was pending.
-    OverkillLedger ledger;
-    TEST_ASSERT_EQ(ledger.book(kBoss, 200, 1000, ms(0)), 0u);
-    TEST_ASSERT_EQ(ledger.book(kBoss, 500, 500, ms(300)), 0u);
-}
-
-TEST_CASE(MeterOverkill, LedgerKeepsEnemiesApart) {
-    OverkillLedger ledger;
-    TEST_ASSERT_EQ(ledger.book(kBoss, 900, 1000, ms(0)), 0u);
-    TEST_ASSERT_EQ(ledger.book(kBoss + 1, 900, 1000, ms(0)), 0u);
-    TEST_ASSERT_EQ(ledger.tracked_count(), 2u);
-}
 
 TEST_CASE(MeterOverkill, OnlyWhatLandedCounts) {
     // FFLogs leaves the part past the enemy's HP out of damage done.
@@ -119,16 +99,28 @@ TEST_CASE(MeterOverkill, OnlyWhatLandedCounts) {
     hub::ipc::PartySyncPacket sync{};
     sync.entity_ids[0] = kTank;
     sync.job_ids[0] = static_cast<uint32_t>(Job::WAR);
-    sync.party_count = 1;
+    sync.entity_ids[1] = kHealer;
+    sync.job_ids[1] = static_cast<uint32_t>(Job::WHM);
+    sync.party_count = 2;
     registry.sync_party(sync);
-    accumulator.start(ms(1000));
+    accumulator.start(1'000'000);
 
-    hub::ipc::CombatActionPacket killing_blow = hit(kTank, kBoss, 30000, 22000);
+    hub::ipc::CombatActionPacket killing_blow = hit(kTank, kBoss, 30000);
     killing_blow.credits.count = 1;
     killing_blow.credits.entries[0].giver_id = kHealer;
-    killing_blow.credits.entries[0].amount = 10000;  // More than landed
-    accumulator.record_action(hit(kTank, kBoss, 12000, 0), registry);
+    killing_blow.credits.entries[0].amount = 9000;
+    accumulator.record_action(hit(kTank, kBoss, 12000), registry);
     accumulator.record_action(killing_blow, registry);
+
+    hub::ipc::OverkillPacket overkill{};
+    overkill.source_id = kTank;
+    overkill.target_id = kBoss;
+    overkill.action_id = 31;
+    overkill.overkill = 22000;
+    overkill.timestamp_us = killing_blow.timestamp_us;
+    overkill.credits = killing_blow.credits;
+    overkill.credits.entries[0].amount = 6600;  // Its share: 9000 * 22000 / 30000
+    accumulator.record_overkill(overkill, registry);
     accumulator.recalculate(10.0, &registry);
 
     const CombatantStats* tank = accumulator.find_stats(kTank);
@@ -141,80 +133,106 @@ TEST_CASE(MeterOverkill, OnlyWhatLandedCounts) {
     const ActionSummary& action = tank->actions.at(31);
     TEST_ASSERT_EQ(action.total_damage, 20000u);
     TEST_ASSERT_EQ(action.max_damage, 30000u);
-    // A credit can move no more than landed.
-    TEST_ASSERT_EQ(tank->buff_received, 8000u);
+    // The credit comes back from both sides, so the party's rDPS still adds up to its DPS.
+    const CombatantStats* healer = accumulator.find_stats(kHealer);
+    TEST_ASSERT_EQ(tank->buff_received, 2400u);
+    TEST_ASSERT(healer != nullptr);
+    TEST_ASSERT_EQ(healer->buff_given, 2400u);
+    TEST_ASSERT_NEAR(tank->rdps + healer->rdps, tank->dps + healer->dps, 1e-9);
 }
 
-TEST_CASE(MeterOverkill, PluginSplitsAHitOnAnEnemyBeforeRecording) {
+TEST_CASE(MeterOverkill, AHitLandsOnTheHpItsResultFinds) {
+    // The End went off, then the party's hits landed during its 2.2 s animation, and
+    // its result came last: FFLogs booked 449,789 of 1,482,092. Measured when it went
+    // off, it kept damage those later hits had already taken.
     hub::ipc::PacketRingBuffer ring;
     CombatPlugin plugin;
     plugin.initialize();
     plugin.set_ring_buffer(&ring);
     sync_party(plugin.engine());
-    uint32_t boss_hp = 50000;
-    plugin.set_hp_resolver([&](uint32_t entity_id, uint32_t& current_hp, uint32_t& max_hp) {
-        if (entity_id == kBoss) {
-            current_hp = boss_hp;
-            max_hp = 100000;
-            return true;
-        }
-        if (entity_id == kTank) {
-            current_hp = 1000;
-            max_hp = 100000;
-            return true;
-        }
-        return false;
-    });
 
-    effect(plugin, kTank, kBoss, 31, 30000);
-    effect(plugin, kTank, kBoss, 31, 30000);  // Only 20000 left once the first applies
-    // A hit on the party is never anyone's overkill.
-    effect(plugin, kBoss, kTank, 31, 5000);
+    effect(plugin, kTank, kBoss, kTheEnd, 100, {60000});
+    effect(plugin, kTank, kBoss, 31, 101, {30000});
+    plugin.on_effect_result(kBoss, 101, 50000);  // The quick hit applies first
+    plugin.on_effect_result(kBoss, 100, 20000);  // The Limit Break finds 20000 left
 
-    const auto sent = drain_actions(ring);
-    TEST_ASSERT_EQ(sent.size(), 3u);
-    TEST_ASSERT_EQ(sent[0].overkill, 0u);
-    TEST_ASSERT_EQ(sent[1].overkill, 10000u);
-    TEST_ASSERT_EQ(sent[2].overkill, 0u);
-    TEST_ASSERT_EQ(sent[1].damage, 30000u);
-
-    // The app's engine, fed what was sent, books the same.
     EncounterEngine app;
     sync_party(app);
-    for (const auto& packet : sent) app.process_action(packet);
-    const auto in_game = plugin.engine().current_summary();
-    TEST_ASSERT_EQ(in_game.total_damage, 50000u);
-    TEST_ASSERT_EQ(app.current_summary().total_damage, in_game.total_damage);
+    std::vector<hub::ipc::OverkillPacket> sent;
+    feed(ring, app, &sent);
+    TEST_ASSERT_EQ(sent.size(), 1u);
+    TEST_ASSERT_EQ(sent[0].overkill, 40000u);
+    TEST_ASSERT_EQ(sent[0].action_id, kTheEnd);
+
+    for (const EncounterSummary& summary : {plugin.engine().current_summary(), app.current_summary()}) {
+        const CombatantStats* lb = row(summary, hub::game::LIMIT_BREAK_COMBATANT_ID);
+        const CombatantStats* tank = row(summary, kTank);
+        TEST_ASSERT(lb != nullptr && tank != nullptr);
+        TEST_ASSERT_EQ(lb->total_damage, 20000u);
+        TEST_ASSERT_EQ(tank->total_damage, 30000u);
+        TEST_ASSERT_EQ(summary.total_damage, 50000u);
+    }
 }
 
-TEST_CASE(MeterOverkill, ALimitBreakFinishingTheBossBooksWhatWasLeft) {
-    // A Limit Break thrown at a boss with little HP left booked its whole number.
+TEST_CASE(MeterOverkill, AnEffectsHitsLandInEntryOrder) {
     hub::ipc::PacketRingBuffer ring;
     CombatPlugin plugin;
     plugin.initialize();
     plugin.set_ring_buffer(&ring);
     sync_party(plugin.engine());
-    plugin.set_hp_resolver([](uint32_t entity_id, uint32_t& current_hp, uint32_t& max_hp) {
-        if (entity_id != kBoss) return false;
-        current_hp = 9000;
-        max_hp = 100000;
-        return true;
-    });
 
-    effect(plugin, kTank, kBoss, kMeteor, 60000);
-    const auto summary = plugin.engine().current_summary();
-    const CombatantStats* lb = row(summary, hub::game::LIMIT_BREAK_COMBATANT_ID);
-    TEST_ASSERT(lb != nullptr);
-    TEST_ASSERT_EQ(lb->total_damage, 9000u);
+    effect(plugin, kTank, kBoss, 31, 7, {3000, 4000});
+    plugin.on_effect_result(kBoss, 7, 5000);
+    TEST_ASSERT_EQ(plugin.engine().current_summary().total_damage, 5000u);
+
+    // A result comes once: the same sequence again takes nothing more.
+    plugin.on_effect_result(kBoss, 7, 0);
+    TEST_ASSERT_EQ(plugin.engine().current_summary().total_damage, 5000u);
 }
 
-TEST_CASE(MeterOverkill, UnreadHpBooksTheWholeHit) {
+TEST_CASE(MeterOverkill, AHitWhoseResultNeverCameStaysWhole) {
     hub::ipc::PacketRingBuffer ring;
     CombatPlugin plugin;
     plugin.initialize();
     plugin.set_ring_buffer(&ring);
     sync_party(plugin.engine());
-    plugin.set_hp_resolver([](uint32_t, uint32_t&, uint32_t&) { return false; });
-    effect(plugin, kTank, kBoss, 31, 30000);
+    effect(plugin, kTank, kBoss, 31, 9, {30000});
+    // Another effect's result, and another enemy's, say nothing about it.
+    plugin.on_effect_result(kBoss, 10, 0);
+    plugin.on_effect_result(kBoss + 1, 9, 0);
     TEST_ASSERT_EQ(plugin.engine().current_summary().total_damage, 30000u);
+}
+
+TEST_CASE(MeterOverkill, OnlyThePartysHitsOnEnemiesAreTakenBack) {
+    hub::ipc::PacketRingBuffer ring;
+    CombatPlugin plugin;
+    plugin.initialize();
+    plugin.set_ring_buffer(&ring);
+    sync_party(plugin.engine());
+    effect(plugin, kTank, kBoss, 31, 1, {30000});
+    // The boss's hit on the tank is damage taken, and a result on the tank is no one's overkill.
+    effect(plugin, kBoss, kTank, 31, 2, {5000});
+    plugin.on_effect_result(kTank, 2, 0);
+    std::vector<hub::ipc::OverkillPacket> sent;
+    EncounterEngine app;
+    sync_party(app);
+    feed(ring, app, &sent);
+    TEST_ASSERT(sent.empty());
+    TEST_ASSERT_EQ(plugin.engine().current_summary().total_damage, 30000u);
+}
+
+TEST_CASE(MeterOverkill, ALatePullOrNoPullTakesNothing) {
+    EncounterEngine engine;
+    sync_party(engine);
+    hub::ipc::OverkillPacket overkill{};
+    overkill.source_id = kTank;
+    overkill.target_id = kBoss;
+    overkill.action_id = 31;
+    overkill.overkill = 5000;
+    overkill.timestamp_us = 1'000'000;
+    engine.process_overkill(overkill);  // Out of combat
+    engine.process_action(hit(kTank, kBoss, 30000));
+    overkill.timestamp_us = 500'000;     // Stamped before the pull
+    engine.process_overkill(overkill);
+    TEST_ASSERT_EQ(engine.current_summary().total_damage, 30000u);
 }

@@ -134,6 +134,15 @@ public:
         bool /*is_heal*/
     ) {}
 
+    /// Called when the client applies a queued action effect to its target because the
+    /// effect's result arrived, before the handler writes the server's new HP. Every
+    /// hit of an effect lands now, not when ReceiveActionEffect saw it; a Limit Break 3
+    /// lands seconds later. Default is a no-op.
+    /// @param target_entity_id Entity the effect lands on
+    /// @param sequence ActionEffectHeader::global_sequence of the effect
+    /// @param target_hp The target's HP as this effect lands, before any of it
+    virtual void on_effect_result(uint32_t /*target_entity_id*/, uint32_t /*sequence*/, uint32_t /*target_hp*/) {}
+
     /// Called when ReceiveActionEffect is intercepted
     /// @param source_entity_id Entity ID of the acting character
     /// @param source_character Pointer to character object in game memory

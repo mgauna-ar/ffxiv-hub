@@ -36,6 +36,18 @@ ipc::StatusListPacket make_status_list(const ActorVitals& vitals, const Combatan
     return list;
 }
 
+/// The part of a hit's credits its overkill takes back: each one's share of the
+/// overkill, as each was its share of the hit.
+ipc::CombatBuffCredits overkill_share(const ipc::CombatBuffCredits& credits, uint32_t overkill, uint32_t damage) {
+    ipc::CombatBuffCredits share = credits;
+    const size_t count = std::min<size_t>(credits.count, ipc::MAX_BUFF_CREDITS);
+    for (size_t i = 0; i < count; ++i) {
+        share.entries[i].amount = damage == 0 ? 0 : static_cast<uint32_t>(
+            static_cast<uint64_t>(credits.entries[i].amount) * overkill / damage);
+    }
+    return share;
+}
+
 } // namespace
 
 CombatPlugin::CombatPlugin() {
@@ -364,35 +376,32 @@ void CombatPlugin::on_receive_action_effect(
                 && m_hp_resolver(static_cast<uint32_t>(packet.target_id), current_hp, max_hp)) {
                 decoder::apply_overheal(packet, current_hp, max_hp);
             }
-            // A hit on an enemy is split the same way: the HP read now has not taken
-            // it yet, so whatever went past it is overkill. Buff credits are worked out
-            // here too: the statuses read now are the ones the hit was dealt under, and
-            // the app has no way to see them. Only damage that landed counts, the same
-            // test that opens a pull, and only the party's on an enemy.
-            if (EncounterEngine::starts_encounter(packet)) {
+            // Buff credits are worked out here for the same reason: the statuses read
+            // now are the ones the hit was dealt under, and the app has no way to see them.
+            // Only damage that landed earns any, the same test that opens a pull, and only
+            // the caster's own: the statuses read are the caster's, and a reflect is not
+            // a swing its crit or direct hit rate says anything about.
+            if (!by_target && EncounterEngine::starts_encounter(packet)) {
                 m_engine.with_registry([&](CombatantRegistry& registry) {
-                    const EntityId target = static_cast<EntityId>(packet.target_id);
-                    if (!registry.is_friendly(registry.resolve_owner(static_cast<EntityId>(packet.source_id)))
-                        || !hub::game::is_real_entity_id(target) || registry.is_friendly(target)) {
-                        return;
-                    }
-                    // Inside this lock, so the resolver's own lock is no second wait.
-                    if (m_hp_resolver && m_hp_resolver(target, current_hp, max_hp) && max_hp > 0) {
-                        packet.overkill = m_overkill.book(target, packet.damage, current_hp, now_us);
-                    }
-                    // Credits go to the caster's own swings: the statuses read are the
-                    // caster's, and a reflect is not a swing its crit or direct hit rate
-                    // says anything about.
                     const EntityId owner = registry.resolve_owner(source_entity_id);
-                    if (by_target || !registry.is_friendly(owner) || hub::game::is_limit_break_action(packet.action_id)) {
+                    const EntityId target = static_cast<EntityId>(packet.target_id);
+                    if (!registry.is_friendly(owner) || !hub::game::is_real_entity_id(target)
+                        || registry.is_friendly(target)) {
                         return;
                     }
-                    if (target != target_statuses_of) {
-                        target_statuses = read_statuses(target, nullptr);
-                        target_statuses_of = target;
+                    if (!hub::game::is_limit_break_action(packet.action_id)) {
+                        if (target != target_statuses_of) {
+                            target_statuses = read_statuses(target, nullptr);
+                            target_statuses_of = target;
+                        }
+                        packet.credits = attribute(registry, owner, packet.action_id, packet.damage,
+                                                   packet.hit_flags, source_snapshot(owner), target_statuses, false);
                     }
-                    packet.credits = attribute(registry, owner, packet.action_id, packet.damage - packet.overkill,
-                                               packet.hit_flags, source_snapshot(owner), target_statuses, false);
+                    // Its overkill is known only once its effect result applies.
+                    await_result(ResultKey{header->global_sequence, target},
+                                 AwaitingHit{static_cast<uint32_t>(packet.source_id), packet.action_id, packet.damage,
+                                             packet.timestamp_us, packet.credits},
+                                 now_us);
                 });
             }
             m_engine.process_action(packet);
@@ -466,6 +475,54 @@ void CombatPlugin::remember_dot(const DotKey& key, const StatusSnapshot& source,
         }
     }
     m_dot_snapshots[key] = DotSnapshot{now_us, source};
+}
+
+void CombatPlugin::await_result(const ResultKey& key, const AwaitingHit& hit, uint64_t now_us) {
+    if (m_awaiting_results.size() >= kMaxAwaitingResults && !m_awaiting_results.contains(key)) {
+        std::erase_if(m_awaiting_results, [now_us](const auto& entry) {
+            const uint64_t at = entry.second.front().timestamp_us;
+            return now_us > at && now_us - at > kAwaitResultTtlUs;
+        });
+        if (m_awaiting_results.size() >= kMaxAwaitingResults) {
+            return;
+        }
+    }
+    m_awaiting_results[key].push_back(hit);
+}
+
+void CombatPlugin::on_effect_result(uint32_t target_entity_id, uint32_t sequence, uint32_t target_hp) {
+    if (!m_initialized || !is_enabled()) {
+        return;
+    }
+    // No engine lock: results come several a second, and only an overkill needs it.
+    const auto it = m_awaiting_results.find(ResultKey{sequence, target_entity_id});
+    if (it == m_awaiting_results.end()) {
+        return;
+    }
+    std::vector<ipc::OverkillPacket> overkills;
+    // An effect's hits land in entry order, each on what the last one left.
+    uint32_t left = target_hp;
+    for (const AwaitingHit& hit : it->second) {
+        const uint32_t landed = std::min(hit.damage, left);
+        left -= landed;
+        if (landed == hit.damage) continue;
+        ipc::OverkillPacket packet{};
+        packet.source_id = hit.source;
+        packet.target_id = target_entity_id;
+        packet.action_id = hit.action;
+        packet.overkill = hit.damage - landed;
+        packet.timestamp_us = hit.timestamp_us;
+        packet.credits = overkill_share(hit.credits, packet.overkill, hit.damage);
+        overkills.push_back(packet);
+    }
+    m_awaiting_results.erase(it);
+    for (const ipc::OverkillPacket& packet : overkills) {
+        m_engine.process_overkill(packet);
+        if (streaming()) {
+            m_ring_buffer->push(ipc::serialize_typed_packet(
+                PluginId::CombatMeter, MessageType::CombatOverkill, ++m_sequence, packet));
+        }
+    }
 }
 
 void CombatPlugin::on_status_tick(

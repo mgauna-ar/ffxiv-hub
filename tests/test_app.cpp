@@ -201,17 +201,6 @@ TEST_CASE(PipeServer, CombatPacketsWithoutCreditsFromAnOlderPayload) {
     TEST_ASSERT(server.process_raw_packet(ipc::serialize_typed_packet(
         PluginId::CombatMeter, MessageType::CombatAction, 3, act)));
     TEST_ASSERT_EQ(action_credits, 1u);
-
-    // And one from before the overkill, which arrives with none.
-    uint32_t action_overkill = 0xFFFFFFFF;
-    server.set_combat_action_callback([&](const ipc::CombatActionPayload& received) {
-        action_overkill = received.overkill;
-    });
-    act.overkill = 4000;
-    TEST_ASSERT(server.process_raw_packet(ipc::serialize_packet(
-        PluginId::CombatMeter, MessageType::CombatAction, 4,
-        std::span<const uint8_t>(act_bytes, ipc::COMBAT_ACTION_V2_SIZE))));
-    TEST_ASSERT_EQ(action_overkill, 0u);
 }
 
 TEST_CASE(PipeServer, GameStateFromAnOlderPayload) {
@@ -485,6 +474,26 @@ TEST_CASE(PipeServer, RoutesTargetability) {
     TEST_ASSERT(server.process_raw_packet(ipc::serialize_typed_packet(
         PluginId::CombatMeter, MessageType::CombatTargetability, 1, report)));
     TEST_ASSERT_EQ(received.targetable, 1u);
+    TEST_ASSERT_EQ(received.timestamp_us, 5'000'000u);
+}
+
+TEST_CASE(PipeServer, RoutesOverkill) {
+    ipc::PipeServer server;
+    ipc::CombatOverkillPayload received{};
+    server.set_combat_overkill_callback([&](const ipc::CombatOverkillPayload& overkill) { received = overkill; });
+
+    ipc::CombatOverkillPayload overkill{};
+    overkill.source_id = 1001;
+    overkill.target_id = 0x40000001;
+    overkill.action_id = 24395;
+    overkill.overkill = 1032303;
+    overkill.timestamp_us = 5'000'000;
+    TEST_ASSERT(server.process_raw_packet(ipc::serialize_typed_packet(
+        PluginId::CombatMeter, MessageType::CombatOverkill, 1, overkill)));
+    TEST_ASSERT_EQ(received.source_id, 1001u);
+    TEST_ASSERT_EQ(received.target_id, 0x40000001u);
+    TEST_ASSERT_EQ(received.action_id, 24395u);
+    TEST_ASSERT_EQ(received.overkill, 1032303u);
     TEST_ASSERT_EQ(received.timestamp_us, 5'000'000u);
 }
 

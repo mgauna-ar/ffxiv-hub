@@ -393,6 +393,27 @@ as before this was read: the meter believes an unset bit only once one has read 
 A pull with a phase the boss left the arena in whose header shows no *Downtime* is the
 sign.
 
+## 4j. Re-check the effect-result runner
+
+The meter takes overkill off each hit when its effect result applies, through the
+detour `APPLY_EFFECT_RESULT_PRIMARY`/`_FALLBACK` resolve to, as recorded in [How the
+client applies an effect result](../../../plugins/combat_meter/AGENTS.md#how-the-client-applies-an-effect-result).
+The detour takes the runner's first four arguments as subject `Character*`, subject entity
+id, record and sequence, and the meter matches the sequence against
+`ActionEffectHeader::global_sequence`. A patch can move any of that without breaking the
+signature. With `tools/inspect_exe.py` confirm:
+
+- `xrefs` on the runner still lists only the effect-result handlers, and each still stores
+  the result's HP at `CHARACTER_CURRENT_HP` after the call returns, not before.
+- Both call sites still pass the subject in `rcx`, its id in `edx`, the record from the
+  lookup in `r8` and the result's sequence in `r9d`.
+- The queue filler still stores the header's `+0x0C` (`global_sequence`) at the record's
+  `+0x0`, the field the lookup compares.
+
+If an argument moved, update the detour's `FnApplyEffectResult` and its doc together. A
+miss there books every hit whole, as before this was read (the payload log names the
+missing hook); a sequence read from the wrong place matches nothing and does the same.
+
 ## 5. Verify
 
 ```bash

@@ -15,7 +15,7 @@ namespace definitions {
     constexpr std::string_view SUPPORTED_GAME_VERSION = "7.x (Dawntrail)";
 
     /// Total number of detours managed in game hooks
-    constexpr uint32_t TOTAL_AVAILABLE_HOOKS = 3; // ReceiveActionEffect, UseActionLocation, ProcessHotDot
+    constexpr uint32_t TOTAL_AVAILABLE_HOOKS = 4; // ReceiveActionEffect, UseActionLocation, ProcessHotDot, ApplyEffectResult
 
     /// Bounds the wait for in-flight detours to return before MinHook is torn down
     constexpr uint32_t HOOK_DRAIN_TIMEOUT_MS = 2000;
@@ -205,6 +205,16 @@ namespace signatures {
     // and matches twice. The global holds a pointer.
     constexpr std::string_view RENDER_TARGET_MANAGER_INSTANCE =
         "48 8B 05 ? ? ? ? 44 8B 86 ? ? ? ? 41 B9";
+
+    // 11. Effect result: runs one queued effect record on its target when the record's
+    // result arrives, before the handler writes the server's HP. See
+    // plugins/combat_meter/AGENTS.md, "How the client applies an effect result".
+    // Call site in the effect-result handler, followed by its status update:
+    constexpr std::string_view APPLY_EFFECT_RESULT_PRIMARY =
+        "E8 ? ? ? ? 0F B6 53 17 48 8D 8E ? ? ? ? E8";
+    // Function prologue fallback (verified unique):
+    constexpr std::string_view APPLY_EFFECT_RESULT_FALLBACK =
+        "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 48 83 EC 20 49 8B D8 8B F2 0F B6 54 24 58 45 33 C0 41 8B E9 48 8B F9 E8";
 } // namespace signatures
 
 /// Where the RIP-relative operand sits in each signature that resolves a static

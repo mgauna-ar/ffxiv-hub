@@ -238,7 +238,7 @@ bool PipeServer::process_raw_packet(std::span<const uint8_t> data) {
     if (plugin == PluginId::CombatMeter) {
         switch (msg_type) {
             // A payload loaded before this app may send the action without its
-            // credits or its overkill; they read as none.
+            // credits; they read as none.
             case MessageType::CombatAction:     deliver_versioned<CombatActionPayload>(p, COMBAT_ACTION_V1_SIZE, m_on_combat_action); break;
             // A payload loaded before this app may send the shorter tick; its
             // missing overheal reads as 0.
@@ -251,6 +251,7 @@ bool PipeServer::process_raw_packet(std::span<const uint8_t> data) {
             case MessageType::CombatEnemyHp:    deliver<CombatEnemyHpPayload>(p, m_on_enemy_hp); break;
             case MessageType::CombatCast:       deliver<CombatCastPayload>(p, m_on_cast); break;
             case MessageType::CombatTargetability: deliver<CombatTargetabilityPayload>(p, m_on_targetability); break;
+            case MessageType::CombatOverkill:   deliver<CombatOverkillPayload>(p, m_on_overkill); break;
             default: break;
         }
     } else if (plugin == PluginId::LatencyMitigator) {

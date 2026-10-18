@@ -123,21 +123,18 @@ void MetricsAccumulator::record_damage_hit(
     bool source_friendly,
     const CombatantRegistry& registry
 ) {
-    // What went past the enemy's HP counts nowhere; the hit itself, and its size in
-    // the min and max, still count.
-    const uint32_t landed = packet.damage - std::min(packet.overkill, packet.damage);
-    stats.total_damage += landed;
+    stats.total_damage += packet.damage;
     if (is_pet_hit) {
-        stats.pet_damage += landed;
+        stats.pet_damage += packet.damage;
     }
     if (source_friendly) {
-        m_total_damage += landed;
+        m_total_damage += packet.damage;
         if (TimelineBin* bin = timeline_bin(stats.entity_id, packet.timestamp_us, registry)) {
-            add_capped(bin->damage, landed);
+            add_capped(bin->damage, packet.damage);
         }
-        record_credits(stats, landed, packet.credits, packet.timestamp_us, registry);
+        record_credits(stats, packet.damage, packet.credits, packet.timestamp_us, registry);
     } else {
-        m_uncounted_damage[stats.entity_id] += landed;
+        m_uncounted_damage[stats.entity_id] += packet.damage;
     }
 
     const bool rated = (packet.hit_flags & HitFlags::ByTarget) == 0;
@@ -146,7 +143,7 @@ void MetricsAccumulator::record_damage_hit(
     ActionSummary& act = action_entry(stats, packet.action_id);
     act.hit_count++;
     act.damage_hits++;
-    act.total_damage += landed;
+    act.total_damage += packet.damage;
     track_min_max(act.min_damage, act.max_damage, packet.damage, act.damage_hits == 1);
     count_severity(act.hits, severity, rated);
 
@@ -155,7 +152,7 @@ void MetricsAccumulator::record_damage_hit(
     const EntityId target_id = static_cast<EntityId>(packet.target_id);
     if (hub::game::is_real_entity_id(target_id)) {
         CombatantStats& target_stats = get_or_create_stats(target_id, registry);
-        target_stats.damage_taken += landed;
+        target_stats.damage_taken += packet.damage;
         if (packet.damage > 0 && is_friendly_target(target_id, registry)) {
             record_taken(target_id, RecapSample{
                 packet.timestamp_us, static_cast<EntityId>(packet.source_id), packet.action_id,
@@ -164,12 +161,8 @@ void MetricsAccumulator::record_damage_hit(
     }
 }
 
-void MetricsAccumulator::record_action(const ipc::CombatActionPacket& packet, const CombatantRegistry& registry) {
-    const EntityId raw_source_id = static_cast<EntityId>(packet.source_id);
-    if (!hub::game::is_real_entity_id(raw_source_id)) {
-        return;
-    }
-
+MetricsAccumulator::HitOwner MetricsAccumulator::owner_of_hit(EntityId raw_source_id, ActionId action_id,
+                                                              const CombatantRegistry& registry) {
     const EntityId resolved_owner = registry.resolve_owner(raw_source_id);
 
     // The game reports the casting player as the source of a Limit Break, so only the
@@ -177,15 +170,29 @@ void MetricsAccumulator::record_action(const ipc::CombatActionPacket& packet, co
     // pressed the button, and gets its own row instead of inflating that player's
     // personal DPS and share. The action list also carries duty-action and NPC limit
     // breaks, so an enemy casting one stays an enemy hit.
-    const bool is_limit_break = hub::game::is_limit_break_action(packet.action_id)
+    const bool is_limit_break = hub::game::is_limit_break_action(action_id)
         && registry.is_friendly(resolved_owner);
 
-    const EntityId owner_id = is_limit_break
+    HitOwner hit;
+    hit.owner = is_limit_break
         ? static_cast<EntityId>(hub::game::LIMIT_BREAK_COMBATANT_ID)
         : resolved_owner;
-    const bool is_pet_hit = !is_limit_break
-        && ((raw_source_id != owner_id) || registry.is_pet(raw_source_id));
-    const bool source_friendly = is_limit_break || registry.is_friendly(owner_id);
+    hit.pet = !is_limit_break
+        && ((raw_source_id != hit.owner) || registry.is_pet(raw_source_id));
+    hit.friendly = is_limit_break || registry.is_friendly(hit.owner);
+    return hit;
+}
+
+void MetricsAccumulator::record_action(const ipc::CombatActionPacket& packet, const CombatantRegistry& registry) {
+    const EntityId raw_source_id = static_cast<EntityId>(packet.source_id);
+    if (!hub::game::is_real_entity_id(raw_source_id)) {
+        return;
+    }
+
+    const HitOwner hit = owner_of_hit(raw_source_id, packet.action_id, registry);
+    const EntityId owner_id = hit.owner;
+    const bool is_pet_hit = hit.pet;
+    const bool source_friendly = hit.friendly;
 
     CombatantStats& stats = get_or_create_stats(owner_id, registry);
 
@@ -237,6 +244,39 @@ void MetricsAccumulator::record_action(const ipc::CombatActionPacket& packet, co
         act.hit_count++;
         act.hits.total_hits++;
         act.hits.miss_hits++;
+    }
+}
+
+void MetricsAccumulator::record_overkill(const ipc::OverkillPacket& packet, const CombatantRegistry& registry) {
+    const EntityId raw_source_id = static_cast<EntityId>(packet.source_id);
+    if (!hub::game::is_real_entity_id(raw_source_id) || packet.overkill == 0) {
+        return;
+    }
+    const HitOwner hit = owner_of_hit(raw_source_id, packet.action_id, registry);
+    const auto it = m_combatants.find(hit.owner);
+    if (it == m_combatants.end()) {
+        return;
+    }
+    CombatantStats& stats = it->second;
+    const uint64_t amount = std::min<uint64_t>(packet.overkill, stats.total_damage);
+    const auto take = [amount](uint64_t& from) { from -= std::min(from, amount); };
+
+    stats.total_damage -= amount;
+    if (hit.pet) take(stats.pet_damage);
+    if (hit.friendly) {
+        take(m_total_damage);
+        if (TimelineBin* bin = timeline_bin(stats.entity_id, packet.timestamp_us, registry)) {
+            bin->damage -= static_cast<uint32_t>(std::min<uint64_t>(bin->damage, amount));
+        }
+        take_back_credits(stats, packet.credits, packet.timestamp_us, registry);
+    } else if (auto uncounted = m_uncounted_damage.find(stats.entity_id); uncounted != m_uncounted_damage.end()) {
+        take(uncounted->second);
+    }
+    if (auto act = stats.actions.find(packet.action_id); act != stats.actions.end()) {
+        take(act->second.total_damage);
+    }
+    if (auto target = m_combatants.find(static_cast<EntityId>(packet.target_id)); target != m_combatants.end()) {
+        take(target->second.damage_taken);
     }
 }
 
@@ -393,6 +433,43 @@ void MetricsAccumulator::record_credits(
         }
         if (TimelineBin* bin = timeline_bin(giver_id, timestamp_us, registry)) {
             add_capped(bin->buff_given, amount);
+        }
+    }
+}
+
+void MetricsAccumulator::take_back_credits(
+    CombatantStats& receiver, const ipc::CombatBuffCredits& credits, uint64_t timestamp_us,
+    const CombatantRegistry& registry
+) {
+    // The same givers record_credits booked, by the same rules.
+    if (receiver.entity_id == hub::game::LIMIT_BREAK_COMBATANT_ID) {
+        return;
+    }
+    const size_t count = std::min<size_t>(credits.count, ipc::MAX_BUFF_CREDITS);
+    for (size_t i = 0; i < count; ++i) {
+        const ipc::CombatBuffCredit& credit = credits.entries[i];
+        if (credit.amount == 0 || !hub::game::is_real_entity_id(credit.giver_id)) continue;
+        const EntityId giver_id = registry.resolve_owner(credit.giver_id);
+        if (giver_id == receiver.entity_id || giver_id == hub::game::LIMIT_BREAK_COMBATANT_ID) continue;
+        const bool single = credit.single_target != 0;
+        const auto booked = m_buff_credits.find(BuffCreditKey{receiver.entity_id, giver_id, single});
+        if (booked == m_buff_credits.end()) continue;
+        const uint64_t amount = std::min<uint64_t>(credit.amount, booked->second);
+        booked->second -= amount;
+        receiver.buff_received -= std::min(receiver.buff_received, amount);
+        if (single) receiver.buff_received_single -= std::min(receiver.buff_received_single, amount);
+        if (auto giver = m_combatants.find(giver_id); giver != m_combatants.end()) {
+            giver->second.buff_given -= std::min(giver->second.buff_given, amount);
+        }
+        const auto take_bin = [amount](uint32_t& from) {
+            from -= static_cast<uint32_t>(std::min<uint64_t>(from, amount));
+        };
+        if (TimelineBin* bin = timeline_bin(receiver.entity_id, timestamp_us, registry)) {
+            take_bin(bin->buff_received);
+            if (single) take_bin(bin->buff_received_single);
+        }
+        if (TimelineBin* bin = timeline_bin(giver_id, timestamp_us, registry)) {
+            take_bin(bin->buff_given);
         }
     }
 }

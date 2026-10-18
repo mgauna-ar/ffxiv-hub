@@ -56,6 +56,11 @@ public:
     /// Records a periodic status tick (DoT damage or HoT heal).
     void record_status_tick(const ipc::StatusTickPacket& packet, const CombatantRegistry& registry);
 
+    /// Takes the overkill of an earlier hit back off everything that hit booked: its
+    /// row, the raid total, its action, its second of the timeline, the enemy's damage
+    /// taken and the credits named. The hit's count and min and max stay as they were.
+    void record_overkill(const ipc::OverkillPacket& packet, const CombatantRegistry& registry);
+
     /// Records a button press, and for a GCD when it landed. Only a friendly player's
     /// own casts count: a pet acts on its owner's press, which counted already.
     /// Returns whether it was recorded.
@@ -168,10 +173,24 @@ private:
 
     CombatantStats& get_or_create_stats(EntityId entity_id, const CombatantRegistry& registry);
 
+    /// The row a hit is booked on: its source's owner, or the Limit Break's.
+    struct HitOwner {
+        EntityId owner{0};
+        bool pet{false};
+        bool friendly{false};
+    };
+    [[nodiscard]] static HitOwner owner_of_hit(EntityId raw_source_id, ActionId action_id,
+                                               const CombatantRegistry& registry);
+
     /// Books what other players' buffs added to a hit of `hit_damage` that `receiver`
     /// landed at `timestamp_us`. The credits never add up to more than the hit.
     void record_credits(CombatantStats& receiver, uint32_t hit_damage, const ipc::CombatBuffCredits& credits,
                         uint64_t timestamp_us, const CombatantRegistry& registry);
+
+    /// Takes `credits` back off what record_credits booked for `receiver`, never more
+    /// than was booked per giver.
+    void take_back_credits(CombatantStats& receiver, const ipc::CombatBuffCredits& credits,
+                           uint64_t timestamp_us, const CombatantRegistry& registry);
 
     /// Whether `entity` gets a timeline: a party member, the local player, or a pet
     /// not yet merged into its owner.

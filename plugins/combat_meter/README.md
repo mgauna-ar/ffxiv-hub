@@ -179,11 +179,12 @@ party had something to hit. Two things are left out:
   *Downtime* when there was some. HPS, casts per minute and GCD uptime are per second of
   the whole pull: healing through a downtime is real work.
 - **Overkill**: the part of a hit past the HP its enemy had left. A Limit Break thrown at
-  a boss with a sliver of HP counts the sliver, not its whole number. Each hit on an enemy
-  is measured against the enemy's HP as its effect arrives in-game. The game takes a
-  moment to apply a hit's HP, so the damage of earlier hits not applied yet is taken off
-  that HP first. The hit still counts as a hit, and its min and max are the number the game
-  showed. Raid buff credit is worked out on what landed. DoT ticks are booked whole.
+  a boss with a sliver of HP counts the sliver, not its whole number. Each hit is measured
+  against the enemy's HP at the moment the game applies its damage. For a Limit Break 3
+  that can be two seconds after it goes off, so the hits landed in between take their
+  share first. Until then the hit counts whole, so a live number can drop slightly as a
+  kill lands. The hit still counts as a hit, and its min and max are the number the game
+  showed. Raid buff credit comes back in proportion. DoT ticks are booked whole.
 
 Both are worked out in-game, before anything reaches the desktop app, so the overlay and
 the app agree. With *Track deaths, buffs and debuffs* off, no enemy is read, so a pull has

@@ -273,15 +273,11 @@ struct CombatActionPayload {
     uint8_t  pad[3]{0};
     uint64_t timestamp_us{0};
     CombatBuffCredits credits{};  // Worked out in-game, with the attacker's buffs as they stood
-    uint32_t overkill{0};         // Part of a damage hit past the HP its enemy had left
 };
-static_assert(sizeof(CombatActionPayload) == 152, "CombatActionPayload must be 152 bytes");
+static_assert(sizeof(CombatActionPayload) == 148, "CombatActionPayload must be 148 bytes");
 /// What a payload from before `credits` sends. It can still be loaded in the game.
 constexpr size_t COMBAT_ACTION_V1_SIZE = 48;
 static_assert(offsetof(CombatActionPayload, credits) == COMBAT_ACTION_V1_SIZE, "credits must follow the old layout");
-/// What a payload from before `overkill` sends.
-constexpr size_t COMBAT_ACTION_V2_SIZE = 148;
-static_assert(offsetof(CombatActionPayload, overkill) == COMBAT_ACTION_V2_SIZE, "overkill must follow the old layout");
 
 /// 0x0202: Combat Meter Status Tick Packet
 struct CombatStatusTickPayload {
@@ -410,6 +406,18 @@ struct CombatTargetabilityPayload {
 };
 static_assert(sizeof(CombatTargetabilityPayload) == 16, "CombatTargetabilityPayload must be 16 bytes");
 
+/// 0x020C: The part of an earlier CombatAction past the HP its enemy had left, sent
+/// when the hit's effect result applies. It comes off what that hit booked.
+struct CombatOverkillPayload {
+    uint64_t source_id{0};        // The hit's, as its CombatAction carried them
+    uint64_t target_id{0};
+    uint32_t action_id{0};
+    uint32_t overkill{0};
+    uint64_t timestamp_us{0};     // The hit's, so it comes off the second it was booked in
+    CombatBuffCredits credits{};  // The share of the hit's credits the overkill takes back
+};
+static_assert(sizeof(CombatOverkillPayload) == 132, "CombatOverkillPayload must be 132 bytes");
+
 #pragma pack(pop)
 
 // Friendly type aliases for combat meter components
@@ -423,6 +431,7 @@ using LifeEventPacket = CombatLifeEventPayload;
 using EnemyHpPacket = CombatEnemyHpPayload;
 using CastPacket = CombatCastPayload;
 using TargetabilityPacket = CombatTargetabilityPayload;
+using OverkillPacket = CombatOverkillPayload;
 
 /// Serialize any typed payload into a byte vector with PacketHeader
 std::vector<uint8_t> serialize_packet(

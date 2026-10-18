@@ -28,7 +28,7 @@ runs; `sudo sysctl -w vm.mmap_rnd_bits=28` works around it, as CI does.
 
 ## What it is protecting
 
-In-game, three threads reach one engine: the `ReceiveActionEffect`/`ProcessHotDot`
+In-game, three threads reach one engine: the `ReceiveActionEffect`/`ProcessHotDot`/effect-result
 detours on the game's main thread, the payload orchestration thread (`sync_party`,
 `set_zone`, `update`, the vitals pass: status lists, life events, `tracked_enemies`, enemy
 HP, and every command from the app), and the DX11 `Present` thread rendering

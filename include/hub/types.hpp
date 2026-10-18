@@ -39,6 +39,7 @@ enum class MessageType : uint16_t {
     CombatEnemyHp       = 0x0209,
     CombatCast          = 0x020A,
     CombatTargetability = 0x020B,
+    CombatOverkill      = 0x020C,
 
     // Image Quality Messages (0x0300 - 0x03FF)
     ImageQualityState   = 0x0301,
