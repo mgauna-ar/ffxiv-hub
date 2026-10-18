@@ -14,7 +14,8 @@ app, or from its card on the dashboard.
 ## At a glance
 
 - **Honest numbers.** A pull's clock starts on the first hit that lands and stops at the
-  last action, not when the pull closes. HPS counts effective healing only.
+  last action, not when the pull closes. DPS leaves out overkill and the time nothing could
+  be hit. HPS counts effective healing only.
 - **One row per player.** Pets are merged into their owners, and the Limit Break gets its
   own row that is never counted toward anyone's DPS.
 - **Credit for buffs.** rDPS moves the damage a raid buff added to whoever gave it, so a
@@ -164,6 +165,29 @@ rows, such as Dia or Higanbana, and DoT damage earns raid-buff credit like any o
 The total is exact; each player's share is an estimate, since the game does not say which
 DoT crit. Ground effects such as Salted Earth or Asylum tick on their own and are booked as
 they come.
+
+### Downtime and overkill
+
+Every damage rate, DPS and the four beside it, is the damage that landed per second the
+party had something to hit. Two things are left out:
+
+- **Downtime**: time when no enemy the meter follows could be hit. Every one was
+  untargetable or dead, like a boss that leaves the arena between phases. The meter
+  follows the four enemies that took the most damage. It reads whether each can be
+  targeted four times a second, along with its HP, so downtime is measured to a quarter
+  of a second. The pull's duration still includes it, and the header shows it as
+  *Downtime* when there was some. HPS, casts per minute and GCD uptime are per second of
+  the whole pull: healing through a downtime is real work.
+- **Overkill**: the part of a hit past the HP its enemy had left. A Limit Break thrown at
+  a boss with a sliver of HP counts the sliver, not its whole number. Each hit on an enemy
+  is measured against the enemy's HP as its effect arrives in-game. The game takes a
+  moment to apply a hit's HP, so the damage of earlier hits not applied yet is taken off
+  that HP first. The hit still counts as a hit, and its min and max are the number the game
+  showed. Raid buff credit is worked out on what landed. DoT ticks are booked whole.
+
+Both are worked out in-game, before anything reaches the desktop app, so the overlay and
+the app agree. With *Track deaths, buffs and debuffs* off, no enemy is read, so a pull has
+no downtime and its rates run over the whole pull.
 
 ### Limit Break
 
@@ -384,8 +408,8 @@ while the rail has room for them. Hovering a group shows how many pulls it holds
 they ended; hovering a pull shows all of it, with the boss's name. The trash button in the
 history header clears the archive after asking, and numbering starts again at #1. The
 rail is the only place a pull is chosen, and it narrows on a small window. Beside it, a
-header names the selected pull's duty and boss and sums it up: duration, raid DPS and HPS,
-combatants, deaths, the boss's HP and the outcome. Below it:
+header names the selected pull's duty and boss and sums it up: duration, downtime when
+there was some, raid DPS and HPS, combatants, deaths, the boss's HP and the outcome. Below it:
 
 - **Damage** and **Healing**: the selected pull's rankings. Damage has share, crit, direct
   hit and crit-direct-hit rates, job-coloured bars and a Deaths column. The buttons above
@@ -561,8 +585,8 @@ zone changed; the rail shows how much HP the boss had left. See
 
 <br>
 
-Downtime counts against it: time the boss spent untargetable or out of reach, and a Limit
-Break's animation. A GCD pressed late counts only its own recast and a tenth of a second
+Downtime counts against it, unlike DPS: time the boss spent untargetable or out of reach,
+and a Limit Break's animation. A GCD pressed late counts only its own recast and a tenth of a second
 more, so small delays add up. See [Casts and GCD uptime](#casts-and-gcd-uptime).
 
 </details>

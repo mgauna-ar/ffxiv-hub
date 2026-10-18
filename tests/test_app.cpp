@@ -201,6 +201,17 @@ TEST_CASE(PipeServer, CombatPacketsWithoutCreditsFromAnOlderPayload) {
     TEST_ASSERT(server.process_raw_packet(ipc::serialize_typed_packet(
         PluginId::CombatMeter, MessageType::CombatAction, 3, act)));
     TEST_ASSERT_EQ(action_credits, 1u);
+
+    // And one from before the overkill, which arrives with none.
+    uint32_t action_overkill = 0xFFFFFFFF;
+    server.set_combat_action_callback([&](const ipc::CombatActionPayload& received) {
+        action_overkill = received.overkill;
+    });
+    act.overkill = 4000;
+    TEST_ASSERT(server.process_raw_packet(ipc::serialize_packet(
+        PluginId::CombatMeter, MessageType::CombatAction, 4,
+        std::span<const uint8_t>(act_bytes, ipc::COMBAT_ACTION_V2_SIZE))));
+    TEST_ASSERT_EQ(action_overkill, 0u);
 }
 
 TEST_CASE(PipeServer, GameStateFromAnOlderPayload) {
@@ -460,6 +471,20 @@ TEST_CASE(PipeServer, RoutesCasts) {
         PluginId::CombatMeter, MessageType::CombatCast, 1, cast)));
     TEST_ASSERT_EQ(received.source_id, 1001u);
     TEST_ASSERT_EQ(received.action_id, 31u);
+    TEST_ASSERT_EQ(received.timestamp_us, 5'000'000u);
+}
+
+TEST_CASE(PipeServer, RoutesTargetability) {
+    ipc::PipeServer server;
+    ipc::CombatTargetabilityPayload received{};
+    server.set_combat_targetability_callback([&](const ipc::CombatTargetabilityPayload& report) { received = report; });
+
+    ipc::CombatTargetabilityPayload report{};
+    report.targetable = 1;
+    report.timestamp_us = 5'000'000;
+    TEST_ASSERT(server.process_raw_packet(ipc::serialize_typed_packet(
+        PluginId::CombatMeter, MessageType::CombatTargetability, 1, report)));
+    TEST_ASSERT_EQ(received.targetable, 1u);
     TEST_ASSERT_EQ(received.timestamp_us, 5'000'000u);
 }
 

@@ -167,6 +167,22 @@ void CombatPlugin::on_vitals(std::span<const ActorVitals> actors, uint64_t now_u
                     publish(MessageType::CombatStatusList, list);
                 }
             }
+            // Only a pass that read an enemy says anything: one that read none may be a
+            // reader that cannot find objects, and calling that downtime would leave a
+            // pull's damage rates with nothing to divide by.
+            const bool read_an_enemy = std::any_of(actors.begin(), actors.end(),
+                                                   [](const ActorVitals& vitals) { return vitals.is_enemy; });
+            // And only once the bit has read set: a patch that moved it would read
+            // every enemy untargetable, every pull as downtime.
+            const bool targetable = VitalsTracker::any_target(actors);
+            m_targetable_seen = m_targetable_seen || targetable;
+            if (read_an_enemy && m_targetable_seen && m_vitals.targetability_changed(targetable)) {
+                ipc::TargetabilityPacket report{};
+                report.targetable = targetable ? 1 : 0;
+                report.timestamp_us = now_us;
+                m_engine.process_targetability(report);
+                publish(MessageType::CombatTargetability, report);
+            }
         }
         for (const EntityId gone : m_vitals.retain(m_vitals_seen)) {
             ipc::StatusListPacket empty{};
@@ -348,24 +364,34 @@ void CombatPlugin::on_receive_action_effect(
                 && m_hp_resolver(static_cast<uint32_t>(packet.target_id), current_hp, max_hp)) {
                 decoder::apply_overheal(packet, current_hp, max_hp);
             }
-            // Buff credits are worked out here for the same reason: the statuses read
-            // now are the ones the hit was dealt under, and the app has no way to see them.
-            // Only damage that landed earns any, the same test that opens a pull, and only
-            // the caster's own: the statuses read are the caster's, and a reflect is not
-            // a swing its crit or direct hit rate says anything about.
-            if (!by_target && EncounterEngine::starts_encounter(packet)) {
+            // A hit on an enemy is split the same way: the HP read now has not taken
+            // it yet, so whatever went past it is overkill. Buff credits are worked out
+            // here too: the statuses read now are the ones the hit was dealt under, and
+            // the app has no way to see them. Only damage that landed counts, the same
+            // test that opens a pull, and only the party's on an enemy.
+            if (EncounterEngine::starts_encounter(packet)) {
                 m_engine.with_registry([&](CombatantRegistry& registry) {
-                    const EntityId owner = registry.resolve_owner(source_entity_id);
                     const EntityId target = static_cast<EntityId>(packet.target_id);
-                    if (!registry.is_friendly(owner) || !hub::game::is_real_entity_id(target)
-                        || registry.is_friendly(target) || hub::game::is_limit_break_action(packet.action_id)) {
+                    if (!registry.is_friendly(registry.resolve_owner(static_cast<EntityId>(packet.source_id)))
+                        || !hub::game::is_real_entity_id(target) || registry.is_friendly(target)) {
+                        return;
+                    }
+                    // Inside this lock, so the resolver's own lock is no second wait.
+                    if (m_hp_resolver && m_hp_resolver(target, current_hp, max_hp) && max_hp > 0) {
+                        packet.overkill = m_overkill.book(target, packet.damage, current_hp, now_us);
+                    }
+                    // Credits go to the caster's own swings: the statuses read are the
+                    // caster's, and a reflect is not a swing its crit or direct hit rate
+                    // says anything about.
+                    const EntityId owner = registry.resolve_owner(source_entity_id);
+                    if (by_target || !registry.is_friendly(owner) || hub::game::is_limit_break_action(packet.action_id)) {
                         return;
                     }
                     if (target != target_statuses_of) {
                         target_statuses = read_statuses(target, nullptr);
                         target_statuses_of = target;
                     }
-                    packet.credits = attribute(registry, owner, packet.action_id, packet.damage,
+                    packet.credits = attribute(registry, owner, packet.action_id, packet.damage - packet.overkill,
                                                packet.hit_flags, source_snapshot(owner), target_statuses, false);
                 });
             }

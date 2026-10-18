@@ -21,6 +21,7 @@ captured log lines. Preserve them when modifying the registry, accumulator or en
 - **Elapsed Time Is Never Negative**: Every duration the engine derives from a caller's `now` against `m_start_time` goes through `elapsed_since_start_locked`, which clamps at 0. `current_summary`, `current_rankings` and `timeline` take `now` as a default argument, evaluated before `m_mutex` is taken, so the detour thread can start a pull in between; the unclamped difference came out negative, and `static_cast<uint64_t>(dur * 1e6)` on it is undefined (UBSan failed `MeterEngine.ConcurrentProducersAndReaders` on it). Such a `now` reads as no time elapsed: duration 0 and `end_time_us == start_time_us` (`MeterEngine.ReaderNowBeforeThePullStartReadsZero`).
 - **Accurate Overheal Accounting**: HPS is strictly `effective_healing / duration`. Total healing is `effective_healing + overhealing`. Overheal percentage evaluates against total healing without division-by-zero when healing is zero.
 - **Overheal Is Split Before Anything Records It**: The decoder emits a heal as all effective. `CombatPlugin` splits it with `decoder::apply_overheal` against the target's pre-heal HP from its `HpResolver` *before* `process_action` and the ring-buffer push, so the in-game and desktop engines hold identical numbers. A HoT tick is split the same way in `on_status_tick`: `damage_or_heal` stays the full tick and `CombatStatusTickPayload::overheal` carries the part that overhealed. Nothing downstream may re-split. A heal's receiver follows its flags like any entry's (see *An Effect's Dealer And Receiver Come From Its Flags*), so a drain's self-heal is measured against the caster's HP. The client applies an action's HP after its effect, which makes the pre-heal reading hold; a tick's HP comes in a separate packet whose order the server decides. See "How the client reads an effect entry" and "How the client reports DoT and HoT ticks".
+- **Overkill Is Split Before Anything Records It**: The decoder emits a hit whole. `CombatPlugin` sets `CombatActionPayload::overkill` on a damage, blocked or parried hit from the party's side on a non-friendly target *before* the buff credits, `process_action` and the ring-buffer push, so both engines book identical numbers. It reads the target's HP through the `HpResolver` inside the `with_registry` block the credits already take, so the resolver's own lock is a re-entry on the game's main thread, not a second wait. `OverkillLedger` (`meter/overkill.hpp`) takes off that HP the damage of earlier hits the client has not applied yet, takes each drop in the HP read as some of them applying, and forgets them after `kPendingTtlUs`. A DoT tick's HP drop is never booked, so the ledger errs towards less overkill, never more. `MetricsAccumulator::record_damage_hit` books `damage - overkill` in the row, the raid total, the timeline, the enemy's damage taken and the buff credits; the hit count and an action's min and max keep the hit as the game showed it. DoT ticks are never split: their HP comes in a packet the server orders either side. FFLogs leaves overkill out of damage done: on one Savage kill a finishing The End hit for 1,482,092 and was booked as 449,789, with 1,032,303 overkill. FFLogs measures it when the effect result applies, which for that Limit Break came 2.2 s after its effect, once the hits landed in between had taken their share. The ledger measures at the effect, so a hit whose result is slow keeps more than FFLogs gives it and the hits after it lose the difference; the total is close, the split between them is not. See "How the client reads an effect entry".
 - **Party Wipe State Invariance**: A wipe triggers only when all tracked synced party members are confirmed dead (`party_dead == m_party_members.size()`). A surviving player or revive cancels the wipe. *Confirmed dead* is `max_hp > 0 && current_hp == 0`: an unread HP proves nothing, and `register_actor` keeps a real 0 as 0. Solo, the party is the local player alone: with no synced party the check reads `m_local_player_id` and nothing else. Counting every player ever registered let a former party member, a stranger or a pet last read alive block every solo wipe. With no local id the old all-players count stands, pets excluded.
 - **An Unchanged Source Takes No Engine Lock**: Every `ReceiveActionEffect` syncs its source on the game's thread, and the engine's lock is also held by the overlay and the orchestration thread. `ObjectReader::sync_actor` settles an actor already cached as it is under the reader's cache lock alone (`refresh_if_unchanged`), and takes the engine's lock only to register one that is new or changed; the target resolver in `dllmain.cpp` checks `recently_read` before the lock the same way. Every wait on that lock is a wait on the thread that also runs the mitigator, and the calls after it in the frame may carry the player's own response. `PayloadObjectReader.UnchangedSourceSkipsTheEngineLock` holds the lock on another thread to check it.
 - **HP Must Keep Flowing**: Wipe detection is only as live as the HP it reads. `ObjectReader::sync_party` calls `update_hp` on every sync, and publishes each member through `publish_actor`, the dedupe every actor read shares, whose alive/dead bit makes a death or raise republish `CombatActorInfo` to the app. Taking HP out of that path, or out of the dedupe entirely, silently turns every wipe into a combat end. Solo the party list is empty, so `sync_party` reads the local player's own object instead and publishes it through the same dedupe.
@@ -54,6 +55,13 @@ captured log lines. Preserve them when modifying the registry, accumulator or en
 - **A Status Loss Is Dated By Its Timer**: A status missing from a list ended at the earlier of the read and its own expected end, and never before the previous read. Dating every loss at the read added up to one poll interval to each expiring buff.
 - **Enemy Statuses End With The Pull**: An enemy stops being tracked when its pull ends and its list is never read again, so `end_encounter` clears the status list of every actor that is not friendly. Otherwise the next pull's uptime opens with a stale DoT on a dead boss. The next pull can start on the same enemy before a vitals pass runs, so `on_vitals` resends every list whenever `pulls_started()` moves; without that, an unchanged list is never sent again and the new pull misses it.
 - **A Departed Actor Gets One Empty List**: `VitalsTracker::retain` sends a single empty status list for an actor that left the pass (it left the party, or an enemy dropped out of the top four), which closes its statuses on the other side. `invalidate()` resends every list when the app reconnects, for the same reason as `ObjectReader::invalidate_cache()`.
+
+## Downtime Invariants
+
+- **Damage Rates Leave Downtime Out**: `MetricsAccumulator::recalculate` divides DPS, rDPS, aDPS, nDPS, cDPS and raid DPS by `max(duration - downtime, 1)`, and HPS and CPM by the whole duration; GCD uptime keeps the whole pull too. FFLogs divides by the fight less its downtime: one 8:59 kill's DPS came out at 128.73m / 512.7 s, and the meter's, over all 540 s, read about 5% low for every player. Downtime is the stretches in which no tracked enemy could be hit, kept by `DowntimeTracker` from `CombatTargetability` reports and clipped to the pull's clock, so a kill stopped at its last hit leaves out the dead boss's untargetable tail. `EncounterSummary::downtime_seconds` carries it to the views. A report never starts a pull and is not activity.
+- **Only A Pass That Read An Enemy Reports**: `CombatPlugin::on_vitals` reports whether any enemy it read is alive and targetable (`VitalsTracker::any_target`), and only from a pass that read at least one enemy. A reader that finds no objects would otherwise turn a whole pull into downtime and divide its damage by one second, so a tracked enemy the pass could not find counts for nothing and the last report stands. For the same reason nothing is reported until some enemy has read targetable once in the session (`m_targetable_seen`): every pull opens on an enemy that could be hit, so a bit that never reads set is a moved offset, not a fight that was all downtime. Reports go out on a change only (`targetability_changed`), and again after `invalidate()`, on a reconnect or a new pull. With `track_vitals` off nothing is read and nothing reported.
+- **A Report Ahead Of Its Pull's First Hit Still Counts**: Reports travel on the orchestration lane and hits on the main-thread lane, so the app can get a report stamped inside a pull before the hit that opens it, and the payload sends the next one only on a change. `process_targetability` keeps the last report that arrives between pulls and applies it when the next pull starts. `DowntimeTracker` drops a report stamped before its pull's start: it describes the pull before.
+- **Targetable Is The Server's Bit Alone**: The payload reads `game::OBJECT_TARGETABLE` of the byte at `CHARACTER_TARGETABLE_STATUS`, never the client's `GetIsTargetable`, which also asks whether the model is drawn. A dead enemy can keep the bit, so `any_target` also needs HP above 0. See "How the client marks a target untargetable".
 
 ## Boss And Pull Outcome Invariants
 
@@ -217,7 +225,37 @@ Addresses are for that build only; re-check after a patch.
 - **HP moves when the effect result arrives.** The effect-result handlers (HP stores at
   `0x140b38ffb` and `0x140b39397`) find the queued record by sequence and target
   (`0x140901dc0`), run it (`0x140902150`), and only then write the target's HP. The HP
-  read when `ReceiveActionEffect` fires is the pre-heal value the overheal split needs.
+  read when `ReceiveActionEffect` fires is the pre-heal value the overheal split needs,
+  and the pre-hit value the overkill split needs. Records queued earlier and not run yet
+  have not moved it either, which is what `OverkillLedger` allows for.
+
+## How the client marks a target untargetable
+
+Read from `ffxiv_dx11.exe` on 2026-10-18 with `tools/inspect_exe.py`. Addresses are for
+that build only; re-check after a patch.
+
+- **The server's toggle is ActorControl category 54 (`0x36`).** Its case in the
+  ActorControl handler (`0x140b3c1f8`, case 54 of the jump table `0x140b47be4`) sets bit 0
+  of `GameObject+0x9A` to `param1 != 0` and calls `0x140898f90` with the same bool. Its
+  second path (`0x140b3c22d`) finds the object by id through `GetObjectByEntityId` and
+  does the same.
+- **`0x140898f90` is the targetable setter.** It writes the bool into bit 1 (`0x02`) of
+  `+0x9A`, only when it changes. It has 106 call sites besides, spawn handlers and duty
+  and cutscene logic among them.
+- **The client's own check reads the same bit.** The Character override in vtable slot 4
+  (`0x140906f70`, read from the BattleChara vtable `0x1421a5ae8`) adds model and draw
+  checks, then tail-calls `GameObject`'s (`0x140898fe0`), which needs `0x02` and `0x08` of
+  `+0x9A` and no draw flag at `+0x118` but `0x8`, `0x800` and `0x1000`. The meter reads
+  `0x02` alone, the server's word on whether the party may hit it, drawn or not.
+
+What the client cannot say, and live play has to:
+
+- What FFLogs builds its downtime from. ACT logs a nameplate toggle as line 34
+  (NetworkNameToggle, cactbot's `docs/LogGuide.md`); that it is this category fits the
+  case setting the nameplate and targetable bits together, but nothing in the client ties
+  the two.
+- Whether a boss ever keeps the bit through a phase it cannot be hit in. A pull whose
+  *Downtime* reads 0 across one would mean it does.
 
 ## How the client reports DoT and HoT ticks
 

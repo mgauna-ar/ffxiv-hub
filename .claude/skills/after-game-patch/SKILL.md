@@ -363,6 +363,25 @@ If they moved, update `CHARACTER_CURRENT_WORLD` and `CHARACTER_HOME_WORLD` in
 `include/hub/game_definitions.hpp` and that section together. A wrong offset leaves the
 ping N/A behind a gaming VPN, or pings the wrong data center.
 
+## 4i. Re-check the targetable bit
+
+The meter's downtime reads `game::OBJECT_TARGETABLE` of the byte at
+`CHARACTER_TARGETABLE_STATUS`, as recorded in [How the client marks a target
+untargetable](../../../plugins/combat_meter/AGENTS.md#how-the-client-marks-a-target-untargetable).
+No signature covers it. With `tools/inspect_exe.py` confirm:
+
+- `jumptable` on the ActorControl handler's table still sends category 54 to a case that
+  writes `param1 != 0` into the byte and calls the targetable setter.
+- The setter still writes its bool into bit `0x02` of the same byte, and `GameObject`'s
+  targetable check, reached from slot 4 of the BattleChara vtable, still tests it.
+
+If either moved, update `CHARACTER_TARGETABLE_STATUS` or `OBJECT_TARGETABLE` and the
+`CharacterObject` padding together. A wrong offset reads every enemy as untargetable or
+always targetable. Either way no downtime is taken out and DPS runs over the whole pull,
+as before this was read: the meter believes an unset bit only once one has read set.
+A pull with a phase the boss left the arena in whose header shows no *Downtime* is the
+sign.
+
 ## 5. Verify
 
 ```bash

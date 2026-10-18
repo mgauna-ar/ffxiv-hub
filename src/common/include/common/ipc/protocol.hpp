@@ -273,11 +273,15 @@ struct CombatActionPayload {
     uint8_t  pad[3]{0};
     uint64_t timestamp_us{0};
     CombatBuffCredits credits{};  // Worked out in-game, with the attacker's buffs as they stood
+    uint32_t overkill{0};         // Part of a damage hit past the HP its enemy had left
 };
-static_assert(sizeof(CombatActionPayload) == 148, "CombatActionPayload must be 148 bytes");
+static_assert(sizeof(CombatActionPayload) == 152, "CombatActionPayload must be 152 bytes");
 /// What a payload from before `credits` sends. It can still be loaded in the game.
 constexpr size_t COMBAT_ACTION_V1_SIZE = 48;
 static_assert(offsetof(CombatActionPayload, credits) == COMBAT_ACTION_V1_SIZE, "credits must follow the old layout");
+/// What a payload from before `overkill` sends.
+constexpr size_t COMBAT_ACTION_V2_SIZE = 148;
+static_assert(offsetof(CombatActionPayload, overkill) == COMBAT_ACTION_V2_SIZE, "overkill must follow the old layout");
 
 /// 0x0202: Combat Meter Status Tick Packet
 struct CombatStatusTickPayload {
@@ -397,6 +401,15 @@ struct CombatCastPayload {
 };
 static_assert(sizeof(CombatCastPayload) == 16, "CombatCastPayload must be 16 bytes");
 
+/// 0x020B: Whether any enemy the vitals pass tracks could be hit, sent when that
+/// changes. A pull's damage rates leave out the time none could.
+struct CombatTargetabilityPayload {
+    uint8_t  targetable{0};
+    uint8_t  pad[7]{0};
+    uint64_t timestamp_us{0};
+};
+static_assert(sizeof(CombatTargetabilityPayload) == 16, "CombatTargetabilityPayload must be 16 bytes");
+
 #pragma pack(pop)
 
 // Friendly type aliases for combat meter components
@@ -409,6 +422,7 @@ using StatusListPacket = CombatStatusListPayload;
 using LifeEventPacket = CombatLifeEventPayload;
 using EnemyHpPacket = CombatEnemyHpPayload;
 using CastPacket = CombatCastPayload;
+using TargetabilityPacket = CombatTargetabilityPayload;
 
 /// Serialize any typed payload into a byte vector with PacketHeader
 std::vector<uint8_t> serialize_packet(

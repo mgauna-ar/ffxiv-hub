@@ -4,6 +4,7 @@
 #include "hub/plugin_registry.hpp"
 #include "meter/buff_attribution.hpp"
 #include "meter/encounter_engine.hpp"
+#include "meter/overkill.hpp"
 #include "meter/tick_split.hpp"
 #include "meter/vitals.hpp"
 #include "common/ipc/ring_buffer.hpp"
@@ -68,9 +69,10 @@ public:
     void set_connected(bool connected) noexcept;
 
     /// One vitals pass, from the payload's orchestration thread: each actor's death
-    /// or raise first, then an enemy's HP and the status list if they changed, all
-    /// applied locally and published. With track_vitals off nothing is read, and
-    /// every list published so far is cleared once.
+    /// or raise first, then an enemy's HP and the status list if they changed, then
+    /// whether any enemy read can be hit if that changed, all applied locally and
+    /// published. With track_vitals off nothing is read, and every list published so
+    /// far is cleared once.
     void on_vitals(std::span<const ActorVitals> actors, uint64_t now_us);
 
     /// Whether the payload should read vitals at all this pass.
@@ -109,8 +111,9 @@ public:
     }
 
     /// Reads an actor's current and max HP from the game's object table, so each
-    /// heal can be split into effective healing and overheal before either engine
-    /// sees it. Returns false when the actor cannot be read.
+    /// heal can be split into effective healing and overheal, and each hit on an
+    /// enemy into what landed and its overkill, before either engine sees it.
+    /// Returns false when the actor cannot be read.
     using HpResolver = std::function<bool(uint32_t entity_id, uint32_t& current_hp, uint32_t& max_hp)>;
     void set_hp_resolver(HpResolver resolver) { m_hp_resolver = std::move(resolver); }
 
@@ -200,6 +203,7 @@ private:
     RateEstimator m_rates;
     BuffStrengths m_strengths;
     TickSplitter m_ticks;
+    OverkillLedger m_overkill;
     std::unordered_map<DotKey, DotSnapshot, DotKeyHash> m_dot_snapshots;
     CombatOverlay* m_overlay{nullptr};
     GameStateProvider* m_game_state{nullptr};
@@ -211,6 +215,8 @@ private:
     std::atomic<uint32_t> m_dps_metric{0};
     // Orchestration thread only, under the engine lock.
     VitalsTracker m_vitals;
+    /// An enemy has read targetable this session, so the bit is where it is expected.
+    bool m_targetable_seen{false};
     std::vector<EntityId> m_vitals_seen;
     uint32_t m_vitals_sequence{0};
     uint64_t m_vitals_pulls_seen{0};

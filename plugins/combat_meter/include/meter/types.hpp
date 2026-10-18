@@ -489,6 +489,9 @@ struct EncounterSummary {
     /// Wall-clock end, for display. start/end_time_us are steady_clock based.
     uint64_t ended_at_unix_s{0};
     double duration_seconds{0.0};
+    /// Seconds of the duration no tracked enemy could be hit. Damage rates leave
+    /// them out; healing rates do not.
+    double downtime_seconds{0.0};
     uint64_t total_damage{0};
     uint64_t total_healing{0};
     uint64_t total_effective_healing{0};

@@ -355,6 +355,10 @@ void render_top_bar(CombatViewState& state, AppState& app_state, const meter::En
     };
 
     stat("DURATION", format_duration(static_cast<uint64_t>(summary.duration_seconds)), colors::TextPrimary);
+    // Damage rates are per second the party had something to hit.
+    if (summary.downtime_seconds >= 1.0) {
+        stat("DOWNTIME", format_duration(static_cast<uint64_t>(summary.downtime_seconds)), colors::TextPrimary);
+    }
     stat("RAID DPS", format_dps(summary.total_dps), colors::AccentHover);
     stat("RAID HPS", format_dps(summary.total_hps), colors::SuccessLight);
     stat("COMBATANTS", std::to_string(summary.combatants.size()), colors::TextPrimary);

@@ -61,9 +61,12 @@ public:
     /// Returns whether it was recorded.
     bool record_cast(const ipc::CastPacket& packet, const CombatantRegistry& registry);
 
-    /// Recalculates DPS, HPS, and damage share percentages based on elapsed active seconds.
+    /// Recalculates DPS, HPS, and damage share percentages based on elapsed seconds.
+    /// Damage rates leave `downtime_seconds` out, the time nothing could be hit;
+    /// healing and casts are per second of the whole pull.
     /// If registry is provided, automatically consolidates pet stats into owners.
-    void recalculate(double duration_seconds, const CombatantRegistry* registry = nullptr);
+    void recalculate(double duration_seconds, const CombatantRegistry* registry = nullptr,
+                     double downtime_seconds = 0.0);
 
     /// Works out each player's GCD estimate and uptime over the pull so far. It walks
     /// every GCD cast of the pull, so unlike recalculate() it is not for the tick.

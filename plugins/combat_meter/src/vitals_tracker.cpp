@@ -65,6 +65,21 @@ bool VitalsTracker::enemy_hp_changed(const ipc::EnemyHpPacket& hp) {
     return true;
 }
 
+bool VitalsTracker::targetability_changed(bool targetable) {
+    if (m_targetable_sent == targetable) {
+        return false;
+    }
+    m_targetable_sent = targetable;
+    return true;
+}
+
+bool VitalsTracker::any_target(std::span<const ActorVitals> actors) {
+    // A dead enemy can still read targetable while it lies there.
+    return std::any_of(actors.begin(), actors.end(), [](const ActorVitals& vitals) {
+        return vitals.is_enemy && vitals.targetable && vitals.hp > 0;
+    });
+}
+
 std::vector<EntityId> VitalsTracker::retain(std::span<const EntityId> seen) {
     std::vector<EntityId> cleared;
     for (auto it = m_actors.begin(); it != m_actors.end();) {
@@ -86,6 +101,7 @@ void VitalsTracker::invalidate() {
         tracked.list_sent = false;
         tracked.hp_sent = false;
     }
+    m_targetable_sent.reset();
 }
 
 } // namespace hub::meter

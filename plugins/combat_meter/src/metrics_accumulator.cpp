@@ -123,18 +123,21 @@ void MetricsAccumulator::record_damage_hit(
     bool source_friendly,
     const CombatantRegistry& registry
 ) {
-    stats.total_damage += packet.damage;
+    // What went past the enemy's HP counts nowhere; the hit itself, and its size in
+    // the min and max, still count.
+    const uint32_t landed = packet.damage - std::min(packet.overkill, packet.damage);
+    stats.total_damage += landed;
     if (is_pet_hit) {
-        stats.pet_damage += packet.damage;
+        stats.pet_damage += landed;
     }
     if (source_friendly) {
-        m_total_damage += packet.damage;
+        m_total_damage += landed;
         if (TimelineBin* bin = timeline_bin(stats.entity_id, packet.timestamp_us, registry)) {
-            add_capped(bin->damage, packet.damage);
+            add_capped(bin->damage, landed);
         }
-        record_credits(stats, packet.damage, packet.credits, packet.timestamp_us, registry);
+        record_credits(stats, landed, packet.credits, packet.timestamp_us, registry);
     } else {
-        m_uncounted_damage[stats.entity_id] += packet.damage;
+        m_uncounted_damage[stats.entity_id] += landed;
     }
 
     const bool rated = (packet.hit_flags & HitFlags::ByTarget) == 0;
@@ -143,7 +146,7 @@ void MetricsAccumulator::record_damage_hit(
     ActionSummary& act = action_entry(stats, packet.action_id);
     act.hit_count++;
     act.damage_hits++;
-    act.total_damage += packet.damage;
+    act.total_damage += landed;
     track_min_max(act.min_damage, act.max_damage, packet.damage, act.damage_hits == 1);
     count_severity(act.hits, severity, rated);
 
@@ -152,7 +155,7 @@ void MetricsAccumulator::record_damage_hit(
     const EntityId target_id = static_cast<EntityId>(packet.target_id);
     if (hub::game::is_real_entity_id(target_id)) {
         CombatantStats& target_stats = get_or_create_stats(target_id, registry);
-        target_stats.damage_taken += packet.damage;
+        target_stats.damage_taken += landed;
         if (packet.damage > 0 && is_friendly_target(target_id, registry)) {
             record_taken(target_id, RecapSample{
                 packet.timestamp_us, static_cast<EntityId>(packet.source_id), packet.action_id,
@@ -642,7 +645,8 @@ void MetricsAccumulator::merge_combatants(EntityId from_id, EntityId to_id, cons
     }
 }
 
-void MetricsAccumulator::recalculate(double duration_seconds, const CombatantRegistry* registry) {
+void MetricsAccumulator::recalculate(double duration_seconds, const CombatantRegistry* registry,
+                                     double downtime_seconds) {
     if (registry != nullptr) {
         // Refresh combatant metadata (names, jobs, roles, party status) from registry if updated
         for (auto& [id, stats] : m_combatants) {
@@ -676,8 +680,10 @@ void MetricsAccumulator::recalculate(double duration_seconds, const CombatantReg
     }
 
     const double safe_duration = std::max(duration_seconds, 1.0);
+    // Damage is per second something could be hit.
+    const double active_duration = std::max(duration_seconds - std::max(downtime_seconds, 0.0), 1.0);
 
-    m_total_dps = static_cast<double>(m_total_damage) / safe_duration;
+    m_total_dps = static_cast<double>(m_total_damage) / active_duration;
     m_total_hps = static_cast<double>(m_total_effective_healing) / safe_duration;
 
     for (auto& [id, stats] : m_combatants) {
@@ -686,7 +692,7 @@ void MetricsAccumulator::recalculate(double duration_seconds, const CombatantReg
         const double received_single = static_cast<double>(stats.buff_received_single);
         const double given = static_cast<double>(stats.buff_given);
         const auto rate = [&](DpsMetric metric) {
-            return metric_damage(metric, damage, received, received_single, given) / safe_duration;
+            return metric_damage(metric, damage, received, received_single, given) / active_duration;
         };
         stats.dps = rate(DpsMetric::Dps);
         stats.rdps = rate(DpsMetric::Rdps);
