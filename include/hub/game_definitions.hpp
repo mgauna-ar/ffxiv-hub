@@ -15,7 +15,7 @@ namespace definitions {
     constexpr std::string_view SUPPORTED_GAME_VERSION = "7.x (Dawntrail)";
 
     /// Total number of detours managed in game hooks
-    constexpr uint32_t TOTAL_AVAILABLE_HOOKS = 3; // ReceiveActionEffect, UseActionLocation, ProcessHotDot
+    constexpr uint32_t TOTAL_AVAILABLE_HOOKS = 4; // ReceiveActionEffect, UseActionLocation, ProcessHotDot, ApplyEffectResult
 
     /// Bounds the wait for in-flight detours to return before MinHook is torn down
     constexpr uint32_t HOOK_DRAIN_TIMEOUT_MS = 2000;
@@ -79,6 +79,7 @@ namespace offsets {
     constexpr size_t CHARACTER_ENTITY_ID = 0x78;
     constexpr size_t CHARACTER_OWNER_ID = 0x88;
     constexpr size_t CHARACTER_OBJECT_KIND = 0x90;
+    constexpr size_t CHARACTER_TARGETABLE_STATUS = 0x9A;  // OBJECT_TARGETABLE: the server's targetable toggle
     constexpr size_t CHARACTER_CURRENT_HP = 0x1AC;
     constexpr size_t CHARACTER_MAX_HP = 0x1B0;
     constexpr size_t CHARACTER_CURRENT_MP = 0x1B4;
@@ -204,6 +205,16 @@ namespace signatures {
     // and matches twice. The global holds a pointer.
     constexpr std::string_view RENDER_TARGET_MANAGER_INSTANCE =
         "48 8B 05 ? ? ? ? 44 8B 86 ? ? ? ? 41 B9";
+
+    // 11. Effect result: runs one queued effect record on its target when the record's
+    // result arrives, before the handler writes the server's HP. See
+    // plugins/combat_meter/AGENTS.md, "How the client applies an effect result".
+    // Call site in the effect-result handler, followed by its status update:
+    constexpr std::string_view APPLY_EFFECT_RESULT_PRIMARY =
+        "E8 ? ? ? ? 0F B6 53 17 48 8D 8E ? ? ? ? E8";
+    // Function prologue fallback (verified unique):
+    constexpr std::string_view APPLY_EFFECT_RESULT_FALLBACK =
+        "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 48 83 EC 20 49 8B D8 8B F2 0F B6 54 24 58 45 33 C0 41 8B E9 48 8B F9 E8";
 } // namespace signatures
 
 /// Where the RIP-relative operand sits in each signature that resolves a static
@@ -277,6 +288,11 @@ enum class ObjectKind : uint8_t {
     return kind == ObjectKind::Player || kind == ObjectKind::BattleNpc;
 }
 
+/// The bit of the byte at offsets::CHARACTER_TARGETABLE_STATUS the server's
+/// targetable toggle sets: see plugins/combat_meter/AGENTS.md, "How the client marks
+/// a target untargetable".
+constexpr uint8_t OBJECT_TARGETABLE = 0x02;
+
 #pragma pack(push, 1)
 
 /// 3D floating point coordinate struct
@@ -329,7 +345,9 @@ struct CharacterObject {
     uint16_t object_index{0};                // 0x8C - 0x8E: Object index in table
     uint8_t pad_8e[0x02]{0};                 // 0x8E - 0x90
     ObjectKind object_kind{ObjectKind::None}; // 0x90 - 0x91: see ObjectKind
-    uint8_t pad_91[0x11B]{0};                // 0x91 - 0x1AC
+    uint8_t pad_91[0x09]{0};                 // 0x91 - 0x9A
+    uint8_t targetable_status{0};            // 0x9A: OBJECT_TARGETABLE and draw flags
+    uint8_t pad_9b[0x111]{0};                // 0x9B - 0x1AC
     uint32_t current_hp{0};                  // 0x1AC - 0x1B0: Current health points
     uint32_t max_hp{0};                      // 0x1B0 - 0x1B4: Maximum health points
     uint32_t current_mp{0};                  // 0x1B4 - 0x1B8: Current mana points
@@ -342,6 +360,7 @@ static_assert(offsetof(CharacterObject, name) == offsets::CHARACTER_NAME, "Chara
 static_assert(offsetof(CharacterObject, entity_id) == offsets::CHARACTER_ENTITY_ID, "CharacterObject::entity_id offset mismatch");
 static_assert(offsetof(CharacterObject, owner_id) == offsets::CHARACTER_OWNER_ID, "CharacterObject::owner_id offset mismatch");
 static_assert(offsetof(CharacterObject, object_kind) == offsets::CHARACTER_OBJECT_KIND, "CharacterObject::object_kind offset mismatch");
+static_assert(offsetof(CharacterObject, targetable_status) == offsets::CHARACTER_TARGETABLE_STATUS, "CharacterObject::targetable_status offset mismatch");
 static_assert(offsetof(CharacterObject, current_hp) == offsets::CHARACTER_CURRENT_HP, "CharacterObject::current_hp offset mismatch");
 static_assert(offsetof(CharacterObject, max_hp) == offsets::CHARACTER_MAX_HP, "CharacterObject::max_hp offset mismatch");
 static_assert(offsetof(CharacterObject, current_mp) == offsets::CHARACTER_CURRENT_MP, "CharacterObject::current_mp offset mismatch");

@@ -24,8 +24,8 @@ struct TickStatus {
 /// that tick is split across. Ground effects (Asylum, Sacred Soil, Salted Earth, Doton,
 /// Slipstream) tick on packets of their own and are left out.
 /// Hand-maintained: the Status sheet names these but carries no potency, which comes
-/// from each action's description (ActionTransient) evaluated at level 100. Re-check
-/// after a patch.
+/// from each action's description (ActionTransient) rendered at level 100 with
+/// tools/xivdata's sestring.render. Re-check after a patch.
 inline constexpr std::array<TickStatus, 52> TICK_STATUSES{{
     {  118, TickKind::Damage,  40 }, // Chaos Thrust
     {  124, TickKind::Damage,  15 }, // Venomous Bite

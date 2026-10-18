@@ -7,6 +7,7 @@
 #include "meter/status_uptime.hpp"
 #include "meter/death_log.hpp"
 #include "meter/boss_tracker.hpp"
+#include "meter/downtime.hpp"
 #include "meter/timeline.hpp"
 #include <algorithm>
 #include <chrono>
@@ -81,6 +82,17 @@ public:
     /// A button press. Never starts a pull: one stamped before the pull began is
     /// dropped. In a pull, a friendly player's cast is activity, like a heal.
     void process_cast(const ipc::CastPacket& packet, TimePoint now = std::chrono::steady_clock::now());
+
+    /// Whether any tracked enemy could be hit, sent when that changes. The time none
+    /// could is downtime, which the pull's damage rates leave out. Never starts a pull
+    /// and is not activity. One that arrives before the hit that opened its pull,
+    /// on the other lane, still counts.
+    void process_targetability(const ipc::TargetabilityPacket& packet);
+
+    /// The overkill of a hit the live pull booked, taken back off it now that its
+    /// effect result applied. Never starts a pull and is not activity. One for a hit
+    /// stamped before the pull, or arriving after it was archived, is dropped.
+    void process_overkill(const ipc::OverkillPacket& packet);
 
     /// Death recap for `entity` from what the live pull saw land on it.
     [[nodiscard]] ipc::LifeEventPacket build_life_event(EntityId entity, LifeEventKind kind, uint64_t timestamp_us) const;
@@ -266,6 +278,10 @@ private:
                                                        EncounterEndReason reason, BossSummary boss,
                                                        bool with_actions) const;
     void add_detail_rows_locked(EncounterSummary& summary, uint64_t end_us) const;
+    /// Downtime in the live pull's first `duration_seconds`.
+    [[nodiscard]] double downtime_locked(double duration_seconds) const;
+    /// m_accumulator.recalculate over the live pull's first `duration_seconds`.
+    void recalculate_locked(double duration_seconds);
 
     struct ArchivedPull {
         EncounterSummary summary;
@@ -311,6 +327,11 @@ private:
     StatusUptime m_uptime;
     DeathLog m_death_log;
     BossTracker m_bosses;
+    DowntimeTracker m_downtime;
+    /// The last report that came in between pulls. The payload sends one only on a
+    /// change, so a report stamped after a pull's start that beat its first hit here
+    /// must not be lost.
+    std::optional<ipc::TargetabilityPacket> m_early_targetability;
     /// The live pull data still describes the latest archived pull.
     bool m_live_holds_latest_pull{false};
     std::vector<StatusChange> m_status_changes;

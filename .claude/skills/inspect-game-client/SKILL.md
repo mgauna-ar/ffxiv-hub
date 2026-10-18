@@ -22,7 +22,8 @@ combat meter treating party slot 0 as the local player. The install is at `~/ffx
 | Who reads/writes this global or struct? | `python3 tools/inspect_exe.py xrefs 0x142aa0400 --span 0x20` |
 | Who writes this struct offset? | `python3 tools/inspect_exe.py field 0x7fdc --writes` (drop `--writes` for reads). Stack slots (`[rsp + off]`) are left out. An offset below `0x80` is a one-byte displacement, so it is found by disassembling all of `.text` once, about ten seconds |
 | Which case of a switch reaches which handler? | `python3 tools/inspect_exe.py jumptable 0x1409010a8 77 --index 0x140901134 --first 1`: the dword table of targets, the case count, the byte table folding shared cases when there is one, and the value the switch subtracted |
-| Game sheet data | `tools/xivdata`: `Sheet(SqPack(game_dir + "/sqpack/ffxiv"), "TerritoryType").rows()`. String cells come back with SeString macros stripped, except Hyphen (`0x1F`) as `-` |
+| Game sheet data | `tools/xivdata`: `Sheet(SqPack(game_dir + "/sqpack/ffxiv"), "TerritoryType").rows()`. A string cell comes back as its literal text (`sestring.decode`): macros dropped whole, Hyphen (`0x1F`) as `-`, NewLine as a line break |
+| Text that depends on job or level | `sestring.render(row.raw(col), {sestring.CLASS_JOB: 33, sestring.LEVEL: 100})` takes each `If` macro's branch for those player parameters, such as a trait's potency ("Potency: 70" for Combust III at 100, 65 below 94). A condition on a parameter not given raises `KeyError`; gathering text branches on 69 and field content on 108 and 110-112 |
 
 Functions come from `.pdata`. MSVC splits a large function into several entries, each
 after the first chained to its parent through its unwind info; `pe.py` joins a parent and

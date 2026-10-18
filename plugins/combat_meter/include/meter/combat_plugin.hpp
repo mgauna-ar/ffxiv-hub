@@ -54,6 +54,10 @@ public:
         bool is_heal
     ) override;
 
+    /// The party's hits of effect `sequence` on `target_entity_id` land now, on
+    /// `target_hp`: whatever went past it is overkill, taken back off each hit.
+    void on_effect_result(uint32_t target_entity_id, uint32_t sequence, uint32_t target_hp) override;
+
     [[nodiscard]] EncounterEngine& engine() noexcept { return m_engine; }
     [[nodiscard]] const EncounterEngine& engine() const noexcept { return m_engine; }
 
@@ -68,9 +72,10 @@ public:
     void set_connected(bool connected) noexcept;
 
     /// One vitals pass, from the payload's orchestration thread: each actor's death
-    /// or raise first, then an enemy's HP and the status list if they changed, all
-    /// applied locally and published. With track_vitals off nothing is read, and
-    /// every list published so far is cleared once.
+    /// or raise first, then an enemy's HP and the status list if they changed, then
+    /// whether any enemy read can be hit if that changed, all applied locally and
+    /// published. With track_vitals off nothing is read, and every list published so
+    /// far is cleared once.
     void on_vitals(std::span<const ActorVitals> actors, uint64_t now_us);
 
     /// Whether the payload should read vitals at all this pass.
@@ -183,6 +188,31 @@ private:
     static constexpr size_t kMaxDotSnapshots = 256;
     static constexpr uint64_t kDotSnapshotTtlUs = 120'000'000;
 
+    /// A party hit on an enemy whose effect result has not applied yet. Keyed by the
+    /// effect's global sequence and the enemy, the record the client queued for it.
+    struct ResultKey {
+        uint32_t sequence{0};
+        uint32_t target{0};
+        bool operator==(const ResultKey&) const = default;
+    };
+    struct ResultKeyHash {
+        size_t operator()(const ResultKey& key) const noexcept {
+            return std::hash<uint64_t>{}((static_cast<uint64_t>(key.sequence) << 32) | key.target);
+        }
+    };
+    struct AwaitingHit {
+        uint32_t source{0};
+        uint32_t action{0};
+        uint32_t damage{0};
+        uint64_t timestamp_us{0};
+        ipc::CombatBuffCredits credits{};
+    };
+    void await_result(const ResultKey& key, const AwaitingHit& hit, uint64_t now_us);
+    /// Past any wait for a result (a Limit Break 3 takes about 2.2 s); a hit older
+    /// than this when the map fills had its target leave first, and stays whole.
+    static constexpr uint64_t kAwaitResultTtlUs = 10'000'000;
+    static constexpr size_t kMaxAwaitingResults = 512;
+
     EncounterEngine m_engine;
     CombatConfig m_config;
     bool m_initialized{false};
@@ -201,6 +231,8 @@ private:
     BuffStrengths m_strengths;
     TickSplitter m_ticks;
     std::unordered_map<DotKey, DotSnapshot, DotKeyHash> m_dot_snapshots;
+    // Game main thread only, where an effect and its result both arrive; no lock.
+    std::unordered_map<ResultKey, std::vector<AwaitingHit>, ResultKeyHash> m_awaiting_results;
     CombatOverlay* m_overlay{nullptr};
     GameStateProvider* m_game_state{nullptr};
     uint32_t m_sequence{0};
@@ -211,6 +243,8 @@ private:
     std::atomic<uint32_t> m_dps_metric{0};
     // Orchestration thread only, under the engine lock.
     VitalsTracker m_vitals;
+    /// An enemy has read targetable this session, so the bit is where it is expected.
+    bool m_targetable_seen{false};
     std::vector<EntityId> m_vitals_seen;
     uint32_t m_vitals_sequence{0};
     uint64_t m_vitals_pulls_seen{0};

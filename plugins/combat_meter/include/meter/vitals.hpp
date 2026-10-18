@@ -20,6 +20,8 @@ struct ActorVitals {
     bool track_life{false};
     /// A tracked enemy: only statuses from friendly sources are kept.
     bool is_enemy{false};
+    /// An enemy the server has marked targetable (game::OBJECT_TARGETABLE).
+    bool targetable{false};
     /// False when the status list could not be read this pass; the last one stands.
     bool statuses_read{false};
     /// False for the party list's copy, which carries no timers or sources.
@@ -47,6 +49,10 @@ public:
     /// records it as sent.
     [[nodiscard]] bool enemy_hp_changed(const ipc::EnemyHpPacket& hp);
 
+    /// True when whether any tracked enemy can be hit differs from what was last
+    /// sent. A true result records it as sent.
+    [[nodiscard]] bool targetability_changed(bool targetable);
+
     /// Forgets every actor not in `seen`. Returns those that still had statuses
     /// published, each needing one empty list so the listener clears them.
     [[nodiscard]] std::vector<EntityId> retain(std::span<const EntityId> seen);
@@ -55,6 +61,10 @@ public:
     void invalidate();
 
     [[nodiscard]] size_t tracked_count() const noexcept { return m_actors.size(); }
+
+    /// Whether a tracked enemy is alive and targetable: the answer a
+    /// CombatTargetability report carries for one vitals pass.
+    [[nodiscard]] static bool any_target(std::span<const ActorVitals> actors);
 
 private:
     struct Tracked {
@@ -67,6 +77,7 @@ private:
         uint32_t last_max_hp{0};
     };
     std::unordered_map<EntityId, Tracked> m_actors;
+    std::optional<bool> m_targetable_sent;
 };
 
 } // namespace hub::meter

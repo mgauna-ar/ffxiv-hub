@@ -463,6 +463,40 @@ TEST_CASE(PipeServer, RoutesCasts) {
     TEST_ASSERT_EQ(received.timestamp_us, 5'000'000u);
 }
 
+TEST_CASE(PipeServer, RoutesTargetability) {
+    ipc::PipeServer server;
+    ipc::CombatTargetabilityPayload received{};
+    server.set_combat_targetability_callback([&](const ipc::CombatTargetabilityPayload& report) { received = report; });
+
+    ipc::CombatTargetabilityPayload report{};
+    report.targetable = 1;
+    report.timestamp_us = 5'000'000;
+    TEST_ASSERT(server.process_raw_packet(ipc::serialize_typed_packet(
+        PluginId::CombatMeter, MessageType::CombatTargetability, 1, report)));
+    TEST_ASSERT_EQ(received.targetable, 1u);
+    TEST_ASSERT_EQ(received.timestamp_us, 5'000'000u);
+}
+
+TEST_CASE(PipeServer, RoutesOverkill) {
+    ipc::PipeServer server;
+    ipc::CombatOverkillPayload received{};
+    server.set_combat_overkill_callback([&](const ipc::CombatOverkillPayload& overkill) { received = overkill; });
+
+    ipc::CombatOverkillPayload overkill{};
+    overkill.source_id = 1001;
+    overkill.target_id = 0x40000001;
+    overkill.action_id = 24395;
+    overkill.overkill = 1032303;
+    overkill.timestamp_us = 5'000'000;
+    TEST_ASSERT(server.process_raw_packet(ipc::serialize_typed_packet(
+        PluginId::CombatMeter, MessageType::CombatOverkill, 1, overkill)));
+    TEST_ASSERT_EQ(received.source_id, 1001u);
+    TEST_ASSERT_EQ(received.target_id, 0x40000001u);
+    TEST_ASSERT_EQ(received.action_id, 24395u);
+    TEST_ASSERT_EQ(received.overkill, 1032303u);
+    TEST_ASSERT_EQ(received.timestamp_us, 5'000'000u);
+}
+
 TEST_CASE(AppState, KeepsATimelineOfThePull) {
     app::AppState state;
     state.initialize();

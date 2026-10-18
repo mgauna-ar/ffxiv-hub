@@ -263,8 +263,18 @@ struct MockRecordingConsumer : public IHookConsumer {
     int status_tick_calls{0};
     int use_action_calls{0};
     int receive_calls{0};
+    int effect_result_calls{0};
+    uint32_t last_result_target{0};
+    uint32_t last_result_sequence{0};
+    uint32_t last_result_hp{0};
 
     void on_pre_receive_action_effect() override { pre_calls++; }
+    void on_effect_result(uint32_t target, uint32_t sequence, uint32_t hp) override {
+        effect_result_calls++;
+        last_result_target = target;
+        last_result_sequence = sequence;
+        last_result_hp = hp;
+    }
     void on_action_manager_resolved(void*) override { action_mgr_calls++; }
     void on_status_tick(uint32_t, uint32_t, uint16_t, uint32_t, bool) override { status_tick_calls++; }
     void on_use_action_location(
@@ -340,6 +350,13 @@ TEST_CASE(Payload, HookManagerFansOutToThirdConsumer) {
     TEST_ASSERT(latency_mock.call_order == 1);
     TEST_ASSERT(meter_mock.call_order == 2);
     TEST_ASSERT(third.call_order == 3);
+
+    // The effect-result runner reaches the third consumer too, with what it read.
+    hook_mgr.dispatch_effect_result_test(0x40000001, 4242, 9000);
+    TEST_ASSERT_EQ(third.effect_result_calls, 1);
+    TEST_ASSERT_EQ(third.last_result_target, 0x40000001u);
+    TEST_ASSERT_EQ(third.last_result_sequence, 4242u);
+    TEST_ASSERT_EQ(third.last_result_hp, 9000u);
 
     hook_mgr.clear_consumers();
 }

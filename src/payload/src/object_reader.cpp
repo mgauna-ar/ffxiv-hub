@@ -266,7 +266,8 @@ bool SafeReadInLobby(uintptr_t addr) {
 /// the same. The lookup is a binary search the main thread may be reshaping, so
 /// the id is checked again on the object it returns.
 const game::CharacterObject* SafeFindBattleChara(
-    FnGetObjectByEntityId* fn, uintptr_t game_obj_mgr_addr, uint32_t entity_id, uint32_t& hp, uint32_t& max_hp
+    FnGetObjectByEntityId* fn, uintptr_t game_obj_mgr_addr, uint32_t entity_id, uint32_t& hp, uint32_t& max_hp,
+    bool* targetable = nullptr
 ) {
     const game::CharacterObject* obj = SafeGetObjectByEntityId(fn, game_obj_mgr_addr, entity_id);
     game::CharacterObject copy;
@@ -274,6 +275,7 @@ const game::CharacterObject* SafeFindBattleChara(
     if (copy.entity_id != entity_id || !game::is_battle_chara_kind(copy.object_kind)) return nullptr;
     hp = copy.current_hp;
     max_hp = copy.max_hp;
+    if (targetable != nullptr) *targetable = (copy.targetable_status & game::OBJECT_TARGETABLE) != 0;
     return obj;
 }
 
@@ -427,7 +429,8 @@ size_t ObjectReader::read_vitals(std::span<const uint32_t> enemy_ids, std::span<
         if (filled >= out.size()) break;
         uint32_t hp = 0;
         uint32_t max_hp = 0;
-        const auto* obj = SafeFindBattleChara(m_fp_get_object_by_id, m_game_object_mgr_addr, id, hp, max_hp);
+        bool targetable = false;
+        const auto* obj = SafeFindBattleChara(m_fp_get_object_by_id, m_game_object_mgr_addr, id, hp, max_hp, &targetable);
         if (obj == nullptr) continue;
         meter::ActorVitals& vitals = out[filled++];
         vitals = meter::ActorVitals{};
@@ -435,6 +438,7 @@ size_t ObjectReader::read_vitals(std::span<const uint32_t> enemy_ids, std::span<
         vitals.hp = hp;
         vitals.max_hp = max_hp;
         vitals.is_enemy = true;
+        vitals.targetable = targetable;
         read_statuses(vitals, own_statuses(obj), obj, true);
     }
     return filled;

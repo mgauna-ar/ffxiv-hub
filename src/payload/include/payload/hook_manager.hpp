@@ -20,6 +20,7 @@ namespace hub::payload {
  * 1. ActionManager::UseActionLocation
  * 2. ReceiveActionEffect
  * 3. ProcessHotDot
+ * 4. The effect-result runner, which applies a queued effect when its result arrives
  *
  * Every hook fans out to all registered consumers in registration order.
  * Consumers that don't override a callback get the no-op default from
@@ -71,6 +72,8 @@ public:
         uint32_t source_id, const void* source_char,
         const void* effect_header, const void* effect_data, const uint64_t* targets
     );
+
+    void dispatch_effect_result_test(uint32_t target_id, uint32_t sequence, uint32_t target_hp);
 
 private:
     HookManager() = default;

@@ -94,9 +94,14 @@ Litany (786, a buff) and Vulnerability Up (638, a debuff); check both in the dif
 
 The generator reads the archives through `tools/xivdata/sqpack.py` (SqPack `.index`
 lookup and `datN` extraction) and `tools/xivdata/excel.py` (`.exh` header and `.exd` row
-pages). Both were verified against patch 7.56. String cells are SeStrings: inline macros
-are stripped except Hyphen (`0x1F`), which the sheet uses mid-name ("Tam-Tara") and is
-decoded to `-`.
+pages). Both were verified against patch 7.56. String cells are SeStrings, read by
+`tools/xivdata/sestring.py`: each inline macro is skipped by its length, Hyphen (`0x1F`),
+which the sheet uses mid-name ("Tam-Tara"), is decoded to `-`, and NewLine to a line
+break. Conditional text (`If` macros) is dropped with the rest, so a sentence a trait adds
+is not in `row[col]`. The generator's regexes find none there on 7.56; after a patch,
+check with `row.raw(col)` that a guaranteed-hit sentence did not move into one. A macro
+whose length does not end on `0x03` raises, so a changed format fails the run rather than
+leaking bytes into the tables.
 
 ## 3. Check the signatures
 
@@ -327,10 +332,16 @@ to find it) and confirm both still reach the handler that prints "gains the effe
 `include/hub/game/tick_statuses.hpp` is hand-maintained the same way: the Status sheet
 names each DoT and HoT but carries no potency. `make` runs
 `MeterGameData.TickStatusTableMatchesTheStatusSheet`. Render each DoT and HoT action's
-ActionTransient text at level 100 and compare its per-tick potency with the table; the
-text keeps level-dependent values inside `If` macros, which `tools/xivdata` strips, so
-read the raw string and take the branch for the job at level 100. A new DoT or HoT needs
-an entry, sorted by status id, and a line in that test. A ground effect stays out.
+ActionTransient text at level 100 and compare its per-tick potency with the table. The
+text keeps level-dependent values inside `If` macros, so read it with
+`sestring.render(row.raw(0), {sestring.CLASS_JOB: job, sestring.LEVEL: 100})`, for the
+action's job (a base class's action branches on its job's id). Some statuses are named
+apart from their action and appear in its text only as "Regen" or a granted effect:
+Opposition (Celestial Opposition), Kerakeia (Kerachole), Undying Flame (Rekindle), Wheel
+of Fortune (Collective Unconscious), Knight's Benediction (Holy Sheltron), Primeval
+Impulse (Damnation), Divine Aura (Divine Caress). All 52 matched on 7.56. A new DoT or
+HoT needs an entry, sorted by status id, and a line in that test. A ground effect stays
+out.
 
 ## 4g. Re-check the combat condition byte
 
@@ -362,6 +373,46 @@ the pair without breaking a signature. With `tools/inspect_exe.py` confirm:
 If they moved, update `CHARACTER_CURRENT_WORLD` and `CHARACTER_HOME_WORLD` in
 `include/hub/game_definitions.hpp` and that section together. A wrong offset leaves the
 ping N/A behind a gaming VPN, or pings the wrong data center.
+
+## 4i. Re-check the targetable bit
+
+The meter's downtime reads `game::OBJECT_TARGETABLE` of the byte at
+`CHARACTER_TARGETABLE_STATUS`, as recorded in [How the client marks a target
+untargetable](../../../plugins/combat_meter/AGENTS.md#how-the-client-marks-a-target-untargetable).
+No signature covers it. With `tools/inspect_exe.py` confirm:
+
+- `jumptable` on the ActorControl handler's table still sends category 54 to a case that
+  writes `param1 != 0` into the byte and calls the targetable setter.
+- The setter still writes its bool into bit `0x02` of the same byte, and `GameObject`'s
+  targetable check, reached from slot 4 of the BattleChara vtable, still tests it.
+
+If either moved, update `CHARACTER_TARGETABLE_STATUS` or `OBJECT_TARGETABLE` and the
+`CharacterObject` padding together. A wrong offset reads every enemy as untargetable or
+always targetable. Either way no downtime is taken out and DPS runs over the whole pull,
+as before this was read: the meter believes an unset bit only once one has read set.
+A pull with a phase the boss left the arena in whose header shows no *Downtime* is the
+sign.
+
+## 4j. Re-check the effect-result runner
+
+The meter takes overkill off each hit when its effect result applies, through the
+detour `APPLY_EFFECT_RESULT_PRIMARY`/`_FALLBACK` resolve to, as recorded in [How the
+client applies an effect result](../../../plugins/combat_meter/AGENTS.md#how-the-client-applies-an-effect-result).
+The detour takes the runner's first four arguments as subject `Character*`, subject entity
+id, record and sequence, and the meter matches the sequence against
+`ActionEffectHeader::global_sequence`. A patch can move any of that without breaking the
+signature. With `tools/inspect_exe.py` confirm:
+
+- `xrefs` on the runner still lists only the effect-result handlers, and each still stores
+  the result's HP at `CHARACTER_CURRENT_HP` after the call returns, not before.
+- Both call sites still pass the subject in `rcx`, its id in `edx`, the record from the
+  lookup in `r8` and the result's sequence in `r9d`.
+- The queue filler still stores the header's `+0x0C` (`global_sequence`) at the record's
+  `+0x0`, the field the lookup compares.
+
+If an argument moved, update the detour's `FnApplyEffectResult` and its doc together. A
+miss there books every hit whole, as before this was read (the payload log names the
+missing hook); a sequence read from the wrong place matches nothing and does the same.
 
 ## 5. Verify
 

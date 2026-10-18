@@ -250,6 +250,8 @@ bool PipeServer::process_raw_packet(std::span<const uint8_t> data) {
             case MessageType::CombatLifeEvent:  deliver<CombatLifeEventPayload>(p, m_on_life_event); break;
             case MessageType::CombatEnemyHp:    deliver<CombatEnemyHpPayload>(p, m_on_enemy_hp); break;
             case MessageType::CombatCast:       deliver<CombatCastPayload>(p, m_on_cast); break;
+            case MessageType::CombatTargetability: deliver<CombatTargetabilityPayload>(p, m_on_targetability); break;
+            case MessageType::CombatOverkill:   deliver<CombatOverkillPayload>(p, m_on_overkill); break;
             default: break;
         }
     } else if (plugin == PluginId::LatencyMitigator) {

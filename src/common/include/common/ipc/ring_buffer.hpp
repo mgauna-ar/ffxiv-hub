@@ -194,7 +194,7 @@ private:
 
 /// Outbound IPC packets, drained onto the named pipe by PipeClient's writer
 /// thread. Two payload threads push: the game's main thread from the
-/// ReceiveActionEffect/ProcessHotDot consumers (both plugins, and ObjectReader
+/// ReceiveActionEffect/ProcessHotDot/effect-result consumers (both plugins, and ObjectReader
 /// through the meter's actor resolvers), and the orchestration thread
 /// (heartbeat, status, game state, overlay geometry, ObjectReader::sync_party).
 /// Each gets its own lane; two are spare.

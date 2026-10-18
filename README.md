@@ -25,7 +25,8 @@ mode you pick. It comes as two files with no installer.
 
 **⚔️ [Combat Meter](plugins/combat_meter/README.md) shows what happened in every pull.**
 
-- Live DPS and HPS, with overheal kept out of HPS. Crit, direct hit and
+- Live DPS and HPS, with overheal kept out of HPS. DPS counts only what each hit took
+  off the enemy, over the seconds there was something to hit. Crit, direct hit and
   crit-direct-hit rates, and a per-action breakdown.
 - rDPS, aDPS, nDPS and cDPS: the damage each raid buff added is credited to the player
   who gave it. One click above the Damage table switches between them.
@@ -196,7 +197,7 @@ or its dashboard card.
 
 | Plugin | What it does |
 |---|---|
-| [**Combat Meter**](plugins/combat_meter/README.md) | DPS and HPS with overheal separated, rDPS/aDPS/nDPS/cDPS from raid buff credit, crit/DH/CDH rates, automatic pet attribution, deaths with killing blow and recap, buff/debuff/DoT uptime, damage taken by ability, casts and GCD uptime, a per-second timeline with raid buff windows, encounter tracking and pull history with the boss's HP left |
+| [**Combat Meter**](plugins/combat_meter/README.md) | DPS without overkill or downtime and HPS with overheal separated, rDPS/aDPS/nDPS/cDPS from raid buff credit, crit/DH/CDH rates, automatic pet attribution, deaths with killing blow and recap, buff/debuff/DoT uptime, damage taken by ability, casts and GCD uptime, a per-second timeline with raid buff windows, encounter tracking and pull history with the boss's HP left |
 | [**Latency Mitigator**](plugins/latency_mitigator/README.md) | Animation lock compensation for clean double-weaving on high latency, with a live ping and RTT HUD |
 | [**Image Quality**](plugins/image_quality/README.md) | DLSS held at the mode you pick instead of moving with GPU load, the camera jitter DLSS is told about, and a live view of what the game renders at |
 

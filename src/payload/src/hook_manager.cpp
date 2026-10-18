@@ -84,15 +84,28 @@ using FnProcessHotDot = void(FFXIV_FASTCALL*)(
     int32_t damage_type
 );
 
+/// Runs one queued effect record on `subject` when its result arrives. The record is
+/// keyed by `sequence`; the handler writes the server's HP once this returns.
+using FnApplyEffectResult = void(FFXIV_FASTCALL*)(
+    void* subject,
+    uint32_t subject_id,
+    void* record,
+    uint32_t sequence,
+    uint8_t block_index,
+    uint8_t flag
+);
+
 FnUseActionLocation fp_original_use_action_location = nullptr;
 FnReceiveActionEffect fp_original_receive_action_effect = nullptr;
 FnProcessHotDot fp_original_process_hot_dot = nullptr;
+FnApplyEffectResult fp_original_apply_effect_result = nullptr;
 
 // Detour targets kept so teardown can remove exactly these hooks. MinHook is
 // shared with the DXGI detours, which are intentionally left installed.
 void* g_target_receive_action_effect = nullptr;
 void* g_target_use_action_location = nullptr;
 void* g_target_process_hot_dot = nullptr;
+void* g_target_apply_effect_result = nullptr;
 
 // Safe SEH Leaf Functions (NO C++ stack unwinding objects)
 static uint8_t SafeCallOriginalUseAction(
@@ -150,6 +163,27 @@ static bool SafeCallOriginalProcessHotDot(
     __try {
         if (fn != nullptr) {
             fn(status_mgr, target, status_id, tick_mode, value, source_entity_id, damage_type);
+            return true;
+        }
+        return false;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static bool SafeCallOriginalApplyEffectResult(
+    FnApplyEffectResult fn,
+    void* subject,
+    uint32_t subject_id,
+    void* record,
+    uint32_t sequence,
+    uint8_t block_index,
+    uint8_t flag
+) {
+    __try {
+        if (fn != nullptr) {
+            fn(subject, subject_id, record, sequence, block_index, flag);
             return true;
         }
         return false;
@@ -261,6 +295,30 @@ static void FFXIV_FASTCALL hooked_process_hot_dot(
     });
 }
 
+// Detour 4: the effect-result runner. Read before the original: the handler writes
+// the server's HP after it returns, so this is the HP the effect lands on.
+static void FFXIV_FASTCALL hooked_apply_effect_result(
+    void* subject,
+    uint32_t subject_id,
+    void* record,
+    uint32_t sequence,
+    uint8_t block_index,
+    uint8_t flag
+) {
+    DetourScope scope;
+    if (!g_shutting_down.load()) {
+        game::CharacterObject copy;
+        if (subject != nullptr && hub::os::safe_read(subject, copy) && copy.entity_id == subject_id
+            && game::is_battle_chara_kind(copy.object_kind)) {
+            for_each_consumer([&](IHookConsumer* c) {
+                c->on_effect_result(subject_id, sequence, copy.current_hp);
+            });
+        }
+    }
+    SafeCallOriginalApplyEffectResult(fp_original_apply_effect_result, subject, subject_id, record, sequence,
+                                      block_index, flag);
+}
+
 } // namespace
 
 bool HookManager::install() {
@@ -296,6 +354,14 @@ bool HookManager::install() {
     // Scan for ProcessHotDot
     uintptr_t dot_addr = common::pe::scan_module_section(h_game, ".text", game::signatures::PROCESS_HOT_DOT_PRIMARY);
 
+    // Scan for the effect-result runner
+    uintptr_t result_addr = common::pe::scan_module_section(h_game, ".text", game::signatures::APPLY_EFFECT_RESULT_PRIMARY);
+    if (result_addr) {
+        result_addr = hub::memory::resolve_call_relative(result_addr);
+    } else {
+        result_addr = common::pe::scan_module_section(h_game, ".text", game::signatures::APPLY_EFFECT_RESULT_FALLBACK);
+    }
+
     uint32_t installed_count = 0;
 
     bool recv_ok = false;
@@ -329,6 +395,17 @@ bool HookManager::install() {
         }
     }
 
+    bool result_ok = false;
+    if (result_addr && MH_CreateHook(reinterpret_cast<void*>(result_addr),
+                                    reinterpret_cast<void*>(hooked_apply_effect_result),
+                                    reinterpret_cast<void**>(&fp_original_apply_effect_result)) == MH_OK) {
+        if (MH_EnableHook(reinterpret_cast<void*>(result_addr)) == MH_OK) {
+            installed_count++;
+            result_ok = true;
+            g_target_apply_effect_result = reinterpret_cast<void*>(result_addr);
+        }
+    }
+
     namespace defs = game::definitions;
     uintptr_t action_mgr = 0;
     if (uintptr_t ins = common::pe::scan_module_section(h_game, ".text", game::signatures::ACTION_MANAGER_INSTANCE_PRIMARY)) {
@@ -357,6 +434,9 @@ bool HookManager::install() {
                                 : "Signature not found: UseActionLocation";
     } else if (!dot_addr) {
         m_last_error = "Signature not found: ProcessHotDot (damage-over-time ticks are not counted)";
+    } else if (!result_ok) {
+        m_last_error = result_addr ? "MinHook failed to install the effect-result runner (overkill is counted as damage)"
+                                   : "Signature not found: effect-result runner (overkill is counted as damage)";
     } else {
         m_last_error = "OK";
     }
@@ -377,13 +457,14 @@ void HookManager::uninstall() {
     g_shutting_down.store(true);
 
     // Fall back to original code first, so draining is bounded by calls already
-    // inside a detour rather than by new arrivals. Only these three targets:
+    // inside a detour rather than by new arrivals. Only these four targets:
     // MinHook is shared with the DXGI detours, which stay installed so other
     // overlays chained onto the swapchain keep working.
     void* const targets[] = {
         g_target_receive_action_effect,
         g_target_use_action_location,
-        g_target_process_hot_dot
+        g_target_process_hot_dot,
+        g_target_apply_effect_result
     };
     for (void* target : targets) {
         if (target) MH_DisableHook(target);
@@ -407,10 +488,12 @@ void HookManager::uninstall() {
     g_target_receive_action_effect = nullptr;
     g_target_use_action_location = nullptr;
     g_target_process_hot_dot = nullptr;
+    g_target_apply_effect_result = nullptr;
 
     fp_original_receive_action_effect = nullptr;
     fp_original_use_action_location = nullptr;
     fp_original_process_hot_dot = nullptr;
+    fp_original_apply_effect_result = nullptr;
 
     clear_consumers();
     m_action_manager.store(nullptr);
@@ -425,7 +508,7 @@ namespace hub::payload {
 
 bool HookManager::install() {
     m_installed.store(true);
-    m_active_hooks.store(3);
+    m_active_hooks.store(game::definitions::TOTAL_AVAILABLE_HOOKS);
     return true;
 }
 
@@ -480,6 +563,10 @@ void HookManager::dispatch_use_action_location_test(
     for_each_consumer([&](IHookConsumer* c) {
         c->on_use_action_location(action_mgr, action_type, action_id, target_id, loc, extra, res);
     });
+}
+
+void HookManager::dispatch_effect_result_test(uint32_t target_id, uint32_t sequence, uint32_t target_hp) {
+    for_each_consumer([&](IHookConsumer* c) { c->on_effect_result(target_id, sequence, target_hp); });
 }
 
 void HookManager::dispatch_receive_action_effect_test(

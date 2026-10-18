@@ -191,6 +191,25 @@ void EncounterEngine::process_cast(const ipc::CastPacket& packet, TimePoint now)
     }
 }
 
+void EncounterEngine::process_targetability(const ipc::TargetabilityPacket& packet) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (m_state != EncounterState::InCombat) {
+        m_early_targetability = packet;
+        return;
+    }
+    m_downtime.observe(packet.targetable != 0, packet.timestamp_us);
+    m_dirty = true;
+}
+
+void EncounterEngine::process_overkill(const ipc::OverkillPacket& packet) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (m_state != EncounterState::InCombat || packet.timestamp_us < m_start_time_us) {
+        return;
+    }
+    m_accumulator.record_overkill(packet, m_registry);
+    m_dirty = true;
+}
+
 ipc::LifeEventPacket EncounterEngine::build_life_event(EntityId entity, LifeEventKind kind, uint64_t timestamp_us) const {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
     return DeathLog::build_event(entity, kind, timestamp_us, m_accumulator);
@@ -220,8 +239,7 @@ void EncounterEngine::update(TimePoint now) {
 
         // Unconditional: the duration keeps growing between packets, so the
         // derived rates go stale even when nothing new arrived.
-        const double dur = elapsed_since_start_locked(now);
-        m_accumulator.recalculate(dur, &m_registry);
+        recalculate_locked(elapsed_since_start_locked(now));
         m_dirty = false;
     }
 }
@@ -260,6 +278,14 @@ double EncounterEngine::elapsed_since_start_locked(TimePoint t) const noexcept {
     return std::max(std::chrono::duration<double>(t - m_start_time).count(), 0.0);
 }
 
+double EncounterEngine::downtime_locked(double duration_seconds) const {
+    return m_downtime.seconds_until(m_start_time_us + static_cast<uint64_t>(std::max(duration_seconds, 0.0) * 1e6));
+}
+
+void EncounterEngine::recalculate_locked(double duration_seconds) {
+    m_accumulator.recalculate(duration_seconds, &m_registry, downtime_locked(duration_seconds));
+}
+
 void EncounterEngine::start_encounter(TimePoint now, uint64_t timestamp_us) {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
     start_encounter_locked(now, timestamp_us);
@@ -278,6 +304,11 @@ void EncounterEngine::start_encounter_locked(TimePoint now, uint64_t timestamp_u
     m_death_log.clear();
     m_uptime.start(m_start_time_us, m_registry);
     m_bosses.clear();
+    m_downtime.start(m_start_time_us);
+    if (m_early_targetability) {
+        m_downtime.observe(m_early_targetability->targetable != 0, m_early_targetability->timestamp_us);
+        m_early_targetability.reset();
+    }
     m_last_enemy_hit_time = TimePoint{};
     m_live_holds_latest_pull = false;
     m_pull_in_game_combat = game_state_fresh_locked(now) && m_game_in_combat;
@@ -310,7 +341,7 @@ void EncounterEngine::end_encounter_locked(EncounterEndReason reason, TimePoint 
     }
     const double dur = elapsed_since_start_locked(fight_end);
 
-    m_accumulator.recalculate(dur, &m_registry);
+    recalculate_locked(dur);
     m_accumulator.update_gcd_uptime(dur);
     m_dirty = false;
 
@@ -379,6 +410,7 @@ void EncounterEngine::reset_current_locked() {
     m_death_log.clear();
     m_uptime.clear();
     m_bosses.clear();
+    m_downtime.clear();
     m_live_holds_latest_pull = false;
     m_state = EncounterState::Idle;
     m_dirty = false;
@@ -518,6 +550,7 @@ EncounterSummary EncounterEngine::base_summary_locked(double duration_seconds, E
     summary.zone_visit = m_zone_visit;
     summary.start_time_us = m_start_time_us;
     summary.duration_seconds = duration_seconds;
+    summary.downtime_seconds = downtime_locked(duration_seconds);
     summary.total_damage = m_accumulator.total_damage();
     summary.total_healing = m_accumulator.total_healing();
     summary.total_effective_healing = m_accumulator.total_effective_healing();
@@ -569,7 +602,7 @@ EncounterSummary EncounterEngine::summary_locked(TimePoint now, bool with_detail
     if (m_state == EncounterState::InCombat) {
         dur = elapsed_since_start_locked(now);
         if (m_dirty) {
-            m_accumulator.recalculate(dur, &m_registry);
+            recalculate_locked(dur);
             m_dirty = false;
         }
         if (with_detail) {
