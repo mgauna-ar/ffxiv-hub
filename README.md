@@ -7,72 +7,29 @@
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 **A combat meter, a latency mitigator and a DLSS fix for Final Fantasy XIV, in one app
-with in-game overlays.**
-
-See the DPS, healing, deaths and buff uptime of every pull. Weave oGCDs on a 200 ms
-connection the way you would sitting next to the datacenter. Keep DLSS sharp at the
-mode you pick. It comes as two files with no installer.
+with in-game overlays.** Two files, no installer.
 
 ![The FFXIV Hub desktop app switching between its Latency Mitigator and Combat Meter pages, beside the in-game combat meter and ping HUD](docs/images/hero.png)
 
-[Highlights](#-highlights) · [Quick start](#-quick-start) · [Controls](#-controls) ·
+[What's inside](#-whats-inside) · [Quick start](#-quick-start) · [Controls](#-controls) ·
 [Safety](#-safety-and-fair-play) · [FAQ](#-troubleshooting-and-faq) ·
 [Configuration](#-configuration) · [Building](#-building-from-source)
 
 ---
 
-## ✨ Highlights
+## ✨ What's inside
 
-**⚔️ [Combat Meter](plugins/combat_meter/README.md) shows what happened in every pull.**
+| Plugin | What it does |
+|---|---|
+| [⚔️ **Combat Meter**](plugins/combat_meter/README.md) | DPS without overkill or downtime, HPS without overheal, and rDPS/aDPS/nDPS/cDPS from raid buff credit. Pets merged into their owners, deaths with a recap, buff/debuff/DoT uptime, damage taken, casts and GCD uptime, a per-second timeline, and a pull history with the boss's HP left. |
+| [⚡ **Latency Mitigator**](plugins/latency_mitigator/README.md) | Trims the animation lock by your measured round trip, so oGCDs weave on a high ping as they would next to the data center. Nothing to tune. Adds an in-game ping and RTT badge. |
+| [🖼️ **Image Quality**](plugins/image_quality/README.md) | Holds DLSS at the mode you pick, from DLAA to Performance, instead of letting it move with GPU load, and moves the camera by the jitter DLSS is told about, so still edges stop looking jagged. Changes nothing under FSR. |
 
-- Live DPS and HPS, with overheal kept out of HPS. DPS counts only what each hit took
-  off the enemy, over the seconds there was something to hit. Crit, direct hit and
-  crit-direct-hit rates, and a per-action breakdown.
-- rDPS, aDPS, nDPS and cDPS: the damage each raid buff added is credited to the player
-  who gave it. One click above the Damage table switches between them.
-- Pets are merged into their owners, and the Limit Break gets its own row, so the table
-  holds your party and nothing else.
-- Every death, with the killing blow, a recap of the hits and heals before it, and the
-  time until the raise.
-- Uptime for buffs, debuffs and DoTs, and damage taken per ability.
-- What each player pressed: casts per minute, the GCD they ran at, and how much of the
-  pull they kept it rolling.
-- A timeline of each party member's damage, healing or damage taken across the pull,
-  with the raid buff windows and the deaths on it.
-- A pull history that splits when the game takes you out of combat, on a wipe, or on a
-  zone change, so a boss's downtime never cuts a fight in two. Each visit to a duty is
-  listed on its own and numbered from #1, and each pull shows whether the boss died, or
-  how much HP it had left.
-
-**⚡ [Latency Mitigator](plugins/latency_mitigator/README.md) lets you double-weave on a
-high-ping connection.**
-
-- Trims the animation lock by your measured round trip, so oGCDs weave as they would
-  next to the datacenter.
-- Measures your own latency and adapts. There is nothing to tune.
-- Never goes below a 25 ms floor, never shortens cast locks (slide-casting still works),
-  and never touches an action the server rejected.
-- A small in-game badge shows your network ping and action round-trip time.
-
-**🖼️ [Image Quality](plugins/image_quality/README.md) holds DLSS at the mode you
-pick.**
-
-- Under DLSS the game moves its render resolution with GPU load, anywhere from half the
-  screen to all of it. Pick DLAA, Quality, Balanced or Performance, and it stays there.
-- Moves the camera by the jitter the game tells DLSS about. The game moves it by less,
-  shrinking with its 3D resolution slider and the render height, so DLSS misplaces
-  pixels and edges that stand still stay jagged.
-- Shows what the game renders at, within its range, live.
-- Changes nothing under FSR, and puts the game's own values back when switched off.
-
-**🖥️ The app**
-
-- In-game overlays drawn onto the game's own frame. Each one can be moved, scaled, faded,
-  locked, made click-through, or hidden in certain situations.
-- A desktop window for the details, and a tray icon that tells you whether it is attached.
-- Every plugin can be switched off.
-- Settings are saved as you change them.
-- Tells you when a new version is out, and installs it in one click.
+Overlays are drawn onto the game's own frame and can be moved, scaled, faded, locked,
+made click-through, or hidden in certain situations. The desktop window holds the
+details, and the tray icon shows whether the Hub is attached. Every plugin has a master
+switch: off, it hooks nothing, streams nothing, draws nothing and leaves no setting
+changed. Settings save as you change them, and new versions install in one click.
 
 ---
 
@@ -80,7 +37,7 @@ pick.**
 
 - Windows 10 or 11, 64-bit.
 - Final Fantasy XIV: Dawntrail (7.x), DirectX 11 client (`ffxiv_dx11.exe`).
-- Administrator rights for FFXIV Hub ([why](#2-run-it-as-administrator)).
+- Administrator rights ([why](#2-run-it-as-administrator)).
 
 ---
 
@@ -89,156 +46,78 @@ pick.**
 ### 1. Download and extract
 
 Grab `ffxiv-hub-windows-x64.zip` from [Releases](../../releases) and extract it anywhere.
-Keep both files in the same folder, because the app looks for the payload next to its own
-executable:
-
-```
-ffxiv-hub/
-├── ffxiv-hub.exe      # Desktop manager, system tray, injector
-└── hub_payload.dll    # In-game hooks, overlays and telemetry
-```
+Keep `ffxiv-hub.exe` and `hub_payload.dll` in the same folder.
 
 ### 2. Run it as administrator
 
-Right-click `ffxiv-hub.exe` → **Run as administrator**. This is required. Loading the
-payload into the game means writing into another process's memory and starting a thread
-there, and Windows does not allow that without elevation. Without it the Hub starts
-normally but never attaches, and the dashboard shows *"Injection was refused."*
-
-It opens the desktop manager and places an icon in the notification area. There is no
-console window and nothing is installed.
-
-> **Windows may warn you the first time.** The binaries are not code-signed. This is
-> expected, and [the fix is two clicks](#-troubleshooting-and-faq).
+Right-click `ffxiv-hub.exe` → **Run as administrator**. Loading the payload into the game
+needs elevation; without it the Hub never attaches and the dashboard says *"Injection was
+refused."* The binaries are not code-signed, so Windows may warn you the first time
+([what to do](#-troubleshooting-and-faq)).
 
 ### 3. Launch Final Fantasy XIV
 
-Start the game through your normal launcher. The Hub finds `ffxiv_dx11.exe`, injects the
-payload once the game window is ready, and shows a notification.
-
-- Closing the game puts the Hub back into waiting.
-- Closing the Hub leaves the game running and hides the overlays until you start it again.
+Start the game as usual. The Hub injects its payload once the game window is up. Closing
+the game puts the Hub back to waiting; closing the Hub leaves the game running and hides
+the overlays until you start it again.
 
 ### 4. Check it worked
 
-- The sidebar and the dashboard read **Hooked & active**.
-- Hovering the tray icon shows **Connected (PID …)**.
+The sidebar reads **Hooked & active**, and the combat meter and ping badge appear in
+game. The meter fills once you fight, the badge's RTT after your first ability. If not,
+the sidebar badge says why (hover it for the full line):
 
-The sidebar badge is the short form of the connection status; hover it for the full line.
-
-| Badge | Full status | Means |
-|---|---|---|
-| Searching for game | Searching for FFXIV... | The game is not running, or its window is not up yet. |
-| Injecting | Injecting Payload... | The payload is being loaded into the game. |
-| Connecting | Connecting Pipe... | The payload is loaded and has not answered yet. |
-| Hooked & active | Connected (PID …) | Attached and working. |
-| Hooks missing | Connected, hooks not installed (PID …) | The payload answered but could not hook the game, usually after a patch. |
-| Reconnecting | Reconnecting to payload (PID …)... | The connection dropped while the game runs. The payload retries every 2 seconds on its own. |
-| Unloaded | Payload unloaded. Restart the game to attach again. | You used **Unload payload** in this game session, even if the Hub was restarted since. A tray notification says the same. |
-| Access denied | Access Denied (Run as Admin) | Windows refused access to the game. Run the Hub as administrator. |
-- The combat meter and the ping badge appear in game. The badge's RTT reading fills in
-  after your first ability, and the meter fills once you start fighting.
-
-> **There is nothing to configure.** The Latency Mitigator measures your own round-trip
-> time and adapts to it. You don't need to enter your ping or tune anything for it to work.
+| Badge | Means |
+|---|---|
+| Searching for game | The game is not running, or its window is not up yet. |
+| Injecting · Connecting | The payload is loading, or has not answered yet. |
+| Hooks missing | The payload could not hook the game, usually after a patch. |
+| Reconnecting | The connection dropped. The payload retries every 2 seconds. |
+| Unloaded | You used **Unload payload** in this game session. Restart the game. |
+| Access denied | Run the Hub as administrator. |
 
 ---
 
 ## 🎮 Controls
 
-**In game**
-
-- **Drag** an unlocked overlay to move it. The combat meter can also be resized from its
-  edges; the ping badge sizes itself.
-- **Right mouse is never captured**, even over an overlay, so camera rotation and
-  targeting always reach the game.
-- Everything else is set per overlay, under the plugin's **Settings → In-game overlay**:
-  - show or hide it
-  - lock it in place
-  - click-through, which passes the mouse to the game
-  - opacity and scale
-  - when to hide it
-
-**Hide conditions** apply only while the overlay is locked, so an unlocked overlay can
-always be found and dragged back. Each overlay can:
-
-- show always, only in combat, or only out of combat. Shown only in combat, it stays up
-  for a set number of seconds after combat ends, 5 by default
-- show only in duty content
-- hide during cutscenes, on loading screens, or while a menu is open
-
-**Desktop window**
-
-| Page | What's on it |
-|---|---|
-| Dashboard | Whether the game was found and the payload hooked, network ping, IPC traffic, and a card per plugin with its master switch |
-| Combat Meter | Damage, Healing, Damage Taken, Deaths, Buffs & Debuffs, Casts, and Timeline for the live pull and every archived one, plus Settings |
-| Latency Mitigator | Live latency stats, a time-per-ability chart with spikes highlighted, and a feed of every action, plus Settings |
-| Hub Settings | Start with Windows, close to tray, notifications, the config file, reset, unload, and the diagnostic log |
-
-**Tray icon.** Click it to open the window, hover over it for the connection status (the
-same wording as the sidebar), or right-click for the menu:
-
-| Item | What it does |
-|---|---|
-| Open FFXIV Hub | Shows the desktop window. |
-| Start with Windows | Launches the Hub when you log on. |
-| Open Logs Folder | Opens the folder that holds `hub.log` and `hub_payload.log`. |
-| Open Configuration File | Opens `config.json` in your editor. |
-| Exit | Closes the Hub. The game keeps running. |
-
----
-
-## 🧩 Plugins
-
-Each plugin has a master switch. Off means it consumes no game hooks, streams no
-telemetry, draws no overlay and leaves no setting changed. Flip it from the plugin's page
-or its dashboard card.
-
-| Plugin | What it does |
-|---|---|
-| [**Combat Meter**](plugins/combat_meter/README.md) | DPS without overkill or downtime and HPS with overheal separated, rDPS/aDPS/nDPS/cDPS from raid buff credit, crit/DH/CDH rates, automatic pet attribution, deaths with killing blow and recap, buff/debuff/DoT uptime, damage taken by ability, casts and GCD uptime, a per-second timeline with raid buff windows, encounter tracking and pull history with the boss's HP left |
-| [**Latency Mitigator**](plugins/latency_mitigator/README.md) | Animation lock compensation for clean double-weaving on high latency, with a live ping and RTT HUD |
-| [**Image Quality**](plugins/image_quality/README.md) | DLSS held at the mode you pick instead of moving with GPU load, the camera jitter DLSS is told about, and a live view of what the game renders at |
-
-Each plugin's README covers how it works, its in-game overlay, its desktop view and its
-configuration keys.
+- **Drag** an unlocked overlay to move it. The combat meter also resizes from its edges.
+- **Right mouse always reaches the game**, even over an overlay, so the camera never
+  catches on one.
+- Each overlay is set up under its plugin's **Settings → In-game overlay**: shown or
+  hidden, locked, click-through, opacity, scale, and when to hide. Hide conditions (only
+  in or out of combat, only in duties, not in cutscenes, loading screens or menus) apply
+  only while the overlay is locked, so an unlocked one can always be found. One shown
+  only in combat stays up 5 seconds after combat ends by default.
+- The **desktop window** has a Dashboard, a page per plugin ending in a Settings tab, and
+  Hub Settings. The **tray icon** opens it on click, shows the connection on hover, and
+  offers Start with Windows, the logs folder, the config file and Exit on right-click.
 
 ---
 
 ## 🔒 Safety and fair play
 
-FFXIV Hub runs entirely on your PC and stays within what the server already allows:
+FFXIV Hub runs entirely on your PC and stays within what the server already allows.
 
-- **What it reads.** Combat results as the game receives them. The names, jobs, HP and
-  status effects of your party and of the enemies you are fighting.
-- **What it writes.** Two things, both on your PC only:
-  - Your local animation-lock timer, after the server has already confirmed the action.
-    It never sets the timer below a 25 ms floor, leaves cast locks alone, and skips
-    rejected actions and locks over 2.5 s. Turn off *Enable animation lock mitigation*,
-    or switch on *Dry-run mode*, and it writes none.
-  - Three of the game's graphics settings, only while DLSS is the upscaler: whether the
-    render resolution follows GPU load, the resolution itself, and the camera jitter.
-    Switch the Image Quality plugin off and they are the game's again.
-
-  The Combat Meter only ever reads.
-- **What it never does.** Modify, send or delay network packets. Automate any input.
-  Change cooldowns or the GCD.
-- **Nothing about you or your play leaves your PC.** The Hub makes two kinds of network
-  traffic:
-  - An ICMP ping to the game server you are already connected to, or, when that server
-    can't be reached, to the lobby server of the data center your character is on.
-  - When it starts, one request to GitHub asking whether a newer release is out. It
-    sends nothing but the Hub's version, and *Check for updates at startup* in Hub
-    Settings turns it off. A release is only downloaded, from this repository, when you
-    click **Update & restart**.
-- **It goes quiet when you close it.** With the Hub closed, the payload is dormant until
-  the Hub reconnects: the overlays hide, mitigation stops, the graphics settings go back
-  to the game's and nothing is queued for the Hub. The combat meter keeps counting in the
-  background.
+- **Reads** combat results as the game receives them, and the names, jobs, HP and status
+  effects of your party and the enemies you fight. The Combat Meter only ever reads.
+- **Writes** two things, locally:
+  - Your animation-lock timer, after the server has confirmed the action. Never below a
+    25 ms floor, and never for cast locks, rejected actions or locks over 2.5 s. *Dry-run
+    mode*, or switching off *Enable animation lock mitigation*, stops it.
+  - Three graphics settings, only under DLSS: whether the render resolution follows GPU
+    load, the resolution, and the camera jitter. Switching Image Quality off gives them
+    back.
+- **Never** modifies, sends or delays network packets, automates input, or changes
+  cooldowns or the GCD.
+- **Network traffic** is an ICMP ping to your game server (or, when that fails, your data
+  center's lobby), and one request to GitHub at startup for a newer release, which sends
+  only the Hub's version. *Check for updates at startup* turns that off. Nothing about
+  you or your play leaves your PC.
+- **Closed, it goes quiet.** The overlays hide, mitigation stops and the graphics
+  settings go back to the game's. The combat meter keeps counting in the background.
 
 **Keep it to yourself.** Square Enix takes action when a third-party tool is brought up
-in game or used against other players. So don't mention it in chat, and never use its
+in game or used against other players. Don't mention it in chat, and never use its
 numbers to call anyone out.
 
 ---
@@ -250,16 +129,10 @@ numbers to call anyone out.
 
 <br>
 
-This is expected, and it is safe to allow. The Hub loads its payload into the game with
-standard Windows APIs (`VirtualAllocEx` and `CreateRemoteThread`), the same mechanism a
-debugger uses.
-
-Antivirus heuristics flag *any* unknown binary that does this, unless it carries an
-Extended Validation code-signing certificate. Those cost several hundred dollars a year,
-which an open-source hobby project doesn't pay.
-
-Click **More info → Run anyway**, or add an exclusion. The entire source is in this
-repository, and you can [build it yourself](#-building-from-source).
+Expected, and safe to allow. The Hub loads its payload the way a debugger attaches
+(`VirtualAllocEx` and `CreateRemoteThread`), which antivirus heuristics flag in any
+binary without an Extended Validation certificate. Click **More info → Run anyway**, or
+[build it yourself](#-building-from-source).
 
 </details>
 
@@ -268,14 +141,9 @@ repository, and you can [build it yourself](#-building-from-source).
 
 <br>
 
-The most common cause is not running the Hub as administrator ([step 2](#2-run-it-as-administrator)).
-The Hub tells you when this is the problem: the dashboard reads *"Injection was refused.
-Run FFXIV Hub as administrator."* and `hub.log` records the access-denied error with the
-game's PID. The Hub needs elevation even when you didn't start the game or its launcher as
-administrator.
-
-If the dashboard reads *Payload unloaded*, the payload was unloaded earlier in this game
-session. Restart the game.
+Run the Hub as administrator ([step 2](#2-run-it-as-administrator)), even if the game
+isn't. When that is the cause, the dashboard says *"Injection was refused."* If it reads
+*Payload unloaded*, restart the game.
 
 </details>
 
@@ -284,36 +152,19 @@ session. Restart the game.
 
 <br>
 
-Check these in order:
-
-1. You are logged in to a character. The overlays stay hidden on the title screen and
-   character select.
-2. The plugin's master switch is on (its dashboard card or its page header).
-3. The overlay itself is on in that plugin's **Settings → In-game overlay** (*Show in-game
-   meter* or *Show micro ping HUD*).
-4. The overlay's hide conditions. A locked overlay can be set to show only in combat,
-   only in duties, or to hide in cutscenes, on loading screens and in menus.
+Check, in order: you are logged in to a character (nothing draws on the title screen or
+character select), the plugin's master switch is on, the overlay is on under **Settings →
+In-game overlay**, and its hide conditions.
 
 </details>
 
 <details>
-<summary><b>An overlay won't hide in cutscenes, or out of combat</b></summary>
+<summary><b>An overlay won't hide, or gets in the way of my clicks</b></summary>
 
 <br>
 
-Hide conditions apply only while the overlay is locked. Otherwise an overlay could hide
-itself somewhere you couldn't drag it back from. Lock it in its settings (*Lock meter
-position & size* or *Lock HUD position*).
-
-</details>
-
-<details>
-<summary><b>An overlay is in the way of my clicks</b></summary>
-
-<br>
-
-Turn on *Click-through mode* in its settings, and every click passes to the game. Right
-mouse always goes to the game anyway, so the camera never catches on an overlay.
+Hide conditions apply only while the overlay is locked, so lock it. *Click-through mode*
+passes every click to the game.
 
 </details>
 
@@ -322,10 +173,8 @@ mouse always goes to the game anyway, so the camera never catches on an overlay.
 
 <br>
 
-`%APPDATA%/ffxiv-hub/hub.log` (the desktop app) and `hub_payload.log` (the in-game
-payload). Each start moves the previous run's log to `hub.prev.log` and
-`hub_payload.prev.log`. **Hub Settings** shows `hub.log` live, and the tray's *Open Logs
-Folder* takes you to the folder.
+`%APPDATA%/ffxiv-hub/hub.log` (the app) and `hub_payload.log` (the payload), with the
+previous run's kept as `*.prev.log`. Hub Settings shows `hub.log` live.
 
 </details>
 
@@ -334,22 +183,12 @@ Folder* takes you to the folder.
 
 <br>
 
-Exit from the tray menu. The game keeps running, untouched: the overlays disappear and
-mitigation stops. The combat meter keeps counting in the background.
+Exit from the tray. The game keeps running and the payload goes dormant until the Hub
+starts again. **Hub Settings → Unload payload** switches it off for the rest of the game
+session. Either way the DLL stays loaded until the game closes, since pulling code out
+from under a running DirectX pipeline is riskier than leaving it idle.
 
-The payload stays loaded for the rest of that game session by design. Unloading code
-from under a running DirectX pipeline is riskier than leaving it dormant. While the Hub
-is closed it only keeps the combat meter counting, and reconnects within a second when
-you open the Hub again.
-
-To switch it off for the rest of the session, use **Hub Settings → Unload payload**. It
-removes its game hooks, turns its DirectX and window hooks into pass-throughs, and stops
-talking to the Hub, which then reads **Payload unloaded**. The DLL itself stays in the
-game's memory, for the same reason as above, so the Hub cannot attach again until you
-restart the game; after the restart it attaches as usual.
-
-To uninstall, delete the folder you extracted. Settings live in `%APPDATA%/ffxiv-hub/`;
-delete that too if you want no trace left.
+To uninstall, delete the folder, and `%APPDATA%/ffxiv-hub/` for the settings.
 
 </details>
 
@@ -358,20 +197,15 @@ delete that too if you want no trace left.
 
 <br>
 
-The Hub asks GitHub for a newer release each time it starts. When there is one, a
-notification says so and the sidebar shows **Update available**. Open **Hub Settings →
-Updates** and click **Update & restart**. The Hub downloads the release, checks it against
-the SHA-256 checksum GitHub publishes for it, replaces its two files and starts again.
-**Check now** asks at any time.
+When a release is out, a notification says so and the sidebar shows **Update
+available**. Click **Update & restart** in **Hub Settings → Updates**: the Hub downloads
+it, checks it against the SHA-256 GitHub publishes, swaps its two files and restarts.
 
-- Restarting clears the pull history the desktop app keeps for the session.
-- The game keeps running. The payload it has loaded stays on the old version until you
-  restart the game, and Hub Settings says so until then.
-- The replaced files stay next to the new ones, named `*.old`, until a later start can
-  delete them. The old DLL can only go once the game that loaded it has closed.
-- If the update can't write to the Hub's folder, run the Hub as administrator, or update
-  by hand: close the Hub and the game, download the zip from [Releases](../../releases),
-  and replace both files.
+- The session's pull history is cleared.
+- The game's payload stays on the old version until the game restarts.
+- The replaced files stay as `*.old` until a later start can delete them.
+- If the folder isn't writable, run as administrator, or replace both files by hand
+  from [Releases](../../releases).
 
 </details>
 
@@ -380,10 +214,8 @@ the SHA-256 checksum GitHub publishes for it, replaces its two files and starts 
 
 <br>
 
-A patch can move the memory locations the Hub relies on. The Hub tells you when an
-updated build is out (see [How do I update?](#-troubleshooting-and-faq)), or check
-[Releases](../../releases) yourself. Nothing is damaged in the meantime: if the payload
-can't find what it needs, it leaves the game unhooked and the Hub reads **Hooks missing**.
+A patch can move what the Hub hooks. It then leaves the game unhooked and reads **Hooks
+missing** until an updated release is out, which the Hub will tell you about.
 
 </details>
 
@@ -392,12 +224,9 @@ can't find what it needs, it leaves the game unhooked and the Hub reads **Hooks 
 
 <br>
 
-The Hub finds the game server among the game's own network connections and pings it. A
-gaming VPN hides or rewrites those connections, and may not carry the ping. The Hub then
-pings your data center's lobby server instead, which sits alongside its worlds; it
-learns your data center from the payload, so this needs the Hub attached and a character
-in the world. If the ping still reads N/A, `hub.log` has a *Network ping:* line saying
-what was pinged and what answered.
+A VPN can hide the game's server connection. The Hub then pings your data center's lobby
+instead, which needs it attached and a character in the world. The *Network ping:* line
+in `hub.log` says what was pinged and what answered.
 
 </details>
 
@@ -406,7 +235,7 @@ what was pinged and what answered.
 
 <br>
 
-They measure different things, and no, you shouldn't. Both are answered in the
+They measure different things, and no. See the
 [Latency Mitigator FAQ](plugins/latency_mitigator/README.md#faq).
 
 </details>
@@ -415,29 +244,11 @@ They measure different things, and no, you shouldn't. Both are answered in the
 
 ## 🔧 Configuration
 
-Everything is set from the desktop app. `%APPDATA%/ffxiv-hub/config.json` is where it is
-stored, not the intended interface. The file has one section for the Hub and one per
-plugin:
-
-```jsonc
-{
-  "hub":               { /* the keys below */ },
-  "combat_meter":      { /* see the Combat Meter README */ },
-  "latency_mitigator": { /* see the Latency Mitigator README */ },
-  "image_quality":     { /* see the Image Quality README */ }
-}
-```
-
-- **Saving.** Changes are saved as you make them; a slider is saved once, when you let go
-  of it. The running game also saves overlay
-  state every few seconds, such as a HUD you just dragged. It writes only the plugin
-  settings it uses, merged into the file as it is on disk, so it never reverts a Hub
-  setting or one only the desktop app reads.
-- **Resetting.** **Hub Settings → Reset all settings** puts every key back to its default,
-  in the app and in game, and switches every plugin back on. *Start with Windows* keeps
-  following the registry.
-
-Hub keys:
+Everything is set from the desktop app and saved as you change it, to
+`%APPDATA%/ffxiv-hub/config.json`: a `hub` section and one per plugin. The running game
+also saves overlay state, such as a HUD you dragged, but only the plugin settings it
+uses, so it never reverts a Hub setting. **Hub Settings → Reset all settings** restores
+every default and switches every plugin back on.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
@@ -464,51 +275,29 @@ flowchart LR
     Payload <-->|"named pipe: telemetry and commands"| App
 ```
 
-- **One payload, one of each hook.** The Hub injects a single DLL, which installs:
-  - one DirectX 11 hook
-  - one window-procedure hook
-  - one detour on each of three game functions — action dispatch, action effects, and
-    DoT/HoT ticks — handing each event to the plugins in a fixed order
-- **Analytics in the game, detail on the desktop.** The plugins run inside the payload,
-  so overlays update without a round trip. The same events stream to the desktop app as
-  framed binary packets over a single named pipe.
-- **Stays out of the way.**
-  - Close the Hub and the payload goes dormant. Start it again and it reconnects within
-    a second, without hooking anything twice.
-  - Overlays restore every render target they touch.
-  - Game memory is only read and written inside exception guards, so a bad address after
-    a patch fails safely.
-  - The named pipe admits only your own Windows user, so another account or service on
-    the machine cannot send the payload commands.
-- **Portable core.** The analytics, timing math, IPC protocol and config are plain C++20
-  with no Windows headers, so the whole test suite also runs on macOS and Linux.
+One DLL installs one DirectX 11 hook, one window-procedure hook and one detour per hooked
+game function, and hands each event to the plugins in a fixed order. The plugins run in
+the game, so overlays need no round trip, and stream the same events to the app over a
+named pipe only your Windows user can open. Game memory is touched only inside exception
+guards, so a bad address after a patch fails safely. The analytics, timing math, IPC and
+config are plain C++20 with no Windows headers, so the tests also run on macOS and Linux.
 
-The full runtime topology, and the invariants any change has to keep, are in
+The runtime topology, and the invariants any change has to keep, are in
 [AGENTS.md](AGENTS.md).
-
----
-
-## 📁 Project layout
 
 ```
 ffxiv-hub/
 ├── include/hub/                 Plugin interfaces and descriptors, the version, shared types,
 │                                game offsets and signatures
-├── src/common/                  IPC, config, signature scanning, OS integration, zip and
-│                                SHA-256 for updates, shared UI
+├── src/common/                  IPC, config, signature scanning, OS integration, update
+│                                archive and SHA-256, shared UI
 ├── src/payload/                 The injected DLL: hooks, overlay host, game memory readers
 ├── src/app/                     The desktop manager: app state, views, updater, entry point
-├── plugins/combat_meter/        Combat Meter: analytics core, in-game table, plugin glue
-├── plugins/latency_mitigator/   Latency Mitigator: RTT tracking, lock math, ping HUD
-├── plugins/image_quality/       Image Quality: DLSS render resolution and camera jitter
+├── plugins/<name>/              Combat Meter, Latency Mitigator and Image Quality
 ├── tests/                       Unit tests, runnable on Windows, macOS and Linux
 └── tools/                       Table generators, signature checks, game-client inspection,
                                  README screenshots
 ```
-
-Each part under `src/` and `plugins/` keeps its headers in `include/<name>/` and its
-sources in `src/`. A part is built against only its own `include/` folder and those of
-the parts it may use, so a plugin cannot include the payload's or the app's headers.
 
 ---
 
@@ -516,49 +305,31 @@ the parts it may use, so a plugin cannot include the payload's or the app's head
 
 ### Tests (macOS, Linux or Windows)
 
-You need a C++20 compiler and GNU `make`. `make` uses `clang++`; `make CXX=g++` picks
-g++. g++ 13 and clang 18 to 20 all build it with warnings as errors, and CI builds it
-with both.
+You need a C++20 compiler and GNU `make`. It uses `clang++`; `make CXX=g++` picks g++.
 
 ```bash
-make
+make         # unit tests, the desktop UI syntax check, and every header on its own
+make tsan    # the suite under ThreadSanitizer
+make asan    # the suite under AddressSanitizer + UndefinedBehaviorSanitizer
 ```
 
-This builds and runs the unit test suite, syntax-checks the desktop UI code with Dear
-ImGui enabled, and compiles every header on its own to check that it only includes what
-its part may use. The build is incremental: objects go to `build/test/`, so after an
-edit only the files it affects recompile. `make clean` removes the build outputs.
-
-The same suite also runs under the sanitizers, each built into its own folder under
-`build/`. Clang needs its sanitizer runtime for these (`libclang-rt-18-dev` on Ubuntu):
-
-```bash
-make tsan    # ThreadSanitizer
-make asan    # AddressSanitizer + UndefinedBehaviorSanitizer
-```
-
-macOS has no LeakSanitizer, so there `make asan` runs without leak detection.
+Builds are incremental under `build/`; `make clean` removes them. The sanitizers need
+Clang's runtime (`libclang-rt-18-dev` on Ubuntu), and macOS has no LeakSanitizer.
 
 ### README screenshots (macOS or Linux)
 
-The pictures in `docs/images/` are drawn by the desktop app's and the overlays' own code
-into a software rasterizer, over a made-up raid night, so they can be redrawn without
-Windows or the game. The one at the top of this page, `hero.png`, is an animated PNG
-that switches between the Latency Mitigator and Combat Meter pages; a viewer that does
-not animate PNGs shows the first. You need zlib, `curl` and `shasum` as well:
+The pictures in `docs/images/` are drawn by the app's and the overlays' own code into a
+software rasterizer, over an invented raid night (`tools/screenshots/`), so they can be
+redrawn without Windows or the game. You need zlib, `curl` and `shasum`:
 
 ```bash
 make screenshots
 ```
 
-The first run downloads Selawik, Microsoft's openly licensed (OFL) stand-in for Segoe UI,
-and checks its SHA-256. To draw with other fonts, set `SHOTS_WINDOWS_DIR` to a folder
-whose `Fonts` subfolder holds `segoeui.ttf`, `segoeuib.ttf` and `seguisb.ttf`. The party,
-its numbers and the boss HP are invented; the source is in `tools/screenshots/`.
-
-The night is fixed down to its wall clock, and the tool runs in UTC, so redrawing on the
-same machine writes the same files. Another compiler or platform can still move a few
-antialiased pixels, so commit only the pictures a change actually alters.
+The first run downloads Selawik, an openly licensed stand-in for Segoe UI, and checks its
+SHA-256. To use Segoe UI itself, point `SHOTS_WINDOWS_DIR` at a folder whose `Fonts`
+subfolder holds `segoeui.ttf`, `segoeuib.ttf` and `seguisb.ttf`. Another compiler or
+platform can move a few antialiased pixels, so commit only the pictures a change alters.
 
 ### Windows binaries
 
@@ -568,25 +339,14 @@ You need Visual Studio 2022 with *Desktop development with C++*, and CMake 3.22+
 cmake -B build -S . -A x64
 cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
-```
-
-The build writes `build/bin/Release/ffxiv-hub.exe` and `build/bin/Release/hub_payload.dll`.
-It treats warnings in the project's own code as errors (`/W4 /WX`); the vendored ImGui and
-MinHook keep their own warning levels.
-To produce the portable ZIP:
-
-```cmd
 cd build
 cpack -G ZIP -C Release
 ```
 
-This writes `ffxiv-hub-windows-x64.zip`, with the two binaries at its root: the same file
-a release publishes.
-
-The GitHub Actions workflow builds and tests every push to `main`, and uploads the result
-as a workflow artifact. On a `v*.*.*` tag it also publishes `ffxiv-hub-windows-x64.zip`,
-as a release, whose page shows its SHA256; the tag must match the version in
-`include/hub/version.hpp`.
+The binaries land in `build/bin/Release/`, and `cpack` writes the same
+`ffxiv-hub-windows-x64.zip` a release publishes. Warnings in the project's own code are
+errors (`/W4 /WX`). CI builds and tests every push; a `v*.*.*` tag matching
+`include/hub/version.hpp` publishes a release.
 
 ---
 
@@ -594,12 +354,10 @@ as a release, whose page shows its SHA256; the tag must match the version in
 
 | Document | What it covers |
 |---|---|
-| [Combat Meter README](plugins/combat_meter/README.md) | How pulls, pets, deaths, casts, uptime and the timeline are tracked; its views and settings |
-| [Latency Mitigator README](plugins/latency_mitigator/README.md) | How the lock is adjusted and what is left alone; its HUD, view and settings |
-| [Image Quality README](plugins/image_quality/README.md) | What the game does with DLSS, what the plugin changes and gives back; its view and settings |
-| [AGENTS.md](AGENTS.md) | Architecture, runtime topology, and the invariants every change must keep |
-| [Combat Meter AGENTS.md](plugins/combat_meter/AGENTS.md) · [Latency Mitigator AGENTS.md](plugins/latency_mitigator/AGENTS.md) · [Image Quality AGENTS.md](plugins/image_quality/AGENTS.md) | Plugin-specific rules, and what was verified about the game client |
-| [`.claude/skills/`](.claude/skills/) | Procedures: after a game patch, inspecting the game client, the ThreadSanitizer run, cutting a Windows release |
+| Plugin READMEs: [Combat Meter](plugins/combat_meter/README.md) · [Latency Mitigator](plugins/latency_mitigator/README.md) · [Image Quality](plugins/image_quality/README.md) | How each plugin works, its overlay, view and settings |
+| [AGENTS.md](AGENTS.md) | Architecture and the invariants every change must keep |
+| Plugin AGENTS.md: [Combat Meter](plugins/combat_meter/AGENTS.md) · [Latency Mitigator](plugins/latency_mitigator/AGENTS.md) · [Image Quality](plugins/image_quality/AGENTS.md) | Plugin rules, and what was verified about the game client |
+| [`.claude/skills/`](.claude/skills/) | After a game patch, inspecting the client, the ThreadSanitizer run, cutting a release |
 
 ---
 
