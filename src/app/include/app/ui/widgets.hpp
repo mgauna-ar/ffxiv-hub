@@ -3,6 +3,7 @@
 #include "common/ui/imgui_guard.hpp"
 #include "app/ui/theme.hpp"
 #include <cstdint>
+#include <string>
 
 namespace hub::app::ui {
 
@@ -165,6 +166,12 @@ void empty_state(const char* icon, const char* title, const char* hint);
 /// value changed. `id` is a "##"-style identifier; the label belongs to setting_row.
 bool toggle(const char* id, bool* value);
 
+/// A pill that is lit while on, for a run of switches that need no help text, such
+/// as a table's optional columns. Returns true on the frame the value changed.
+/// Wrap a run of them with same_line_if_room(toggle_chip_width(next)).
+bool toggle_chip(const char* label, bool* value);
+[[nodiscard]] float toggle_chip_width(const char* label);
+
 enum class ButtonKind { Primary, Secondary, Danger };
 /// Small, Medium and Large are minimum widths: a longer label widens the button
 /// rather than being clipped. Icon is a frame-height square for a lone glyph;
@@ -190,6 +197,17 @@ bool button(const char* label, ButtonKind kind = ButtonKind::Secondary,
 ///     end_setting_row();
 void begin_setting_row(const char* label, const char* help = nullptr);
 void end_setting_row();
+
+/// Inside a setting row, before its control: while the value is off its default,
+/// an icon button that puts it back, with the control narrowed to make room.
+/// Returns true when clicked; the caller then stores the default as it would an
+/// edit. `default_text` is the default as the control prints it.
+bool setting_row_reset(const char* id, bool off_default, const char* default_text);
+
+/// Whether a slider's value has left its default, past rounding.
+[[nodiscard]] bool off_default(float value, float default_value) noexcept;
+/// A number as its control prints it, for setting_row_reset's tooltip.
+[[nodiscard]] std::string printed(const char* format, float value);
 
 /// A row whose control is a toggle. Returns true when it changed.
 bool setting_toggle(const char* label, const char* help, bool* value);

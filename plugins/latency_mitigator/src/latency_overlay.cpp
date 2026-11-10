@@ -1,4 +1,5 @@
 #include "mitigator/latency_overlay.hpp"
+#include "common/ui/overlay_chrome.hpp"
 #include "common/ui/overlay_palette.hpp"
 #include <algorithm>
 #include <cstdio>
@@ -90,36 +91,44 @@ void LatencyOverlay::render() {
     const double dot_metric = (net_ping >= 0.0) ? net_ping : (has_rtt && rtt > 0.0 ? rtt : -1.0);
 
     namespace palette = hub::common::ui::overlay_colors;
+    namespace chrome = hub::common::ui::chrome;
     using hub::common::ui::rgba;
-    ImVec4 bg_col, dot_color, text_col, border_col;
+    using hub::common::ui::Rgb;
+
+    chrome::Frame frame;
+    frame.scale = scale;
+    frame.opacity = opacity;
+    frame.rounding = 12.0f;
+    frame.padding_y = 6.0f;
+    Rgb dot_color = palette::Muted;
+    Rgb value_color = palette::HudText;
+    Rgb label_color = palette::Muted;
     if (is_spike) {
-        bg_col     = rgba(palette::SpikeBackground, opacity);
-        dot_color  = rgba(palette::SpikeDot, 1.00f);
-        text_col   = rgba(palette::SpikeText, 1.00f);
-        border_col = rgba(palette::SpikeBorder, 0.90f);
+        frame.background = palette::SpikeBackground;
+        frame.border = palette::SpikeBorder;
+        frame.border_alpha = 0.90f;
+        dot_color = palette::SpikeDot;
+        value_color = palette::SpikeText;
+        label_color = palette::SpikeText;
     } else {
-        bg_col = rgba(palette::Background, opacity);
-        border_col = rgba(palette::Border, 0.70f);
+        frame.border_alpha = 0.70f;
         if (dot_metric < 0.0) {
-            dot_color = rgba(palette::Muted, 0.80f);
+            dot_color = palette::Muted;
         } else if (dot_metric < constants::PING_GRADE_GOOD_MS) {
-            dot_color = rgba(palette::PingGood, 1.00f);
+            dot_color = palette::PingGood;
         } else if (dot_metric <= constants::PING_GRADE_FAIR_MS) {
-            dot_color = rgba(palette::PingFair, 1.00f);
+            dot_color = palette::PingFair;
         } else if (dot_metric <= constants::PING_GRADE_POOR_MS) {
-            dot_color = rgba(palette::PingPoor, 1.00f);
+            dot_color = palette::PingPoor;
         } else {
-            dot_color = rgba(palette::PingBad, 1.00f);
+            dot_color = palette::PingBad;
         }
-        text_col = rgba(palette::HudText, 1.00f);
     }
+    const chrome::FrameScope frame_scope(frame);
 
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 6.0f));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, bg_col);
-    ImGui::PushStyleColor(ImGuiCol_Border, border_col);
-
-    const ScaledFont scaled_font = font_for_scale(scale, /*bold_base=*/true);
+    // Labels in the regular face and dim, values in bold: the numbers are what is read.
+    const ScaledFont scaled_font = font_for_scale(scale, /*bold_base=*/false);
+    ImFont* bold = font_for_scale(scale, /*bold_base=*/true).font;
     const bool push_font = (scaled_font.font != nullptr && scaled_font.font != ImGui::GetFont());
     if (push_font) {
         ImGui::PushFont(scaled_font.font);
@@ -146,17 +155,6 @@ void LatencyOverlay::render() {
 
         store_window_geometry(Rect{cur_pos.x, cur_pos.y, cur_size.x, cur_size.y});
 
-        // Status indicator dot, centred on the text baseline so it tracks the
-        // font tier instead of drifting at larger scales.
-        ImDrawList* draw_list = ImGui::GetWindowDrawList();
-        ImVec2 p = ImGui::GetCursorScreenPos();
-        const float radius = 4.5f * scale;
-        const float cy = p.y + ImGui::GetTextLineHeight() * 0.5f;
-        draw_list->AddCircleFilled(ImVec2(p.x + radius + 1.0f, cy), radius, ImGui::ColorConvertFloat4ToU32(dot_color));
-
-        ImGui::Dummy(ImVec2(radius * 2.0f + 4.0f, 0.0f));
-        ImGui::SameLine();
-
         char ping_str[32];
         if (net_ping >= 0.0) {
             std::snprintf(ping_str, sizeof(ping_str), "%.0f ms", net_ping);
@@ -171,26 +169,45 @@ void LatencyOverlay::render() {
             std::snprintf(rtt_str, sizeof(rtt_str), "-- ms");
         }
 
-        char buf[64];
+        const float gap = 6.0f * scale;
+        const auto label = [&](const char* text) {
+            ImGui::TextColored(rgba(label_color, 0.90f), "%s", text);
+        };
+        const auto value = [&](const char* text, Rgb color) {
+            const chrome::FontScope font(bold);
+            ImGui::TextColored(rgba(color), "%s", text);
+        };
+        const auto spike_mark = [&] {
+            if (!is_spike) return;
+            ImGui::SameLine(0.0f, gap);
+            value("!", value_color);
+        };
+
+        chrome::dot(dot_color, scale, dot_metric < 0.0 && !is_spike ? 0.80f : 1.0f);
+        ImGui::SameLine(0.0f, gap);
+
         if (mode == OverlayDisplayMode::TwoRow) {
-            ImGui::TextColored(text_col, "Ping  %s", ping_str);
-            ImGui::Dummy(ImVec2(radius * 2.0f + 4.0f, 0.0f));
-            ImGui::SameLine();
-            ImGui::TextColored(rgba(palette::HudSecondaryText, 0.95f), "RTT   %s%s", rtt_str, is_spike ? " !" : "");
+            // Both values start at one column, past the wider label.
+            const float row_x = ImGui::GetCursorPosX();
+            const float value_x = row_x + std::max(ImGui::CalcTextSize("Ping").x, ImGui::CalcTextSize("RTT").x) + gap;
+            label("Ping");
+            ImGui::SameLine(value_x);
+            value(ping_str, value_color);
+            ImGui::SetCursorPosX(row_x);
+            label("RTT");
+            ImGui::SameLine(value_x);
+            value(rtt_str, is_spike ? value_color : palette::HudSecondaryText);
+            spike_mark();
         } else if (mode == OverlayDisplayMode::PingOnly) {
-            if (is_spike) {
-                std::snprintf(buf, sizeof(buf), "%s !", ping_str);
-            } else {
-                std::snprintf(buf, sizeof(buf), "%s", ping_str);
-            }
-            ImGui::TextColored(text_col, "%s", buf);
+            value(ping_str, value_color);
+            spike_mark();
         } else {
-            if (is_spike) {
-                std::snprintf(buf, sizeof(buf), "%s | RTT %s !", ping_str, rtt_str);
-            } else {
-                std::snprintf(buf, sizeof(buf), "%s | RTT %s", ping_str, rtt_str);
-            }
-            ImGui::TextColored(text_col, "%s", buf);
+            value(ping_str, value_color);
+            ImGui::SameLine(0.0f, gap * 1.5f);
+            label("RTT");
+            ImGui::SameLine(0.0f, gap);
+            value(rtt_str, is_spike ? value_color : palette::HudSecondaryText);
+            spike_mark();
         }
 
         // The whole badge, not just the last text item: in the two-row layout
@@ -228,8 +245,6 @@ void LatencyOverlay::render() {
     if (push_font) {
         ImGui::PopFont();
     }
-    ImGui::PopStyleColor(2);
-    ImGui::PopStyleVar(2);
 }
 
 } // namespace hub::mitigator

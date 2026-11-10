@@ -109,7 +109,9 @@ private:
     void render_top_bar(const EncounterSummary& current, float scale);
     void render_damage_table(const EncounterSummary& summary, float scale);
     void render_healing_table(const EncounterSummary& summary, float scale);
-    void render_row_progress_bar(float fraction, uint32_t color_u32);
+    /// Starts a ranked row and draws what lies under its text: its bar, `fraction`
+    /// of the row in the job's colour, and the local player's stripe.
+    void begin_ranked_row(float fraction, uint32_t job_rgb, bool local_player, float row_h, float scale);
     [[nodiscard]] float row_height(float scale) const;
 #endif
 };

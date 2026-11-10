@@ -133,7 +133,7 @@ int main(int argc, char** argv) {
     layout.display_w = px(1180.0f);
     layout.display_h = px(640.0f);
     layout.scale = kDensity;
-    layout.meter = shots::Rect{px(36.0f), px(150.0f), px(560.0f), px(244.0f)};
+    layout.meter = shots::Rect{px(36.0f), px(150.0f), px(568.0f), px(262.0f)};
     layout.hud_x = static_cast<float>(px(36.0f));
     layout.hud_y = static_cast<float>(px(92.0f));
     const shots::OverlayCapture overlays =
@@ -153,7 +153,7 @@ int main(int argc, char** argv) {
     // needs a little more room than at 1.5 to keep the names whole.
     const float hero_margin = 40.0f;
     const float hero_meter_w = 620.0f;
-    const float hero_meter_h = 272.0f;
+    const float hero_meter_h = 258.0f;
     const float hero_hud_gap = 58.0f; // from the HUD's top to the meter's
     const float hero_w = hero_margin + hero_meter_w + 48.0f + kLatencyWindowW + hero_margin;
     const float hero_h = kLatencyWindowH + hero_margin * 2.0f;

@@ -150,8 +150,8 @@ void OverlayHost::setup_fonts() {
     UINT len = GetWindowsDirectoryA(win_dir, MAX_PATH);
     const std::string fonts_path = (len > 0) ? (std::string(win_dir) + "\\Fonts\\") : "C:\\Windows\\Fonts\\";
 
-    // Segoe UI Semibold reads better than the regular face at overlay sizes, but
-    // is not present on every install, so fall back through to Arial.
+    // The regular face is the plain one, so that bold marks what matters. Not every
+    // install has each, so fall back through to Arial.
     auto first_present = [&](std::initializer_list<const char*> candidates) -> std::string {
         for (const char* name : candidates) {
             std::string path = fonts_path + name;
@@ -162,7 +162,7 @@ void OverlayHost::setup_fonts() {
         return {};
     };
 
-    const std::string regular_path = first_present({"seguisb.ttf", "segoeui.ttf", "arial.ttf"});
+    const std::string regular_path = first_present({"segoeui.ttf", "seguisb.ttf", "arial.ttf"});
     const std::string bold_path    = first_present({"segoeuib.ttf", "seguisb.ttf", "arialbd.ttf"});
 
     // Icons merge into whichever font was added last, so each font that renders
