@@ -721,28 +721,30 @@ void render_display_section(AppState& app_state) {
     ImGui::Dummy(ImVec2(0.0f, m(6.0f)));
     section_header(ICON_LAYERS, "COLUMNS", colors::Violet);
 
-    bool col_share = cfg_get(METER, "show_col_share", true);
-    if (setting_toggle("Damage share", "Percentage of total raid damage.", &col_share)) {
-        cfg_store(METER, "show_col_share", col_share);
-        app_state.send_command(PluginId::CombatMeter, CommandId::SetColumnShare, col_share ? 1 : 0);
-    }
-
-    bool col_crit = cfg_get(METER, "show_col_crit", true);
-    if (setting_toggle("Critical hit rate", "Per-combatant crit percentage.", &col_crit)) {
-        cfg_store(METER, "show_col_crit", col_crit);
-        app_state.send_command(PluginId::CombatMeter, CommandId::SetColumnCrit, col_crit ? 1 : 0);
-    }
-
-    bool col_dh = cfg_get(METER, "show_col_dh", true);
-    if (setting_toggle("Direct hit rate", "Per-combatant direct hit percentage.", &col_dh)) {
-        cfg_store(METER, "show_col_dh", col_dh);
-        app_state.send_command(PluginId::CombatMeter, CommandId::SetColumnDh, col_dh ? 1 : 0);
-    }
-
-    bool col_cdh = cfg_get(METER, "show_col_cdh", true);
-    if (setting_toggle("Critical direct hit", "Combined crit-and-direct percentage.", &col_cdh)) {
-        cfg_store(METER, "show_col_cdh", col_cdh);
-        app_state.send_command(PluginId::CombatMeter, CommandId::SetColumnCdh, col_cdh ? 1 : 0);
+    text_dim("Optional columns of the in-game table.");
+    ImGui::Dummy(ImVec2(0.0f, m(2.0f)));
+    struct ColumnChip {
+        const char* label;
+        const char* key;
+        CommandId command;
+        const char* help;
+    };
+    static constexpr ColumnChip chips[] = {
+        {"Damage share", "show_col_share", CommandId::SetColumnShare, "Percentage of total raid damage."},
+        {"Critical hit rate", "show_col_crit", CommandId::SetColumnCrit, "Per-combatant crit percentage."},
+        {"Direct hit rate", "show_col_dh", CommandId::SetColumnDh, "Per-combatant direct hit percentage."},
+        {"Critical direct hit", "show_col_cdh", CommandId::SetColumnCdh, "Combined crit-and-direct percentage."},
+    };
+    bool first = true;
+    for (const ColumnChip& chip : chips) {
+        if (!first) same_line_if_room(toggle_chip_width(chip.label), 6.0f);
+        first = false;
+        bool on = cfg_get(METER, chip.key, true);
+        if (toggle_chip(chip.label, &on)) {
+            cfg_store(METER, chip.key, on);
+            app_state.send_command(PluginId::CombatMeter, chip.command, on ? 1 : 0);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", chip.help);
     }
 
     end_settings_card();

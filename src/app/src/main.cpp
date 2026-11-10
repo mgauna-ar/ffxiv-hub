@@ -325,11 +325,21 @@ void size_for_dpi(MainWindow& window) {
     }
 }
 
-/// The dark native title bar (a no-op before Windows 10 1809) and the icons.
+/// DWMWA_BORDER_COLOR and DWMWA_CAPTION_COLOR, by value: older SDKs do not name them.
+constexpr DWORD kDwmBorderColor = 34;
+constexpr DWORD kDwmCaptionColor = 35;
+
+/// The dark native title bar (a no-op before Windows 10 1809), in the theme's own
+/// colours where the system takes them (Windows 11), and the icons.
 void apply_window_chrome(const MainWindow& window, const WindowIcons& icons) {
     const HWND hwnd = window.hwnd.get();
     BOOL use_dark_titlebar = TRUE;
     DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &use_dark_titlebar, sizeof(use_dark_titlebar));
+    // The theme packs colours as COLORREF does, with alpha on top.
+    const COLORREF caption = hub::app::ui::colors::Canvas & 0x00FFFFFFu;
+    const COLORREF border = hub::app::ui::colors::Border & 0x00FFFFFFu;
+    DwmSetWindowAttribute(hwnd, kDwmCaptionColor, &caption, sizeof(caption));
+    DwmSetWindowAttribute(hwnd, kDwmBorderColor, &border, sizeof(border));
 
     SendMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(icons.large_icon));
     SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(icons.small_icon));

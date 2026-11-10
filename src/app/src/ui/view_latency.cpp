@@ -28,6 +28,13 @@ namespace {
 
 constexpr const char* MITI = plugins::LATENCY_MITIGATOR.config_section;
 
+/// The sliders' defaults, as the mitigator's own settings have them.
+constexpr struct {
+    float target_ping{15.0f};
+    float min_lock{25.0f};
+    float spike_mult{2.5f};
+} kDefaults;
+
 float lock_ceiling_ms() {
     return cfg_get(MITI, "max_animation_lock_ms",
                    static_cast<float>(mitigator::constants::DEFAULT_MAX_ANIMATION_LOCK_MS));
@@ -216,7 +223,7 @@ void render_weave_chart(const std::vector<ChartPoint>& points, uint32_t with_lin
 
 void render_metric_tiles(AppState& app_state, const AppState::MitigatorMetrics& metrics,
                          const ImpactSummary& impact) {
-    const float target_ping = cfg_get(MITI, "target_ping_ms", 15.0f);
+    const float target_ping = cfg_get(MITI, "target_ping_ms", kDefaults.target_ping);
     const float floor_ms = cfg_get(MITI, "min_animation_lock_ms", 25.0f);
 
     char delay[32];
@@ -525,8 +532,14 @@ void render_plugin_section(AppState& app_state) {
 
     // The sliders below reach the payload and the file on release: nothing
     // in-game previews them, and a drag would otherwise save on every frame.
-    float target_ping = cfg_get(MITI, "target_ping_ms", 15.0f);
+    float target_ping = cfg_get(MITI, "target_ping_ms", kDefaults.target_ping);
     begin_setting_row("Target ping", "Round-trip time the compensation aims for.");
+    if (setting_row_reset("target_ping", off_default(target_ping, kDefaults.target_ping),
+                          printed("%.1f ms", kDefaults.target_ping).c_str())) {
+        target_ping = kDefaults.target_ping;
+        cfg_store(MITI, "target_ping_ms", target_ping);
+        app_state.send_command(PluginId::LatencyMitigator, CommandId::SetTargetPing, 0, target_ping);
+    }
     if (ImGui::SliderFloat("##target_ping", &target_ping, 10.0f, 40.0f, "%.1f ms")) {
         cfg_set(MITI, "target_ping_ms", target_ping);
     }
@@ -536,8 +549,14 @@ void render_plugin_section(AppState& app_state) {
     }
     end_setting_row();
 
-    float min_lock = cfg_get(MITI, "min_animation_lock_ms", 25.0f);
+    float min_lock = cfg_get(MITI, "min_animation_lock_ms", kDefaults.min_lock);
     begin_setting_row("Safety floor", "Animation lock is never reduced below this.");
+    if (setting_row_reset("min_lock", off_default(min_lock, kDefaults.min_lock),
+                          printed("%.1f ms", kDefaults.min_lock).c_str())) {
+        min_lock = kDefaults.min_lock;
+        cfg_store(MITI, "min_animation_lock_ms", min_lock);
+        app_state.send_command(PluginId::LatencyMitigator, CommandId::SetMinLock, 0, min_lock);
+    }
     if (ImGui::SliderFloat("##min_lock", &min_lock, 25.0f, 100.0f, "%.1f ms")) {
         cfg_set(MITI, "min_animation_lock_ms", min_lock);
     }
@@ -547,8 +566,14 @@ void render_plugin_section(AppState& app_state) {
     }
     end_setting_row();
 
-    float spike_mult = cfg_get(MITI, "spike_multiplier", 2.5f);
+    float spike_mult = cfg_get(MITI, "spike_multiplier", kDefaults.spike_mult);
     begin_setting_row("Spike multiplier", "How far above the average an RTT is discarded.");
+    if (setting_row_reset("spike_mult", off_default(spike_mult, kDefaults.spike_mult),
+                          printed("%.1fx", kDefaults.spike_mult).c_str())) {
+        spike_mult = kDefaults.spike_mult;
+        cfg_store(MITI, "spike_multiplier", spike_mult);
+        app_state.send_command(PluginId::LatencyMitigator, CommandId::SetSpikeMultiplier, 0, spike_mult);
+    }
     if (ImGui::SliderFloat("##spike_mult", &spike_mult, 2.0f, 4.0f, "%.1fx")) {
         cfg_set(MITI, "spike_multiplier", spike_mult);
     }
